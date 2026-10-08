@@ -183,6 +183,18 @@ foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','Progr
     Set-Variable -Name $n -Value $window.FindName($n) -Scope Script
 }
 $VersionText.Text = "Version $AppVersion"
+# Canal test (réservé au développeur) : 7 clics rapides sur le numéro de version
+$script:VerClicks = @()
+$VersionText.Add_MouseLeftButtonUp({
+    $now = Get-Date
+    $script:VerClicks = @(@($script:VerClicks) + $now | Where-Object { ($now - $_).TotalSeconds -lt 4 })
+    if ($script:VerClicks.Count -lt 7) { return }
+    $script:VerClicks = @()
+    $on = -not [bool]$script:Settings.BetaChannel
+    $script:Settings.BetaChannel = $on; Save-Settings; Update-VersionText
+    [System.Windows.MessageBox]::Show($(if ($on) { "Canal test activé.`n`nCe PC reçoit les versions de test avant tout le monde, pour les vérifier avant leur publication." } else { "Canal test désactivé : ce PC reçoit uniquement les versions publiques." }), $AppName, 'OK', 'Information') | Out-Null
+    if ($GitHubRepo) { $sync.UpdateInfo = $null; $script:UpdateShown = $false; Start-Background 'Find-AppUpdate' }
+})
 $NavMap = @{ home = $NavHome; diag = $NavDiag; clean = $NavClean; update = $NavUpdate; repair = $NavRepair; perf = $NavPerf; monitor = $NavMonitor; system = $NavSystem; help = $NavHelp }
 
 # ---------------------------------------------------------------- État de l'interface
@@ -215,6 +227,7 @@ $script:Settings = @{
     IgnoredApps = @()
     StartupKept = @()
     SpeedHistory = @()
+    BetaChannel = $false
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
 }
 function ConvertTo-Hash($o) {
@@ -227,7 +240,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'StartupKept', 'SpeedHistory') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -239,8 +252,12 @@ function Load-Settings {
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
+    $AppInfo.Beta = [bool]$script:Settings.BetaChannel
+    Update-VersionText
 }
+function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if ($script:Settings.BetaChannel) { "  ·  canal test" } else { '' }) }
 function Save-Settings {
+    $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
@@ -504,7 +521,7 @@ function Build-HomePage {
         else { $b = New-Button "Télécharger" 'PrimaryBtn' @{ Kind = 'openurl'; Url = $sync.UpdateInfo.Url } $false }
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $g $b
         $t = New-Object System.Windows.Controls.StackPanel
-        Add-Child $t (New-Text ("Nouvelle version disponible : {0}" -f $sync.UpdateInfo.Version) 15 '#FFFFFF' 'SemiBold')
+        Add-Child $t (New-Text ("Nouvelle version disponible : {0}{1}" -f $sync.UpdateInfo.Version, $(if ($sync.UpdateInfo.Test) { ' (version de test)' } else { '' })) 15 '#FFFFFF' 'SemiBold')
         Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
     }
@@ -814,6 +831,7 @@ function Invoke-UiCommand($T) {
             'fix' {
                 $i = $T.Issue
                 if ($i.UiFix -eq 'startup') { Show-StartupDialog $i; return }
+                if ($i.UiFix -eq 'display') { Set-DisplayWithConfirm $i.Display $i; return }
                 if ($i.UiFix -eq 'apps') { Start-AppUpdatesList $i; return }
                 if ($i.UiFix -eq 'clean') { Start-CleanAnalysis $i; return }
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
@@ -845,6 +863,7 @@ function Invoke-UiCommand($T) {
                     'report' { Show-BugReport '' }
                     'remotehelp' { Show-RemoteHelpDialog }
                     'history' { Show-HistoryDialog }
+                    'display-fix' { $d = @(Get-Displays) | Where-Object { $_.Device -eq $T.Def.Device } | Select-Object -First 1; Set-DisplayWithConfirm $d $null }
                     'speedtest' { Show-SpeedTestDialog }
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
@@ -881,6 +900,47 @@ function Invoke-UiCommand($T) {
         Write-UiLog ("❌ " + $_.Exception.Message)
         Write-Bug -Context "Interface ($($T.Kind))" -ErrorRecord $_
     }
+}
+
+# ---------------------------------------------------------------- Fréquence de l'écran (avec retour automatique)
+function Set-DisplayWithConfirm($d, $Issue) {
+    if (-not $d) { return }
+    $prev = [int]$d.Hz; $target = [int]$d.MaxHz
+    $r = [AeroxDisplay]::SetFrequency($d.Device, $target)
+    if ($r -ne 0) {
+        Write-UiLog ("❌ Windows a refusé de régler {0} à {1} Hz (code {2})." -f $d.Name, $target, $r)
+        [System.Windows.MessageBox]::Show(("Windows a refusé de passer {0} à {1} Hz (code {2}).`n`nCauses fréquentes : un câble qui ne supporte pas cette fréquence (il faut du DisplayPort ou du HDMI 2.0 minimum), ou le pilote de la carte graphique.`n`nTu peux aussi essayer dans Paramètres > Affichage > Affichage avancé." -f $d.Name, $target, $r), $AppName, 'OK', 'Warning') | Out-Null
+        return
+    }
+    $w = New-Dialog "$AppName : écran" 480
+    $script:HzWin = $w; $script:HzKeep = $false; $script:HzLeft = 15
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text ("{0} est maintenant à {1} Hz" -f $d.Name, $target) 17 '#FFFFFF' 'Bold')
+    $t = New-Text "L'image s'affiche bien ? Si tu ne cliques sur rien, l'ancien réglage revient tout seul." 13 '#A9B0C2'; $t.Margin = Th 0 6 0 10; Add-Child $sp $t
+    $script:HzCount = New-Text ("Retour à {0} Hz dans 15 s" -f $prev) 13 '#FFB547' 'SemiBold'; Add-Child $sp $script:HzCount
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 16 0 0
+    $bBack = New-Object System.Windows.Controls.Button; $bBack.Content = ("Revenir à {0} Hz" -f $prev); $bBack.Style = $window.FindResource('ActionBtn'); $bBack.Margin = Th 0 0 8 0
+    $bKeep = New-Object System.Windows.Controls.Button; $bKeep.Content = 'Garder'; $bKeep.Style = $window.FindResource('PrimaryBtn')
+    Add-Child $row $bBack; Add-Child $row $bKeep; Add-Child $sp $row
+    $bKeep.Add_Click({ $script:HzKeep = $true; $script:HzWin.Close() })
+    $bBack.Add_Click({ $script:HzKeep = $false; $script:HzWin.Close() })
+    $script:HzPrev = $prev
+    $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromSeconds(1)
+    $tm.Add_Tick({ $script:HzLeft--; $script:HzCount.Text = ("Retour à {0} Hz dans {1} s" -f $script:HzPrev, $script:HzLeft); if ($script:HzLeft -le 0) { $script:HzWin.Close() } })
+    $w.Add_Closed({ $tm.Stop() }.GetNewClosure())
+    $w.Content = $sp
+    $tm.Start()
+    [void]$w.ShowDialog()
+    $tm.Stop()
+    if (-not $script:HzKeep) {
+        [void][AeroxDisplay]::SetFrequency($d.Device, $prev)
+        Write-UiLog ("↩ {0} remis à {1} Hz." -f $d.Name, $prev)
+        return
+    }
+    Add-Change -Title ("{0} : {1} Hz → {2} Hz" -f $d.Name, $prev, $target) -Detail "Fréquence de rafraîchissement de l'écran." -Undo ("Set-DisplayHz {0} {1}" -f (ConvertTo-PsLiteral $d.Device), $prev)
+    Write-UiLog ("✅ {0} réglé à {1} Hz (au lieu de {2} Hz)." -f $d.Name, $target, $prev)
+    if ($Issue) { $Issue.Status = 'done'; Update-DiagBadge }
+    Refresh-Page
 }
 
 # ---------------------------------------------------------------- Historique des changements
@@ -1120,6 +1180,11 @@ function Build-SystemPage {
             }
         }
     } elseif (@($i.Gpu).Count) { Add-Child $cs (New-InfoRow 'Carte graphique' (@($i.Gpu) -join "`n")) }
+    foreach ($d in @(Get-Displays)) {
+        $low = Test-DisplayHzLow $d
+        Add-Child $cs (New-InfoRow $d.Name ("{0} x {1}  ·  {2} Hz" -f $d.Width, $d.Height, $d.Hz) $(if ($low) { "Peut aller à $($d.MaxHz) Hz" } else { 'OK' }) $(if ($low) { 'warn' } else { 'ok' }) $(if ($low) { "Ton écran est capable de $($d.MaxHz) Hz mais Windows l'utilise à $($d.Hz) Hz : l'image est moins fluide. Le réglage revient tout seul au bout de 15 secondes si l'image ne s'affiche pas bien." } else { '' }))
+        if ($low) { $b = New-Button "Passer à $($d.MaxHz) Hz" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'display-fix'; Device = $d.Device } } $false; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 190 2 0 8; Add-Child $cs $b }
+    }
     Add-Child $cs (New-InfoRow 'Mémoire' ("{0}{1}{2}" -f (Format-Size $i.Ram), $(if ($i.RamModules) { "  ·  $($i.RamModules) barrette(s)" } else { '' }), $(if ($i.RamSpeed) { "  ·  $($i.RamSpeed) MHz" } else { '' })))
     $c.Child = $cs; Add-Child $sp $c
 

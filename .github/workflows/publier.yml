@@ -1,12 +1,13 @@
 # Publication automatique : quand $AppVersion (src/1_head.ps1) change sur la branche main,
-# GitHub construit le logiciel et crée la Release « vX.Y.Z » avec le zip (mises à jour
-# automatiques) et l'installateur. Si cette version est déjà publiée, rien ne se passe.
+# GitHub construit le logiciel et crée la Release « vX.Y.Z » avec l'installateur.
+# canal.txt = « test » : publiée en pré-version (seuls les PC en canal test la reçoivent).
+# canal.txt = « public » : publiée pour tout le monde ; une version de test déjà publiée passe en public.
 name: Publier une version
 
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'native/**', 'launcher/**', 'installer/**', 'docs/LISEZMOI.txt', 'build.sh', '.github/workflows/publier.yml']
+    paths: ['src/**', 'native/**', 'launcher/**', 'installer/**', 'docs/LISEZMOI.txt', 'build.sh', 'canal.txt', '.github/workflows/publier.yml']
   workflow_dispatch:
 
 permissions:
@@ -22,16 +23,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Numéro de version
+      - name: Numéro de version et canal
         id: v
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VER=$(sed -n "s/^\$AppVersion = '\([0-9.]*\)'.*/\1/p" src/1_head.ps1)
+          CANAL=$(tr -d '[:space:]' < canal.txt 2>/dev/null || echo public)
+          [ "$CANAL" = "test" ] || CANAL=public
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          if gh release view "v$VER" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "La version v$VER est déjà publiée : rien à faire (augmente \$AppVersion pour publier)."
+          echo "test=$([ "$CANAL" = test ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VER" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease > pre.txt 2>/dev/null; then
             echo "publier=non" >> "$GITHUB_OUTPUT"
+            if [ "$(cat pre.txt)" = "true" ] && [ "$CANAL" = "public" ]; then
+              echo "La version de test v$VER passe en public."
+              gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+            else
+              echo "La version v$VER est déjà publiée ($CANAL) : rien à faire."
+            fi
           else
             echo "publier=oui" >> "$GITHUB_OUTPUT"
           fi
@@ -50,7 +59,9 @@ jobs:
         with:
           tag_name: v${{ steps.v.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: AEROX PC Care ${{ steps.v.outputs.version }}
+          name: AEROX PC Care ${{ steps.v.outputs.version }}${{ steps.v.outputs.test == 'true' && ' (test)' || '' }}
+          prerelease: ${{ steps.v.outputs.test == 'true' }}
+          make_latest: ${{ steps.v.outputs.test == 'true' && 'false' || 'true' }}
           generate_release_notes: true
           body: |
             ## ⬇ Installer AEROX PC Care

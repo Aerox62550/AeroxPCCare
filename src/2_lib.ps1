@@ -613,6 +613,140 @@ function Test-Updates {
     } else { Add-Ok $(if (@(Get-IgnoredApps).Count) { "Logiciels à jour ($(@(Get-IgnoredApps).Count) ignoré(s) à ta demande)" } else { "Tous les logiciels sont à jour" }) }
 }
 
+# ---------------------------------------------------------------- Coupures de connexion (contrôles prudents, corrections annulables)
+function Get-ActiveAdapter {
+    $r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
+    if (-not $r) { return $null }
+    $a = Get-NetAdapter -InterfaceIndex $r.ifIndex -ErrorAction SilentlyContinue
+    if (-not $a) { return $null }
+    $wifi = ("$($a.PhysicalMediaType)" -match '802\.11' -or "$($a.InterfaceDescription) $($a.Name)" -match '(?i)wi-?fi|wireless|wlan|802\.11')
+    return @{ Name = $a.Name; Index = $a.ifIndex; Desc = "$($a.InterfaceDescription)"; Guid = "$($a.InterfaceGuid)"; Wifi = $wifi; DriverDate = (ConvertTo-DateSafe $a.DriverDate); DriverVersion = "$($a.DriverVersionString)" }
+}
+function Measure-Dns([string]$Server) {
+    $names = 'www.google.com', 'www.youtube.com', 'www.amazon.fr', 'www.wikipedia.org', 'www.microsoft.com'
+    $t = @()
+    foreach ($n in $names) {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            if ($Server) { $null = Resolve-DnsName -Name $n -Server $Server -DnsOnly -NoHostsFile -QuickTimeout -ErrorAction Stop }
+            else { $null = Resolve-DnsName -Name $n -DnsOnly -NoHostsFile -QuickTimeout -ErrorAction Stop }
+            $t += $sw.Elapsed.TotalMilliseconds
+        } catch { $t += 2000 }
+    }
+    $sorted = @($t | Sort-Object)
+    return [math]::Round($sorted[[int]($sorted.Count / 2)])
+}
+function Test-ConnectionStability {
+    $a = Get-ActiveAdapter
+    if (-not $a) { return }
+    $laptop = $false
+    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    # 1. Économie d'énergie de la carte réseau (Windows peut la couper) : proposé seulement sur un PC fixe
+    try {
+        $pm = Get-NetAdapterPowerManagement -Name $a.Name -ErrorAction Stop
+        if ("$($pm.AllowComputerToTurnOffDevice)" -eq 'Enabled') {
+            if (-not $laptop) {
+                Add-Issue -Id 'netpower' -Sev 'warn' -Title "Windows peut couper ta carte réseau pour économiser l'énergie" -Detail $a.Desc `
+                    -Cause "L'option « Autoriser l'ordinateur à éteindre ce périphérique » est activée : sur un PC fixe, c'est une cause classique de coupures et de déconnexions en jeu." `
+                    -Effect "Coupures de quelques secondes, déconnexions de Discord ou des jeux, connexion lente au réveil du PC." `
+                    -FixLabel "Désactiver cette économie d'énergie" -FixAction ("Set-NetAdapterSleep {0} `$false" -f (ConvertTo-PsLiteral $a.Name)) `
+                    -Confirm "La carte réseau ne sera plus mise en veille par Windows. La connexion peut se couper 2 ou 3 secondes pendant le réglage.`n`nTu pourras annuler dans l'historique des changements." `
+                    -Steps @("Le bouton désactive seulement cette option (annulable dans l'historique).", "À la main : Gestionnaire de périphériques > Cartes réseau > ta carte > Propriétés > Gestion de l'alimentation.")
+            } else { Add-Ok "Carte réseau : économie d'énergie active (normal sur un portable, pour la batterie)" }
+        } elseif ("$($pm.AllowComputerToTurnOffDevice)" -eq 'Disabled') { Add-Ok "Carte réseau : jamais mise en veille par Windows" }
+    } catch {}
+    # 2. Pilote Wi-Fi ancien
+    if ($a.Wifi -and $a.DriverDate) {
+        $age = [int]((Get-Date) - $a.DriverDate).TotalDays
+        if ($age -ge 730) {
+            $intel = ($a.Desc -match '(?i)intel|killer')
+            $url = if ($intel) { 'https://www.intel.fr/content/www/fr/fr/support/detect.html' } else { 'ms-settings:windowsupdate-optionalupdates' }
+            Add-Issue -Id 'wifidrv' -Sev 'warn' -Title ("Le pilote Wi-Fi date de {0}" -f (Format-Date $a.DriverDate 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $a.Desc, $a.DriverVersion) `
+                -Cause "Un pilote Wi-Fi ancien est une cause fréquente de coupures, de débit bas et de connexion qui saute après la veille." -Effect "Wi-Fi instable : déconnexions, lags et débit plus faible que prévu." `
+                -FixLabel $(if ($intel) { "Mettre à jour (outil Intel)" } else { "Voir les pilotes proposés" }) -FixAction ("Start-Process {0}; Log '   ✔ Ouvert'" -f (ConvertTo-PsLiteral $url)) -OpenOnly `
+                -Steps $(if ($intel) { @("Installe « Intel Driver & Support Assistant » depuis la page officielle.", "Lance-le : il trouve et installe le dernier pilote Wi-Fi.", "Redémarre le PC.") } else { @("Windows Update > Options avancées > Mises à jour facultatives > Pilotes : installe le pilote Wi-Fi s'il est proposé.", "Sinon, prends le pilote sur le site du fabricant du PC ou de la carte mère (onglet Mon PC > « Chercher sur le site officiel »).") })
+        } else { Add-Ok "Pilote Wi-Fi récent" }
+    }
+    # 3. DNS lents (mesurés) : proposition uniquement si l'écart est net
+    try {
+        $mine = Measure-Dns ''
+        $cf = Measure-Dns '1.1.1.1'
+        if ($mine -ge 80 -and $cf -lt 2000 -and $mine -ge 2 * $cf) {
+            Add-Issue -Id 'dnsslow' -Sev 'warn' -Title ("Les DNS de ta connexion sont lents ({0} ms)" -f $mine) -Detail ("Cloudflare (1.1.1.1) répond en {0} ms" -f $cf) `
+                -Cause "Le DNS traduit le nom des sites en adresses. Celui de ton fournisseur répond lentement : chaque nouveau site ou serveur de jeu met plus de temps à s'ouvrir." `
+                -Effect "Sites et lancements de jeux plus lents, parfois des « serveur introuvable »." `
+                -FixLabel "Utiliser les DNS de Cloudflare" -FixAction ("Set-FastDns {0}" -f $a.Index) `
+                -Confirm "Les DNS de ta carte réseau vont passer sur Cloudflare (1.1.1.1 et 1.0.0.1), gratuits et rapides.`n`nÀ éviter si ton PC est sur un réseau d'entreprise ou avec un contrôle parental du fournisseur.`n`nTu pourras remettre ceux d'avant dans l'historique des changements." `
+                -Steps @("Le bouton change seulement les DNS de cette carte réseau, et c'est annulable dans l'historique.", "Rien d'autre n'est modifié : Wi-Fi, box et mots de passe restent identiques.")
+        } else { Add-Ok ("DNS rapides ({0} ms)" -f $mine) }
+    } catch {}
+}
+function Set-NetAdapterSleep([string]$Name, [bool]$Allow) {
+    Step $(if ($Allow) { "Réactivation de l'économie d'énergie de la carte réseau" } else { "Désactivation de l'économie d'énergie de la carte réseau" })
+    try {
+        Set-NetAdapterPowerManagement -Name $Name -AllowComputerToTurnOffDevice $(if ($Allow) { 'Enabled' } else { 'Disabled' }) -ErrorAction Stop
+        Log ("   ✔ {0} : {1}" -f $Name, $(if ($Allow) { 'Windows peut de nouveau la mettre en veille.' } else { 'Windows ne la coupera plus.' }))
+        if (-not $Allow) { Add-Change -Title ("Carte réseau « {0} » : plus de mise en veille par Windows" -f $Name) -Undo ("Set-NetAdapterSleep {0} `$true" -f (ConvertTo-PsLiteral $Name)) }
+    } catch {
+        Add-TaskError -Title "Impossible de modifier la gestion d'énergie de la carte réseau" -Cause $_.Exception.Message -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc"
+    }
+}
+function Set-FastDns([int]$Index) {
+    Step "Passage aux DNS de Cloudflare (1.1.1.1)"
+    try {
+        $a = Get-NetAdapter -InterfaceIndex $Index -ErrorAction Stop
+        $key = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($a.InterfaceGuid)"
+        $static = "$((Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue).NameServer)".Trim()
+        Set-DnsClientServerAddress -InterfaceIndex $Index -ServerAddresses @('1.1.1.1', '1.0.0.1') -ErrorAction Stop
+        Clear-DnsClientCache -ErrorAction SilentlyContinue
+        Log "   ✔ DNS de « $($a.Name) » : 1.1.1.1 et 1.0.0.1"
+        $undo = if ($static) { "Restore-Dns {0} {1}" -f $Index, (ConvertTo-PsLiteral $static) } else { "Restore-Dns {0} ''" -f $Index }
+        Add-Change -Title ("DNS de « {0} » : Cloudflare (1.1.1.1)" -f $a.Name) -Detail $(if ($static) { "Avant : $static" } else { "Avant : DNS automatiques de la box / du fournisseur" }) -Undo $undo
+    } catch {
+        Add-TaskError -Title "Impossible de changer les DNS" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres réseau" -FixAction "Start-Process 'ms-settings:network-status'"
+    }
+}
+function Restore-Dns([int]$Index, [string]$Servers) {
+    Step "Retour aux DNS d'avant"
+    if ($Servers) { Set-DnsClientServerAddress -InterfaceIndex $Index -ServerAddresses @($Servers -split '[,\s]+' | Where-Object { $_ }) -ErrorAction Stop }
+    else { Set-DnsClientServerAddress -InterfaceIndex $Index -ResetServerAddresses -ErrorAction Stop }
+    Clear-DnsClientCache -ErrorAction SilentlyContinue
+    Log "   ✔ DNS remis comme avant."
+}
+
+# ---------------------------------------------------------------- Écrans (fréquence de rafraîchissement)
+function Get-Displays {
+    $list = New-Object System.Collections.ArrayList
+    $n = 0
+    foreach ($l in @([AeroxDisplay]::List())) {
+        $f = $l.Split('|'); if ($f.Count -lt 7) { continue }
+        $n++
+        $mon = $f[1]; if ($mon -match '(?i)generic|générique|^$|pnp') { $mon = '' }
+        $label = $(if ($f[6] -eq '1') { 'Écran principal' } else { "Écran $n" }) + $(if ($mon) { " ($mon)" } else { '' })
+        [void]$list.Add(@{ Device = $f[0]; Name = $label; Width = [int]$f[2]; Height = [int]$f[3]; Hz = [int]$f[4]; MaxHz = [int]$f[5]; Primary = ($f[6] -eq '1') })
+    }
+    return $list.ToArray()
+}
+function Test-DisplayHzLow($d) { return ($d.MaxHz -ge 100 -and ($d.MaxHz - $d.Hz) -ge 20) }
+function Test-Display {
+    foreach ($d in @(Get-Displays)) {
+        if (Test-DisplayHzLow $d) {
+            Add-Issue -Id ("hz" + ($d.Device -replace '\W', '')) -Sev 'warn' -Title ("{0} tourne à {1} Hz au lieu de {2} Hz" -f $d.Name, $d.Hz, $d.MaxHz) -Detail ("{0} x {1}" -f $d.Width, $d.Height) `
+                -Cause "Windows n'a jamais réglé l'écran à sa vraie fréquence : c'est très courant après une installation, un nouveau câble ou une mise à jour du pilote." `
+                -Effect ("L'image est rafraîchie {0} fois par seconde au lieu de {1} : jeux et mouvements de souris moins fluides." -f $d.Hz, $d.MaxHz) `
+                -FixLabel ("Passer à {0} Hz" -f $d.MaxHz) -UiFix 'display' `
+                -Steps @("Clique sur le bouton : l'écran passe à $($d.MaxHz) Hz. Si l'image ne s'affiche pas bien, ne touche à rien : l'ancien réglage revient tout seul au bout de 15 secondes.", "Si l'option n'apparaît pas ou ne tient pas : vérifie le câble (DisplayPort ou HDMI 2.0 minimum pour les hautes fréquences).")
+            $script:Issues[$script:Issues.Count - 1].Display = $d
+        } else { Add-Ok ("{0} : {1} Hz{2}" -f $d.Name, $d.Hz, $(if ($d.Hz -ge $d.MaxHz) { ' (le maximum possible)' } else { '' })) }
+    }
+}
+function Set-DisplayHz([string]$Device, [int]$Hz) {
+    Step ("Réglage de l'écran à {0} Hz" -f $Hz)
+    $r = [AeroxDisplay]::SetFrequency($Device, $Hz)
+    if ($r -eq 0) { Log ("   ✔ Écran réglé à {0} Hz." -f $Hz) }
+    else { Add-TaskError -Title "Impossible de régler l'écran à $Hz Hz" -Code "$r" -Cause "Windows ou le pilote de la carte graphique refuse ce réglage." -FixLabel "Ouvrir les paramètres d'affichage" -FixAction "Start-Process 'ms-settings:display-advanced'" }
+}
+
 # ---------------------------------------------------------------- Pilotes graphiques (version installée et dernière version)
 # NVIDIA : dernière version via l'API officielle de nvidia.com (identifiant du modèle tiré de la liste publique
 # ZenitH-AT/nvidia-data, utilisée aussi par TinyNvidiaUpdateChecker). AMD / Intel : pas d'API publique, on se fie à l'âge.
@@ -800,6 +934,7 @@ function Test-Network {
                 -Steps @("Le mieux : branche un câble Ethernet entre le PC et la box.", "Sinon : rapproche la box ou ajoute un répéteur Wi-Fi / CPL.", "Évite de poser la box dans un meuble fermé.")
         } else { Add-Ok "Signal Wi-Fi correct ($($n.Signal) %)" }
     }
+    if ($n.Internet -or $n.Dns) { Test-ConnectionStability }
 }
 
 function Get-StartupKey($Entry) { return ("$($Entry.ValueName)").ToLowerInvariant() }
@@ -887,7 +1022,7 @@ function Invoke-Diagnostic {
     $script:Issues = New-Object System.Collections.ArrayList
     $script:OkList = New-Object System.Collections.ArrayList
     $checks = [ordered]@{ 'Stockage' = 'Test-Storage'; 'Mémoire' = 'Test-Memory'; 'Système' = 'Test-SystemState'; 'Stabilité' = 'Test-Stability'; 'Mises à jour' = 'Test-Updates'
-                          'Pilotes' = 'Test-Drivers'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
+                          'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
     $sens = $sync.Sens
     if ($sens -and ($sens['cpu.temp'] -or $sens['gpu.temp'])) { $checks['Températures'] = 'Test-Temperatures' }
     $sync.Scan.Clear()
@@ -1847,11 +1982,19 @@ function Find-AppUpdate {
     try {
         if (-not $AppInfo.Repo) { return }
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        $r = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases/latest" -f $AppInfo.Repo) -Headers @{ 'User-Agent' = 'AeroxPCCare' } -TimeoutSec 10 -ErrorAction Stop
+        $h = @{ 'User-Agent' = 'AeroxPCCare' }
+        if ($AppInfo.Beta) {
+            # Canal test : la version la plus récente, versions de test (pré-versions) comprises
+            $all = @(Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases?per_page=15" -f $AppInfo.Repo) -Headers $h -TimeoutSec 10 -ErrorAction Stop)
+            $r = $all | Where-Object { -not $_.draft -and ($_.tag_name -replace '^[vV]', '') -as [version] } | Sort-Object { [version]($_.tag_name -replace '^[vV]', '') } -Descending | Select-Object -First 1
+            if (-not $r) { return }
+        } else {
+            $r = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases/latest" -f $AppInfo.Repo) -Headers $h -TimeoutSec 10 -ErrorAction Stop
+        }
         $v = ($r.tag_name -replace '^[vV]', '')
         if ([version]$v -gt [version]$AppInfo.Version) {
             $asset = @($r.assets | Where-Object { $_.name -match '(?i)setup.*\.exe$' }) | Select-Object -First 1
-            $sync.UpdateInfo = @{ Version = $v; Url = $r.html_url; Notes = "$($r.body)"
+            $sync.UpdateInfo = @{ Version = $v; Url = $r.html_url; Notes = "$($r.body)"; Test = [bool]$r.prerelease
                                   Setup = $(if ($asset) { [string]$asset.browser_download_url } else { '' })
                                   Digest = $(if ($asset -and $asset.digest) { [string]$asset.digest } else { '' }) }
         }

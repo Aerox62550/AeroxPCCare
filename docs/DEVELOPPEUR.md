@@ -14,18 +14,17 @@
 
 Construire en local (Linux / WSL) : `sudo apt install mono-devel nsis zip python3` puis `./build.sh`.
 
-## Publier une nouvelle version (automatique)
+## Publier une nouvelle version (automatique, en deux temps)
 
-1. Corrige / ajoute ce qu'il faut, puis augmente `$AppVersion` dans `src/1_head.ps1` (ex. `1.0.0` → `1.0.1`).
-2. Pousse sur la branche `main`.
-3. GitHub Actions (« Publier une version ») voit le nouveau numéro, construit le logiciel et crée la
-   **Release** `v1.0.1` avec :
-   - `AeroxPCCare_Setup.exe` : l'installateur pour les nouveaux utilisateurs (lien direct stable :
-     `https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe`).
-4. Au prochain démarrage, chaque PC voit « Nouvelle version disponible » > **Mettre à jour**.
+1. Corrige / ajoute ce qu'il faut, augmente `$AppVersion` dans `src/1_head.ps1` (ex. `1.2.0` → `1.2.1`)
+   et mets `test` dans `canal.txt`. Pousse sur `main`.
+2. GitHub Actions publie la version en **pré-version** : seuls les PC en **canal test** la reçoivent
+   (canal test : 7 clics rapides sur le numéro de version en bas à gauche du logiciel).
+3. Quand elle est validée, mets `public` dans `canal.txt` et pousse : la même version passe en public,
+   et tous les PC voient « Mettre à jour ».
 
-Tant que `$AppVersion` ne change pas, les envois sur `main` ne publient rien.
-Numérotation : `1.0.1` pour une correction, `1.1.0` pour une nouvelle fonction.
+Le lien direct de l'installateur (`.../releases/latest/download/AeroxPCCare_Setup.exe`) donne toujours
+la dernière version **publique**. Numérotation : `1.2.1` pour une correction, `1.3.0` pour une nouvelle fonction.
 
 ## 1. Les rapports de bug
 

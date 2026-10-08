@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.1.3
+﻿AEROX PC Care - v1.2.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -88,6 +88,14 @@ HISTORIQUE ET ANNULATION
 Accueil ou onglet Aide > « Historique des changements » : tout ce qu'AEROX PC Care a
 modifié sur le PC. Chaque réglage (programmes au démarrage, mode d'alimentation,
 nettoyage automatique, veille prolongée) se remet comme avant avec « Annuler ».
+
+ÉCRAN ET CONNEXION
+------------------
+Le diagnostic repère un écran 144 / 165 Hz bloqué à 60 Hz et le règle en un clic
+(retour automatique au bout de 15 secondes si l'image ne s'affiche pas bien).
+Il vérifie aussi les causes classiques de coupures : carte réseau mise en veille par
+Windows, pilote Wi-Fi ancien, DNS lents. Rien n'est changé sans ton accord, et chaque
+réglage s'annule depuis l'historique.
 
 PILOTES GRAPHIQUES
 ------------------

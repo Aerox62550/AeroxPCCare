@@ -649,3 +649,72 @@ public static class AeroxSpeed {
         return (endB - warmBytes) * 8 / ((endT - warmT) / 1000.0) / 1e6;
     }
 }
+
+// Écrans : fréquence actuelle et fréquence maximale possible à la résolution actuelle, et changement
+// de fréquence (API officielle de Windows, la même que Paramètres > Affichage > Affichage avancé).
+public static class AeroxDisplay {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct DISPLAY_DEVICE {
+        public int cb;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+        public int StateFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct DEVMODE {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+        public int dmFields;
+        public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+        public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplayDevices(string lpDevice, int iDevNum, ref DISPLAY_DEVICE dd, int flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettings(string name, int mode, ref DEVMODE dm);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsEx(string name, ref DEVMODE dm, IntPtr hwnd, int flags, IntPtr lParam);
+    const int ENUM_CURRENT_SETTINGS = -1, DM_DISPLAYFREQUENCY = 0x400000, DM_INTERLACED = 2;
+    const int CDS_UPDATEREGISTRY = 1, CDS_TEST = 2;
+    const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 1, DISPLAY_DEVICE_PRIMARY_DEVICE = 4;
+
+    // Une ligne par écran : "nom_windows|nom_écran|largeur|hauteur|Hz_actuel|Hz_max|principal(0/1)"
+    public static string[] List() {
+        List<string> outp = new List<string>();
+        for (int i = 0; i < 16; i++) {
+            DISPLAY_DEVICE ad = new DISPLAY_DEVICE(); ad.cb = Marshal.SizeOf(ad);
+            if (!EnumDisplayDevices(null, i, ref ad, 0)) break;
+            if ((ad.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) == 0) continue;
+            DEVMODE cur = NewMode();
+            if (!EnumDisplaySettings(ad.DeviceName, ENUM_CURRENT_SETTINGS, ref cur)) continue;
+            int max = cur.dmDisplayFrequency;
+            DEVMODE m = NewMode();
+            for (int k = 0; EnumDisplaySettings(ad.DeviceName, k, ref m); k++) {
+                if (m.dmPelsWidth == cur.dmPelsWidth && m.dmPelsHeight == cur.dmPelsHeight && m.dmBitsPerPel == cur.dmBitsPerPel
+                    && (m.dmDisplayFlags & DM_INTERLACED) == 0 && m.dmDisplayFrequency > max && m.dmDisplayFrequency < 1000) max = m.dmDisplayFrequency;
+                m = NewMode();
+            }
+            string mon = "";
+            DISPLAY_DEVICE md = new DISPLAY_DEVICE(); md.cb = Marshal.SizeOf(md);
+            if (EnumDisplayDevices(ad.DeviceName, 0, ref md, 0)) mon = md.DeviceString;
+            outp.Add(Clean(ad.DeviceName) + "|" + Clean(mon) + "|" + cur.dmPelsWidth + "|" + cur.dmPelsHeight + "|" + cur.dmDisplayFrequency + "|" + max + "|" + ((ad.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0 ? "1" : "0"));
+        }
+        return outp.ToArray();
+    }
+
+    // Change la fréquence de l'écran (même résolution). Renvoie 0 si c'est fait, un code Windows sinon.
+    public static int SetFrequency(string device, int hz) {
+        DEVMODE cur = NewMode();
+        if (!EnumDisplaySettings(device, ENUM_CURRENT_SETTINGS, ref cur)) return -100;
+        cur.dmDisplayFrequency = hz; cur.dmFields = DM_DISPLAYFREQUENCY;
+        int t = ChangeDisplaySettingsEx(device, ref cur, IntPtr.Zero, CDS_TEST, IntPtr.Zero);
+        if (t != 0) return t;
+        return ChangeDisplaySettingsEx(device, ref cur, IntPtr.Zero, CDS_UPDATEREGISTRY, IntPtr.Zero);
+    }
+
+    static DEVMODE NewMode() { DEVMODE d = new DEVMODE(); d.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)); return d; }
+    static string Clean(string s) { return (s ?? "").Replace('|', '/').Trim(); }
+}
