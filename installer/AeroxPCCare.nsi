@@ -80,13 +80,22 @@ FunctionEnd
 !insertmacro MUI_LANGUAGE "French"
 
 ; ------------------------------------------------------------------ Logiciel ouvert ?
+; Le logiciel est-il ouvert ? (noms exacts : l'installateur lui-même s'appelle aussi « AeroxPCCare_Setup… »)
+
 Function CheckRunning
   StrCpy $3 0
   retry:
-    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq AEROX*" /NH'
+    StrCpy $2 ""
+    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${EXENAME}" /NH'
     Pop $0
     Pop $1
-    ${StrStr} $2 $1 "AEROX"
+    ${StrStr} $2 $1 "${EXENAME}"
+    ${If} $2 == ""
+      nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${OLDEXE}" /NH'
+      Pop $0
+      Pop $1
+      ${StrStr} $2 $1 "${OLDEXE}"
+    ${EndIf}
     ${If} $2 != ""
     ${AndIf} $IsUpdate == 1
     ${AndIf} $3 < 15
@@ -102,10 +111,17 @@ FunctionEnd
 
 Function un.CheckRunning
   retry:
-    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq AEROX*" /NH'
+    StrCpy $2 ""
+    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${EXENAME}" /NH'
     Pop $0
     Pop $1
-    ${UnStrStr} $2 $1 "AEROX"
+    ${UnStrStr} $2 $1 "${EXENAME}"
+    ${If} $2 == ""
+      nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${OLDEXE}" /NH'
+      Pop $0
+      Pop $1
+      ${UnStrStr} $2 $1 "${OLDEXE}"
+    ${EndIf}
     ${If} $2 != ""
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." IDRETRY retry
       Abort
