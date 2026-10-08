@@ -38,7 +38,7 @@ jobs:
 
       - name: Outils de construction
         if: steps.v.outputs.publier == 'oui'
-        run: sudo apt-get update && sudo apt-get install -y mono-devel nsis zip
+        run: sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y --no-install-recommends mono-devel nsis zip
 
       - name: Construire
         if: steps.v.outputs.publier == 'oui'
