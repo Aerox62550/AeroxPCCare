@@ -16,12 +16,14 @@ Construire en local (Linux / WSL) : `sudo apt install mono-devel nsis zip python
 ## Publier une nouvelle version (automatique)
 
 1. Corrige / ajoute ce qu'il faut, puis augmente `$AppVersion` dans `src/1_head.ps1` (ex. `1.0.0` → `1.0.1`).
-2. Pousse le code, puis une étiquette du même numéro : `git tag v1.0.1 && git push origin v1.0.1`.
-3. GitHub Actions construit le logiciel et crée la **Release** avec :
+2. Pousse sur la branche `main`.
+3. GitHub Actions (« Publier une version ») voit le nouveau numéro, construit le logiciel et crée la
+   **Release** `v1.0.1` avec :
    - `AeroxPCCare_v1.0.1.zip` : utilisé par la mise à jour automatique ;
    - `AeroxPCCare_Setup_v1.0.1.exe` : l'installateur pour les nouveaux utilisateurs.
 4. Au prochain démarrage, chaque PC voit « Nouvelle version disponible » > **Mettre à jour**.
 
+Tant que `$AppVersion` ne change pas, les envois sur `main` ne publient rien.
 Numérotation : `1.0.1` pour une correction, `1.1.0` pour une nouvelle fonction.
 
 ## 1. Les rapports de bug
