@@ -5,7 +5,7 @@
 <p align="center">Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11.<br>
 Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa cause et un bouton pour le régler.</p>
 
-<p align="center"><a href="../../releases/latest"><b>⬇ Télécharger la dernière version</b></a></p>
+<p align="center"><a href="https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe"><b>⬇ Télécharger AEROX PC Care (installateur Windows)</b></a></p>
 
 ---
 
@@ -37,7 +37,9 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 
 ## Installation
 
-1. Télécharge `AeroxPCCare_Setup_vX.Y.Z.exe` dans la [dernière version](../../releases/latest).
+1. Télécharge **[AeroxPCCare_Setup.exe](https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe)**
+   (ou dans la [dernière version](../../releases/latest), fichier `AeroxPCCare_Setup.exe`).
+   ⚠️ Ne prends pas « Source code (zip) » : c'est le code du logiciel, pas le programme.
 2. Lance-le. Si Windows affiche « Windows a protégé votre ordinateur » :
    **Informations complémentaires** > **Exécuter quand même** (le logiciel n'est pas encore signé).
 3. Ouvre AEROX PC Care depuis le Bureau et clique sur **Lancer le diagnostic**.
@@ -52,7 +54,7 @@ Téléchargés à la demande depuis leurs sources officielles, jamais inclus dan
 [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) (MPL-2.0),
 [PawnIO](https://github.com/namazso/PawnIO.Setup),
 [PresentMon](https://github.com/GameTechDev/PresentMon) d'Intel (MIT).
-Le test de débit utilise les serveurs publics de Cloudflare (speed.cloudflare.com).
+Le test de débit utilise [Speedtest® CLI by Ookla](https://www.speedtest.net/apps/cli) (téléchargé à la demande, gratuit pour un usage personnel, [conditions](https://www.speedtest.net/about/eula)), et les serveurs publics de Cloudflare en secours.
 
 ## Développement
 

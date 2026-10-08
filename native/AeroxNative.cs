@@ -385,82 +385,206 @@ public static class AeroxUpdate {
     }
 }
 
-// Test de débit (comme Speedtest) avec les serveurs publics de Cloudflare (speed.cloudflare.com).
-// Plusieurs connexions en parallèle pendant ~8 s dans chaque sens, comme les vrais tests de débit.
+// Test de débit.
+// 1) Moteur principal : Speedtest® CLI d'Ookla (l'outil officiel de speedtest.net, mêmes serveurs et
+//    même méthode que le site : résultats comparables). Téléchargé à la demande depuis install.speedtest.net.
+// 2) Secours : serveurs publics de Cloudflare (speed.cloudflare.com) si Ookla est indisponible.
 public static class AeroxSpeed {
-    const string Base = "https://speed.cloudflare.com/";
-    public static volatile string Phase = "";      // meta, ping, down, up, done, error, stopped
+    const string CfBase = "https://speed.cloudflare.com/";
+    public const string OoklaZip = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip";
+    public static volatile string Phase = "";      // install, meta, ping, down, up, done, error, stopped
     public static volatile bool Stop = false;
-    public static double Ping = -1, Jitter = -1, Down = -1, Up = -1, Live = 0, Percent = 0;
-    public static string Error = "", Isp = "", City = "", Colo = "";
+    public static double Ping = -1, Jitter = -1, Down = -1, Up = -1, Live = 0, Percent = 0, Loss = -1;
+    public static string Error = "", Isp = "", City = "", Colo = "", Engine = "", Server = "", ResultUrl = "", Note = "";
     static Thread th;
+    static Process proc;
     static long bytes;
     public static bool Running { get { return th != null && th.IsAlive; } }
 
-    public static void Start() {
-        if (Running) return;
-        Phase = "meta"; Stop = false; Ping = -1; Jitter = -1; Down = -1; Up = -1; Live = 0; Percent = 0; Error = ""; Isp = ""; City = ""; Colo = "";
-        th = new Thread(Run); th.IsBackground = true; th.Start();
+    static void Reset() {
+        Phase = "meta"; Stop = false; Ping = -1; Jitter = -1; Down = -1; Up = -1; Live = 0; Percent = 0; Loss = -1;
+        Error = ""; Isp = ""; City = ""; Colo = ""; Engine = ""; Server = ""; ResultUrl = ""; Note = "";
     }
 
-    static void Run() {
-        try {
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            ServicePointManager.DefaultConnectionLimit = Math.Max(ServicePointManager.DefaultConnectionLimit, 32);
-            ServicePointManager.Expect100Continue = false;
-            Meta();
+    // ookla : dossier où se trouve (ou sera installé) speedtest.exe ; null = Cloudflare directement
+    public static void Start(string ooklaDir) {
+        if (Running) return;
+        Reset();
+        th = new Thread(delegate() { Run(ooklaDir); }); th.IsBackground = true; th.Start();
+    }
+
+    public static void Cancel() {
+        Stop = true;
+        try { if (proc != null && !proc.HasExited) proc.Kill(); } catch { }
+    }
+
+    static void Run(string ooklaDir) {
+        ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+        string ooklaErr = null;
+        if (!string.IsNullOrEmpty(ooklaDir)) {
+            try { if (RunOokla(ooklaDir)) return; }
+            catch (Exception ex) { ooklaErr = Inner(ex).Message; }
             if (Stop) { Phase = "stopped"; return; }
-            Phase = "ping"; PingTest();
-            if (Stop) { Phase = "stopped"; return; }
-            Phase = "down"; Down = Transfer(true, 6, 8000);
-            if (Stop) { Phase = "stopped"; return; }
-            Phase = "up"; Up = Transfer(false, 4, 8000);
-            Live = 0; Percent = 100;
-            Phase = Stop ? "stopped" : "done";
-        } catch (Exception ex) {
-            Exception e = ex; while (e.InnerException != null) e = e.InnerException;
-            Error = e.Message; Phase = "error";
+            if (ooklaErr == null) ooklaErr = Error;
         }
+        // Secours : Cloudflare
+        Ping = -1; Jitter = -1; Down = -1; Up = -1; Live = 0; Percent = 0; Error = ""; Server = ""; ResultUrl = "";
+        if (ooklaErr != null) Note = "Speedtest d'Ookla indisponible (" + ooklaErr + ") : test fait avec les serveurs de Cloudflare.";
+        try { RunCloudflare(); }
+        catch (Exception ex) {
+            Exception e = Inner(ex);
+            Error = e.Message;
+            if (e is WebException && ((WebException)e).Response is HttpWebResponse && (int)((HttpWebResponse)((WebException)e).Response).StatusCode == 429)
+                Error = "le serveur de test limite le nombre d'essais d'affilée. Réessaie dans une à deux minutes.";
+            Phase = "error";
+        }
+    }
+    static Exception Inner(Exception e) { while (e.InnerException != null) e = e.InnerException; return e; }
+
+    // ------------------------------------------------------------------ Ookla
+    static bool RunOokla(string dir) {
+        string exe = Path.Combine(dir, "speedtest.exe");
+        if (!File.Exists(exe)) {
+            Phase = "install";
+            Directory.CreateDirectory(dir);
+            string zip = Path.Combine(dir, "speedtest.zip");
+            using (WebClient wc = new WebClient()) { wc.Headers.Add("User-Agent", "AeroxPCCare"); wc.DownloadFile(OoklaZip, zip); }
+            using (ZipArchive z = ZipFile.OpenRead(zip)) {
+                foreach (ZipArchiveEntry e in z.Entries) {
+                    if (e.Name.Length == 0) continue;
+                    e.ExtractToFile(Path.Combine(dir, e.Name), true);
+                }
+            }
+            try { File.Delete(zip); } catch { }
+            if (!File.Exists(exe)) throw new Exception("speedtest.exe introuvable dans le paquet d'Ookla");
+        }
+        Phase = "meta"; Engine = "ookla";
+        ProcessStartInfo psi = new ProcessStartInfo(exe, "--accept-license --accept-gdpr --format=jsonl --progress=yes");
+        psi.UseShellExecute = false; psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true; psi.RedirectStandardError = true;
+        psi.StandardOutputEncoding = Encoding.UTF8; psi.StandardErrorEncoding = Encoding.UTF8;
+        psi.WorkingDirectory = dir;
+        proc = new Process(); proc.StartInfo = psi;
+        string lastErr = null; bool gotResult = false;
+        proc.ErrorDataReceived += delegate(object s, DataReceivedEventArgs e) {
+            if (string.IsNullOrEmpty(e.Data)) return;
+            string m = Str(e.Data, "message"); if (m.Length == 0) m = e.Data.Trim();
+            if (m.Length > 0 && (e.Data.IndexOf("\"error\"", StringComparison.OrdinalIgnoreCase) >= 0 || e.Data.IndexOf("[error]", StringComparison.OrdinalIgnoreCase) >= 0 || !e.Data.StartsWith("{"))) lastErr = m;
+        };
+        proc.Start(); proc.BeginErrorReadLine();
+        string line;
+        while ((line = proc.StandardOutput.ReadLine()) != null) {
+            if (Stop) break;
+            string type = Str(line, "type");
+            switch (type) {
+                case "testStart":
+                    Isp = Str(line, "isp");
+                    Server = Str(Obj(line, "server"), "name"); City = Str(Obj(line, "server"), "location");
+                    Phase = "ping"; break;
+                case "ping": {
+                    string o = Obj(line, "ping");
+                    Ping = Num(o, "latency", Ping); Jitter = Num(o, "jitter", Jitter);
+                    Percent = 10 * Num(o, "progress", 0); Phase = "ping"; break; }
+                case "download": {
+                    string o = Obj(line, "download");
+                    double bw = Num(o, "bandwidth", -1); if (bw >= 0) Live = bw * 8 / 1e6;
+                    Percent = 10 + 45 * Num(o, "progress", 0); Phase = "down"; break; }
+                case "upload": {
+                    string o = Obj(line, "upload");
+                    if (Phase == "down" && Live > 0 && Down < 0) Down = Live;
+                    double bw = Num(o, "bandwidth", -1); if (bw >= 0) Live = bw * 8 / 1e6;
+                    Percent = 55 + 45 * Num(o, "progress", 0); Phase = "up"; break; }
+                case "result": {
+                    string pg = Obj(line, "ping"), dn = Obj(line, "download"), up = Obj(line, "upload");
+                    Ping = Num(pg, "latency", Ping); Jitter = Num(pg, "jitter", Jitter);
+                    double b = Num(dn, "bandwidth", -1); if (b >= 0) Down = b * 8 / 1e6;
+                    b = Num(up, "bandwidth", -1); if (b >= 0) Up = b * 8 / 1e6;
+                    Loss = Num(line, "packetLoss", -1);
+                    if (Isp.Length == 0) Isp = Str(line, "isp");
+                    if (Server.Length == 0) { Server = Str(Obj(line, "server"), "name"); City = Str(Obj(line, "server"), "location"); }
+                    ResultUrl = Str(Obj(line, "result"), "url");
+                    gotResult = true; break; }
+                case "log":
+                    if (Str(line, "level") == "error") lastErr = Str(line, "message");
+                    break;
+            }
+        }
+        try { proc.WaitForExit(5000); } catch { }
+        if (Stop) { Phase = "stopped"; return true; }
+        if (gotResult && Down >= 0) { Live = 0; Percent = 100; Phase = "done"; return true; }
+        Error = string.IsNullOrEmpty(lastErr) ? "pas de résultat" : lastErr;
+        return false;
+    }
+
+    // Petits lecteurs JSON (sans dépendance) : objet "nom":{...} de premier niveau, champ texte ou nombre
+    static string Obj(string j, string name) {
+        int i = j.IndexOf("\"" + name + "\":{", StringComparison.Ordinal);
+        if (i < 0) return "";
+        int start = j.IndexOf('{', i), depth = 0;
+        for (int k = start; k < j.Length; k++) {
+            if (j[k] == '{') depth++;
+            else if (j[k] == '}') { depth--; if (depth == 0) return j.Substring(start, k - start + 1); }
+        }
+        return j.Substring(start);
+    }
+    static string Str(string j, string k) {
+        Match m = Regex.Match(j, "\"" + k + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+        return m.Success ? Regex.Unescape(m.Groups[1].Value) : "";
+    }
+    static double Num(string j, string k, double def) {
+        Match m = Regex.Match(j, "\"" + k + "\"\\s*:\\s*(-?[0-9.]+(?:[eE][-+]?[0-9]+)?)");
+        double v;
+        if (m.Success && double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out v)) return v;
+        return def;
+    }
+
+    // ------------------------------------------------------------------ Cloudflare (secours)
+    static void RunCloudflare() {
+        Engine = "cloudflare";
+        ServicePointManager.DefaultConnectionLimit = Math.Max(ServicePointManager.DefaultConnectionLimit, 32);
+        ServicePointManager.Expect100Continue = false;
+        Phase = "meta"; CfMeta();
+        if (Stop) { Phase = "stopped"; return; }
+        Phase = "ping"; IcmpPing();
+        if (Stop) { Phase = "stopped"; return; }
+        Phase = "down"; Down = Transfer(true, 4, 9000);
+        if (Stop) { Phase = "stopped"; return; }
+        Phase = "up"; Up = Transfer(false, 4, 9000);
+        Live = 0; Percent = 100;
+        Phase = Stop ? "stopped" : "done";
     }
 
     static HttpWebRequest Req(string url, string method) {
         HttpWebRequest r = (HttpWebRequest)WebRequest.Create(url);
         r.Method = method; r.UserAgent = "AeroxPCCare"; r.KeepAlive = true; r.Timeout = 15000; r.ReadWriteTimeout = 15000;
-        r.Proxy = WebRequest.DefaultWebProxy;
-        r.AutomaticDecompression = DecompressionMethods.None;
+        r.Proxy = WebRequest.DefaultWebProxy; r.AutomaticDecompression = DecompressionMethods.None;
         return r;
     }
-
-    static void Meta() {
+    static void CfMeta() {
         try {
-            HttpWebRequest r = Req(Base + "meta", "GET");
-            using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse())
+            using (HttpWebResponse resp = (HttpWebResponse)Req(CfBase + "meta", "GET").GetResponse())
             using (StreamReader sr = new StreamReader(resp.GetResponseStream())) {
                 string j = sr.ReadToEnd();
-                Isp = JsonField(j, "asOrganization"); City = JsonField(j, "city"); Colo = JsonField(j, "colo");
+                Isp = Str(j, "asOrganization"); City = Str(j, "city"); Colo = Str(j, "colo"); Server = "Cloudflare";
             }
         } catch { }
     }
-    static string JsonField(string j, string k) {
-        Match m = Regex.Match(j, "\"" + k + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
-        return m.Success ? Regex.Unescape(m.Groups[1].Value) : "";
-    }
-
-    // Latence : temps de réponse d'une requête vide (connexion déjà ouverte), 15 mesures
-    static void PingTest() {
+    // Ping réseau (ICMP) vers 1.1.1.1, servi par le centre Cloudflare le plus proche
+    static void IcmpPing() {
         List<double> t = new List<double>();
-        for (int i = 0; i < 16 && !Stop; i++) {
-            Stopwatch sw = Stopwatch.StartNew();
-            HttpWebRequest r = Req(Base + "__down?bytes=0", "GET");
-            using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse()) { using (Stream s = resp.GetResponseStream()) { s.ReadByte(); } }
-            sw.Stop();
-            if (i > 0) t.Add(sw.Elapsed.TotalMilliseconds);   // la 1re mesure inclut l'ouverture de la connexion
-            Percent = i * 100.0 / 16;
-            Thread.Sleep(60);
+        using (System.Net.NetworkInformation.Ping p = new System.Net.NetworkInformation.Ping()) {
+            for (int i = 0; i < 12 && !Stop; i++) {
+                try {
+                    System.Net.NetworkInformation.PingReply r = p.Send("1.1.1.1", 2000);
+                    if (r.Status == System.Net.NetworkInformation.IPStatus.Success) t.Add(r.RoundtripTime);
+                } catch { }
+                Percent = i * 100.0 / 12;
+                Thread.Sleep(100);
+            }
         }
         if (t.Count == 0) return;
         List<double> sorted = new List<double>(t); sorted.Sort();
-        Ping = sorted[Math.Max(0, sorted.Count / 4)];          // 1er quartile : robuste aux pics
+        Ping = sorted[sorted.Count / 2];
         double j = 0; for (int i = 1; i < t.Count; i++) j += Math.Abs(t[i] - t[i - 1]);
         Jitter = t.Count > 1 ? j / (t.Count - 1) : 0;
     }
@@ -468,20 +592,20 @@ public static class AeroxSpeed {
     static double Transfer(bool down, int streams, int durationMs) {
         bytes = 0; Live = 0; Percent = 0;
         Stopwatch clock = Stopwatch.StartNew();
-        long warmBytes = -1; double warmT = 0; const int warm = 1500;
+        long warmBytes = -1; double warmT = 0; const int warm = 2000;
         List<Thread> ts = new List<Thread>();
         List<HttpWebRequest> live = new List<HttpWebRequest>();
         object lk = new object();
-        string err = null;
+        Exception err = null;
         for (int n = 0; n < streams; n++) {
             Thread t = new Thread(delegate() {
-                byte[] buf = new byte[65536];
+                byte[] buf = new byte[131072];
                 if (!down) new Random().NextBytes(buf);
                 while (!Stop && clock.ElapsedMilliseconds < durationMs) {
                     HttpWebRequest r = null;
                     try {
                         if (down) {
-                            r = Req(Base + "__down?bytes=25000000", "GET");
+                            r = Req(CfBase + "__down?bytes=100000000", "GET");
                             lock (lk) live.Add(r);
                             using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse())
                             using (Stream s = resp.GetResponseStream()) {
@@ -490,28 +614,28 @@ public static class AeroxSpeed {
                                     Interlocked.Add(ref bytes, k);
                                     if (Stop || clock.ElapsedMilliseconds >= durationMs) break;
                                 }
-                                // Arrêt en cours de route : on coupe la connexion (sinon .NET lit la fin du fichier)
                                 if (k > 0) r.Abort();
                             }
                         } else {
-                            const int size = 8 * 1024 * 1024;
-                            r = Req(Base + "__up", "POST");
+                            const int size = 50 * 1024 * 1024;
+                            r = Req(CfBase + "__up", "POST");
                             r.ContentType = "application/octet-stream"; r.ContentLength = size; r.AllowWriteStreamBuffering = false; r.SendChunked = false;
                             lock (lk) live.Add(r);
+                            bool cut = false;
                             using (Stream s = r.GetRequestStream()) {
                                 int sent = 0;
                                 while (sent < size) {
                                     int k = Math.Min(buf.Length, size - sent);
                                     s.Write(buf, 0, k); sent += k;
                                     Interlocked.Add(ref bytes, k);
-                                    if (Stop || clock.ElapsedMilliseconds >= durationMs) break;
+                                    if (Stop || clock.ElapsedMilliseconds >= durationMs) { cut = true; break; }
                                 }
-                                if (sent < size) { r.Abort(); continue; }
+                                if (cut) r.Abort();
                             }
-                            using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse()) { }
+                            if (!cut) { using (HttpWebResponse resp = (HttpWebResponse)r.GetResponse()) { } }
                         }
                     } catch (Exception ex) {
-                        if (!Stop && clock.ElapsedMilliseconds < durationMs) { lock (lk) { if (err == null) err = ex.Message; } Thread.Sleep(300); }
+                        if (!Stop && clock.ElapsedMilliseconds < durationMs) { lock (lk) { if (err == null) err = ex; } Thread.Sleep(500); }
                     } finally {
                         if (r != null) { lock (lk) live.Remove(r); try { r.Abort(); } catch { } }
                     }
@@ -519,7 +643,6 @@ public static class AeroxSpeed {
             });
             t.IsBackground = true; ts.Add(t); t.Start();
         }
-        // Suivi en direct (débit sur la dernière seconde)
         Queue<double[]> win = new Queue<double[]>();
         while (clock.ElapsedMilliseconds < durationMs && !Stop) {
             Thread.Sleep(200);
@@ -535,9 +658,8 @@ public static class AeroxSpeed {
         lock (lk) { foreach (HttpWebRequest r in live) { try { r.Abort(); } catch { } } }
         foreach (Thread t in ts) t.Join(3000);
         if (Stop) return -1;
+        if (endB == 0 && err != null) throw err;
         if (warmBytes < 0) { warmBytes = 0; warmT = 0; }
-        double mbps = (endB - warmBytes) * 8 / ((endT - warmT) / 1000.0) / 1e6;
-        if (endB == 0 && err != null) throw new Exception(err);
-        return mbps;
+        return (endB - warmBytes) * 8 / ((endT - warmT) / 1000.0) / 1e6;
     }
 }

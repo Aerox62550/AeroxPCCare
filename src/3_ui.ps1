@@ -443,7 +443,7 @@ $PageDefs = [ordered]@{
     @{ T = "Pilotes (drivers)"; B = "Vérifier"; A = "Open-DriverUpdates"; D = "Affiche ta carte graphique avec le bon outil officiel pour la mettre à jour, et ouvre les mises à jour de pilotes de Windows." },
     @{ T = "Ouvrir Windows Update"; B = "Ouvrir"; A = "Open-WindowsUpdate"; D = "Ouvre la page Windows Update des Paramètres, si tu préfères regarder toi-même." }) }
  repair = @{ Title = "Réparation"; Sub = "Pour les bugs, les plantages, les problèmes de connexion ou un Windows Update bloqué."; Cards = @(
-    @{ T = "Test de débit Internet"; Badge = "Comme Speedtest"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
+    @{ T = "Test de débit Internet"; Badge = "Speedtest® by Ookla"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
     @{ T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
     @{ T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
     @{ T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
@@ -1056,7 +1056,7 @@ function Get-ActiveLink {
     } catch { return $null }
 }
 function Format-Mbps($v) { if ($null -eq $v -or $v -lt 0) { return '—' }; if ($v -ge 100) { return ('{0:N0}' -f $v) }; return ('{0:N1}' -f $v) }
-function Get-SpeedVerdict($Down, $Up, $Ping, $Jitter, $Link) {
+function Get-SpeedVerdict($Down, $Up, $Ping, $Jitter, $Link, $Loss = -1) {
     $lines = New-Object System.Collections.ArrayList
     $dv = if ($Down -lt 5) { @('Très lent', '#FF6B6B', "Même une vidéo en HD risque de saccader.") }
           elseif ($Down -lt 25) { @('Correct', '#FFB547', "Suffisant pour la vidéo HD et le jeu en ligne, mais télécharger un jeu sera long.") }
@@ -1070,6 +1070,7 @@ function Get-SpeedVerdict($Down, $Up, $Ping, $Jitter, $Link) {
           else { @('Élevé', '#FF6B6B', "Le jeu en ligne va être pénible (décalage, « lag »).") }
     [void]$lines.Add(@(("Ping : " + $pv[0]), $pv[1], $pv[2]))
     if ($Jitter -ge 15) { [void]$lines.Add(@("Connexion instable", '#FFB547', ("Le ping varie beaucoup ({0:N0} ms de variation) : c'est ce qui donne des « lags » par moments. Cause la plus fréquente : le Wi-Fi, ou quelqu'un qui télécharge en même temps sur le réseau." -f $Jitter))) }
+    if ($Loss -gt 1) { [void]$lines.Add(@(("Perte de paquets : {0:N1} %" -f $Loss), '#FF6B6B', "Des données se perdent en route : coupures en jeu, appels qui hachent. Causes fréquentes : Wi-Fi faible, câble abîmé, box à redémarrer ou souci chez le fournisseur.")) }
     if ($Up -ge 0 -and $Up -lt 5) { [void]$lines.Add(@("Envoi lent", '#FFB547', "Le streaming (Twitch), les appels vidéo et l'envoi de gros fichiers seront limités.")) }
     if ($Link -and $Link.Wifi) {
         $t = "Tu es en Wi-Fi" + $(if ($Link.Signal -ge 0) { " (signal $($Link.Signal) %)" } else { '' }) + ". Pour connaître le vrai débit de ta box, refais le test avec un câble Ethernet : en Wi-Fi on perd souvent 30 à 70 %."
@@ -1090,7 +1091,12 @@ function Show-SpeedTestDialog {
     $script:SpWin = $w
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
     Add-Child $sp (New-Text "Test de débit Internet" 18 '#FFFFFF' 'Bold')
-    $sub = New-Text "Ferme les téléchargements et les vidéos en cours pour un résultat juste. Le test dure environ 25 secondes." 13 '#A9B0C2'; $sub.Margin = Th 0 6 0 16; Add-Child $sp $sub
+    $sub = New-Text "Ferme les téléchargements et les vidéos en cours pour un résultat juste. Le test dure environ 30 secondes." 13 '#A9B0C2'; $sub.Margin = Th 0 6 0 4; Add-Child $sp $sub
+    $lic = New-Object System.Windows.Controls.TextBlock; $lic.TextWrapping = 'Wrap'; $lic.FontSize = 11.5; $lic.Foreground = Brush '#6B7389'; $lic.Margin = Th 0 0 0 16
+    $lic.Inlines.Add("Mesure faite avec Speedtest® by Ookla, l'outil officiel de speedtest.net (téléchargé la première fois, environ 1 Mo) : mêmes serveurs que le site. Gratuit pour un usage personnel ; en lançant le test, tu acceptes ses ")
+    $hl = New-Object System.Windows.Documents.Hyperlink; $hl.Inlines.Add("conditions d'utilisation"); $hl.NavigateUri = [uri]'https://www.speedtest.net/about/eula'; $hl.Foreground = Brush '#B9A8FF'
+    $hl.Add_RequestNavigate({ param($s, $e) Start-Process $e.Uri.AbsoluteUri; $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
+    Add-Child $sp $lic
 
     $big = New-Object System.Windows.Controls.StackPanel; $big.HorizontalAlignment = 'Center'
     $phase = New-Text "Prêt" 13 '#B9A8FF' 'SemiBold'; $phase.HorizontalAlignment = 'Center'; Add-Child $big $phase
@@ -1129,7 +1135,8 @@ function Show-SpeedTestDialog {
             $u = $script:SpUi; $ph = [AeroxSpeed]::Phase
             $u.Bar.Value = [AeroxSpeed]::Percent
             switch ($ph) {
-                'meta' { $u.Phase.Text = 'Connexion au serveur...' }
+                'install' { $u.Phase.Text = "Téléchargement de l'outil Speedtest (première fois)..." }
+                'meta' { $u.Phase.Text = 'Recherche du meilleur serveur...' }
                 'ping' { $u.Phase.Text = 'Mesure du ping...'; $u.Unit.Text = 'ms' }
                 'down' { $u.Phase.Text = 'Réception (téléchargement)'; $u.Num.Text = Format-Mbps ([AeroxSpeed]::Live); $u.Unit.Text = 'Mb/s' }
                 'up'   { $u.Phase.Text = 'Envoi'; $u.Num.Text = Format-Mbps ([AeroxSpeed]::Live); $u.Unit.Text = 'Mb/s' }
@@ -1137,7 +1144,10 @@ function Show-SpeedTestDialog {
             if ([AeroxSpeed]::Ping -ge 0) { $u.Cells.ping.V.Text = ('{0:N0}' -f [AeroxSpeed]::Ping); $u.Cells.ping.U.Text = ('ms  ·  variation {0:N0} ms' -f [AeroxSpeed]::Jitter) }
             if ([AeroxSpeed]::Down -ge 0) { $u.Cells.down.V.Text = Format-Mbps ([AeroxSpeed]::Down) }
             if ([AeroxSpeed]::Up -ge 0) { $u.Cells.up.V.Text = Format-Mbps ([AeroxSpeed]::Up) }
-            if ([AeroxSpeed]::Isp -and -not $u.Info.Text) { $u.Info.Text = "Fournisseur : $([AeroxSpeed]::Isp)" + $(if ([AeroxSpeed]::City) { "  ·  serveur Cloudflare le plus proche ($([AeroxSpeed]::City))" } else { '' }) }
+            if ([AeroxSpeed]::Isp -or [AeroxSpeed]::Server) {
+                $srv = if ([AeroxSpeed]::Engine -eq 'ookla') { "Speedtest® by Ookla · serveur $([AeroxSpeed]::Server)" + $(if ([AeroxSpeed]::City) { " ($([AeroxSpeed]::City))" } else { '' }) } else { "Serveurs Cloudflare" + $(if ([AeroxSpeed]::City) { " ($([AeroxSpeed]::City))" } else { '' }) }
+                $u.Info.Text = $srv + $(if ([AeroxSpeed]::Isp) { "  ·  fournisseur $([AeroxSpeed]::Isp)" } else { '' }) + $(if ([AeroxSpeed]::Note) { "`n" + [AeroxSpeed]::Note } else { '' })
+            }
             if ($ph -in 'done', 'error', 'stopped' -and -not [AeroxSpeed]::Running) {
                 $script:SpTimer.Stop()
                 $u.Go.IsEnabled = $true; $u.Go.Content = 'Refaire le test'
@@ -1150,11 +1160,15 @@ function Show-SpeedTestDialog {
                     $d = [AeroxSpeed]::Down; $up = [AeroxSpeed]::Up; $pg = [AeroxSpeed]::Ping; $jt = [AeroxSpeed]::Jitter
                     $u.Phase.Text = 'Résultat (réception)'; $u.Num.Text = Format-Mbps $d; $u.Unit.Text = 'Mb/s'
                     $u.Verdict.Children.Clear()
-                    foreach ($l in (Get-SpeedVerdict $d $up $pg $jt $u.Link)) {
+                    foreach ($l in (Get-SpeedVerdict $d $up $pg $jt $u.Link ([AeroxSpeed]::Loss))) {
                         $bx = New-Object System.Windows.Controls.StackPanel; $bx.Margin = Th 0 0 0 8
                         Add-Child $bx (New-Text $l[0] 13.5 $l[1] 'SemiBold')
                         $t = New-Text $l[2] 12.5 '#A9B0C2'; $t.Margin = Th 0 2 0 0; Add-Child $bx $t
                         Add-Child $u.Verdict $bx
+                    }
+                    if ([AeroxSpeed]::ResultUrl) {
+                        $rb = New-Object System.Windows.Controls.Button; $rb.Content = 'Voir le résultat officiel sur speedtest.net'; $rb.Style = $window.FindResource('TextBtn'); $rb.HorizontalAlignment = 'Left'
+                        $rb.Tag = [AeroxSpeed]::ResultUrl; $rb.Add_Click({ Start-Process $this.Tag }); Add-Child $u.Verdict $rb
                     }
                     $hist = @($script:Settings.SpeedHistory) + @(@{ Date = (Get-Date -Format 'dd/MM HH:mm'); Down = [math]::Round($d, 1); Up = [math]::Round($up, 1); Ping = [math]::Round($pg); Wifi = [bool]($u.Link -and $u.Link.Wifi) })
                     $script:Settings.SpeedHistory = @($hist | Select-Object -Last 10); Save-Settings
@@ -1172,11 +1186,11 @@ function Show-SpeedTestDialog {
         $u.Cells.ping.U.Text = 'ms'
         $u.Num.Text = '—'
         $this.IsEnabled = $false; $this.Content = 'Test en cours...'
-        [AeroxSpeed]::Start()
+        [AeroxSpeed]::Start((Join-Path (Get-ToolsDir) 'speedtest'))
         $script:SpTimer.Start()
     })
     $bClose.Add_Click({ $script:SpWin.Close() })
-    $w.Add_Closed({ [AeroxSpeed]::Stop = $true; try { $script:SpTimer.Stop() } catch {} })
+    $w.Add_Closed({ [AeroxSpeed]::Cancel(); try { $script:SpTimer.Stop() } catch {} })
     [void]$w.ShowDialog()
 }
 

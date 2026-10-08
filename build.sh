@@ -32,6 +32,6 @@ cp launcher/aerox.ico "$OUT/"
 python3 -c "import sys; t=open('docs/LISEZMOI.txt',encoding='utf-8-sig').read().replace('\r\n','\n'); open(sys.argv[1],'w',encoding='utf-8-sig',newline='\r\n').write(t)" "$OUT/LISEZMOI.txt"
 
 (cd build && zip -qr "AeroxPCCare_v$VER.zip" "AEROX PC Care")
-makensis -V2 -DVERSION="$VER" -DSRC="$PWD/$OUT" -DOUTFILE="$PWD/build/AeroxPCCare_Setup_v$VER.exe" installer/AeroxPCCare.nsi
+makensis -V2 -DVERSION="$VER" -DSRC="$PWD/$OUT" -DOUTFILE="$PWD/build/AeroxPCCare_Setup.exe" installer/AeroxPCCare.nsi
 echo "== Terminé :"
 ls -la build/*.zip build/*.exe

@@ -20,7 +20,8 @@ Construire en local (Linux / WSL) : `sudo apt install mono-devel nsis zip python
 3. GitHub Actions (« Publier une version ») voit le nouveau numéro, construit le logiciel et crée la
    **Release** `v1.0.1` avec :
    - `AeroxPCCare_v1.0.1.zip` : utilisé par la mise à jour automatique ;
-   - `AeroxPCCare_Setup_v1.0.1.exe` : l'installateur pour les nouveaux utilisateurs.
+   - `AeroxPCCare_Setup.exe` : l'installateur pour les nouveaux utilisateurs (lien direct stable :
+     `https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe`).
 4. Au prochain démarrage, chaque PC voit « Nouvelle version disponible » > **Mettre à jour**.
 
 Tant que `$AppVersion` ne change pas, les envois sur `main` ne publient rien.

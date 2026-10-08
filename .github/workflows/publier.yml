@@ -52,6 +52,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: AEROX PC Care ${{ steps.v.outputs.version }}
           generate_release_notes: true
+          body: |
+            ## ⬇ Installer AEROX PC Care
+            Télécharge **`AeroxPCCare_Setup.exe`** ci-dessous (dans « Assets ») et lance-le.
+            Si Windows affiche « Windows a protégé votre ordinateur » : *Informations complémentaires* > *Exécuter quand même*.
+
+            Déjà installé ? Rien à faire : le logiciel propose la mise à jour tout seul au démarrage.
+            ⚠️ « Source code » = le code du logiciel, pas le programme à installer.
           files: |
             build/AeroxPCCare_v*.zip
-            build/AeroxPCCare_Setup_v*.exe
+            build/AeroxPCCare_Setup.exe

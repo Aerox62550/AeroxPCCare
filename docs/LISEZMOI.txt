@@ -1,10 +1,10 @@
-﻿AEROX PC Care - v1.0.0
+﻿AEROX PC Care - v1.0.1
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
 UTILISATION
 -----------
-1. Lance « AeroxPCCare_Setup_v1.0.0.exe ».
+1. Lance « AeroxPCCare_Setup.exe ».
 2. Si Windows affiche « Windows a protégé votre ordinateur » :
    clique sur « Informations complémentaires » puis « Exécuter quand même ».
    (Le programme n'est pas encore signé numériquement, c'est normal pour l'instant.)
@@ -57,7 +57,7 @@ Il fonctionne avec les jeux en mode « fenêtré sans bordure ».
 TEST DE DÉBIT
 -------------
 Onglet Réparation > « Test de débit Internet » : ping, vitesse de réception et d'envoi
-(serveurs Cloudflare, ~25 secondes), avec l'explication : bon pour jouer ? pour la 4K ?
+(Speedtest® by Ookla, l'outil officiel de speedtest.net, ~30 secondes), avec l'explication : bon pour jouer ? pour la 4K ?
 Wi-Fi qui bride ? câble limité à 100 Mb/s ? Les 10 derniers résultats sont gardés.
 
 MON PC (BIOS)
