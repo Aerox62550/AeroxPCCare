@@ -549,7 +549,9 @@ function Test-Stability {
             -Steps @("Évite d'éteindre en maintenant le bouton : passe par Démarrer > Arrêter.", "Si ça arrive en jeu : vérifie la poussière et les ventilateurs (surchauffe).", "Si ça continue, l'alimentation du PC est peut-être fatiguée : fais-la vérifier.")
     }
 
-    $crashes = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = (Get-Date).AddDays(-7) } -ErrorAction SilentlyContinue)
+    # Les plantages d'AEROX PC Care lui-même ne sont pas un problème du PC (ils remontent par les rapports de bug)
+    $crashes = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = (Get-Date).AddDays(-7) } -ErrorAction SilentlyContinue |
+                 Where-Object { "$($_.Properties[0].Value)" -notmatch '(?i)^(aerox ?pc ?care|aeroxpccare)(_setup)?.*\.exe$' })
     $groups = @($crashes | Group-Object { "$($_.Properties[0].Value)" } | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending)
     if ($groups.Count -gt 0) {
         $g = $groups[0]
