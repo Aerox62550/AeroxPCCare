@@ -831,7 +831,7 @@ function Invoke-UiCommand($T) {
             'fix' {
                 $i = $T.Issue
                 if ($i.UiFix -eq 'startup') { Show-StartupDialog $i; return }
-                if ($i.UiFix -eq 'display') { Set-DisplayWithConfirm $i.Display $i; return }
+                if ($i.UiFix -eq 'display') { $d = @(Get-Displays) | Where-Object { $_.Device -eq $i.Display.Device } | Select-Object -First 1; Set-DisplayWithConfirm $d $i; return }
                 if ($i.UiFix -eq 'apps') { Start-AppUpdatesList $i; return }
                 if ($i.UiFix -eq 'clean') { Start-CleanAnalysis $i; return }
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
@@ -841,7 +841,8 @@ function Invoke-UiCommand($T) {
                 Refresh-Page
             }
             'fixall' {
-                $list = @(Get-OpenIssues | Where-Object { $_.FixLabel -and -not $_.UiFix -and -not $_.OpenOnly -and $_.Id -notin 'uptime', 'pending' })
+                # Les corrections qui demandent un accord (réseau, DNS...) se font une par une, jamais en lot
+                $list = @(Get-OpenIssues | Where-Object { $_.FixLabel -and -not $_.UiFix -and -not $_.OpenOnly -and -not $_.Confirm -and $_.Id -notin 'uptime', 'pending' })
                 if (-not $list.Count) { return }
                 $txt = "Réparer automatiquement $($list.Count) problème(s) ?`n`n" + (($list | ForEach-Object { "• " + $_.Title }) -join "`n") +
                        "`n`nUn point de restauration est créé avant. Tes fichiers perso ne sont pas touchés. Certaines réparations peuvent prendre du temps."
@@ -905,15 +906,19 @@ function Invoke-UiCommand($T) {
 # ---------------------------------------------------------------- Fréquence de l'écran (avec retour automatique)
 function Set-DisplayWithConfirm($d, $Issue) {
     if (-not $d) { return }
+    if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $prev = [int]$d.Hz; $target = [int]$d.MaxHz
-    $r = [AeroxDisplay]::SetFrequency($d.Device, $target)
+    if ($target -le $prev) { Write-UiLog ("{0} est déjà à {1} Hz." -f $d.Name, $prev); if ($Issue) { $Issue.Status = 'done'; Update-DiagBadge; Refresh-Page }; return }
+    # Essai SANS enregistrer : si le PC est éteint pendant l'essai, Windows redémarre avec l'ancien réglage
+    $r = [AeroxDisplay]::SetFrequency($d.Device, $target, $false)
     if ($r -ne 0) {
         Write-UiLog ("❌ Windows a refusé de régler {0} à {1} Hz (code {2})." -f $d.Name, $target, $r)
         [System.Windows.MessageBox]::Show(("Windows a refusé de passer {0} à {1} Hz (code {2}).`n`nCauses fréquentes : un câble qui ne supporte pas cette fréquence (il faut du DisplayPort ou du HDMI 2.0 minimum), ou le pilote de la carte graphique.`n`nTu peux aussi essayer dans Paramètres > Affichage > Affichage avancé." -f $d.Name, $target, $r), $AppName, 'OK', 'Warning') | Out-Null
         return
     }
+    $timer.Stop()   # aucune autre fenêtre ne doit s'ouvrir pendant l'essai
     $w = New-Dialog "$AppName : écran" 480
-    $script:HzWin = $w; $script:HzKeep = $false; $script:HzLeft = 15
+    $script:HzWin = $w; $script:HzKeep = $false; $script:HzLeft = 15; $script:HzPrev = $prev; $script:HzDev = $d.Device; $script:HzReverted = $false
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
     Add-Child $sp (New-Text ("{0} est maintenant à {1} Hz" -f $d.Name, $target) 17 '#FFFFFF' 'Bold')
     $t = New-Text "L'image s'affiche bien ? Si tu ne cliques sur rien, l'ancien réglage revient tout seul." 13 '#A9B0C2'; $t.Margin = Th 0 6 0 10; Add-Child $sp $t
@@ -924,22 +929,34 @@ function Set-DisplayWithConfirm($d, $Issue) {
     Add-Child $row $bBack; Add-Child $row $bKeep; Add-Child $sp $row
     $bKeep.Add_Click({ $script:HzKeep = $true; $script:HzWin.Close() })
     $bBack.Add_Click({ $script:HzKeep = $false; $script:HzWin.Close() })
-    $script:HzPrev = $prev
-    $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromSeconds(1)
-    $tm.Add_Tick({ $script:HzLeft--; $script:HzCount.Text = ("Retour à {0} Hz dans {1} s" -f $script:HzPrev, $script:HzLeft); if ($script:HzLeft -le 0) { $script:HzWin.Close() } })
-    $w.Add_Closed({ $tm.Stop() }.GetNewClosure())
+    $script:HzTimer = New-Object System.Windows.Threading.DispatcherTimer; $script:HzTimer.Interval = [TimeSpan]::FromSeconds(1)
+    $script:HzTimer.Add_Tick({
+        $script:HzLeft--
+        $script:HzCount.Text = ("Retour à {0} Hz dans {1} s" -f $script:HzPrev, $script:HzLeft)
+        if ($script:HzLeft -le 0) {
+            $script:HzTimer.Stop()
+            # Retour immédiat, sans attendre la fermeture de la fenêtre
+            if (-not $script:HzReverted) { [void][AeroxDisplay]::SetFrequency($script:HzDev, $script:HzPrev, $false); $script:HzReverted = $true }
+            $script:HzWin.Close()
+        }
+    })
     $w.Content = $sp
-    $tm.Start()
-    [void]$w.ShowDialog()
-    $tm.Stop()
+    $script:HzTimer.Start()
+    try { [void]$w.ShowDialog() } finally { $script:HzTimer.Stop(); $timer.Start() }
     if (-not $script:HzKeep) {
-        [void][AeroxDisplay]::SetFrequency($d.Device, $prev)
+        if (-not $script:HzReverted) { [void][AeroxDisplay]::SetFrequency($d.Device, $prev, $false) }
         Write-UiLog ("↩ {0} remis à {1} Hz." -f $d.Name, $prev)
         return
     }
+    # Confirmé : maintenant on enregistre le réglage
+    $r2 = [AeroxDisplay]::SetFrequency($d.Device, $target, $true)
+    if ($r2 -ne 0) { Write-UiLog ("⚠ Le réglage à {0} Hz n'a pas pu être enregistré (code {1}) : il sera perdu au redémarrage." -f $target, $r2); return }
     Add-Change -Title ("{0} : {1} Hz → {2} Hz" -f $d.Name, $prev, $target) -Detail "Fréquence de rafraîchissement de l'écran." -Undo ("Set-DisplayHz {0} {1}" -f (ConvertTo-PsLiteral $d.Device), $prev)
     Write-UiLog ("✅ {0} réglé à {1} Hz (au lieu de {2} Hz)." -f $d.Name, $target, $prev)
-    if ($Issue) { $Issue.Status = 'done'; Update-DiagBadge }
+    $hid = "hz" + ($d.Device -replace '\W', '')
+    foreach ($x in @(Get-OpenIssues | Where-Object { $_.Id -eq $hid })) { $x.Status = 'done' }
+    if ($Issue) { $Issue.Status = 'done' }
+    Update-DiagBadge
     Refresh-Page
 }
 
@@ -989,6 +1006,11 @@ function Show-HistoryDialog {
     if (-not $c) { return }
     if ($c -eq 'restore') { Start-Process 'rstrui.exe'; Write-UiLog "Restauration du système ouverte : choisis un point de restauration et suis les étapes."; return }
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
+    if (-not (Test-SafeUndo $c.Undo)) {
+        Write-Bug -Context 'Historique' -ErrorRecord ("Action d'annulation refusée (non reconnue) : " + $c.Undo) -Type 'erreur'
+        [System.Windows.MessageBox]::Show("Ce changement ne peut pas être annulé automatiquement (l'historique a été modifié ou vient d'une ancienne version).`n`nTu peux utiliser « Restauration complète de Windows » à la place.", $AppName, 'OK', 'Warning') | Out-Null
+        return
+    }
     if (-not (Confirm-Box ("Annuler ce changement ?`n`n« {0} »" -f $c.Title))) { return }
     $script:UndoId = $c.Id; $script:UndoTitle = $c.Title
     if (-not (Start-AeroxTask ('$script:AeroxUndo = $true; ' + $c.Undo) ("Annulation : " + $c.Title) 'undo')) { $script:UndoId = $null }
@@ -1008,8 +1030,13 @@ function Start-SelfUpdate {
     [void](Start-AeroxTask 'Install-AppUpdate' "Mise à jour d'AEROX PC Care" 'selfupdate')
 }
 function Complete-SelfUpdate {
-    $setup = $sync.UpdateReady; $sync.UpdateReady = $null
+    $ready = $sync.UpdateReady; $sync.UpdateReady = $null
+    $setup = if ($ready -is [hashtable]) { $ready.Path } else { "$ready" }
     try {
+        if ($ready -is [hashtable] -and $ready.Sha) {
+            $h = (Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop).Hash
+            if ($h -ne $ready.Sha.ToUpper()) { throw "Le fichier de mise à jour a été modifié depuis son téléchargement : installation annulée par sécurité." }
+        }
         [System.Windows.MessageBox]::Show("La nouvelle version est prête.`n`nAEROX PC Care va se fermer, l'installer et se rouvrir tout seul dans quelques secondes.", $AppName, 'OK', 'Information') | Out-Null
         Start-Process -FilePath $setup -ArgumentList '/S', '/UPDATE'
         Write-UiLog "Installation de la nouvelle version..."
@@ -1545,7 +1572,7 @@ function Show-StartupDialog($Issue) {
         return
     }
     if ($c.KeepOff.Count -and -not (Confirm-Box ("Tu as décoché des éléments marqués « À garder » :`n`n• " + ($c.KeepOff -join "`n• ") + "`n`nCe sont souvent l'antivirus ou des pilotes (son, carte graphique). Continuer quand même ?"))) { return }
-    $q = { param($a) if (-not $a.Count) { '@()' } else { '@(' + (($a | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',') + ')' } }
+    $q = { param($a) ConvertTo-PsList @($a) }
     $action = "Set-StartupApps -Disable $(& $q $c.Dis) -Enable $(& $q $c.En)"
     if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
     if (-not (Start-AeroxTask $action 'Programmes au démarrage')) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
@@ -1752,10 +1779,6 @@ function Show-BugReport([string]$Prefill) {
 }
 
 # ---------------------------------------------------------------- Outils communs des fenêtres de choix
-function ConvertTo-PsList([string[]]$Items) {
-    if (-not $Items -or -not $Items.Count) { return '@()' }
-    return '@(' + (($Items | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ',') + ')'
-}
 function New-DlgButton([string]$Text, [string]$Style) {
     $b = New-Object System.Windows.Controls.Button; $b.Content = $Text; $b.Style = $window.FindResource($Style); return $b
 }
@@ -2638,7 +2661,7 @@ $LogDot.Visibility = 'Collapsed'
 Load-Settings
 if ($script:Settings.LogOpen) { Set-LogOpen $true }
 # Fichiers temporaires d'une mise à jour terminée
-try { Get-ChildItem -LiteralPath (Join-Path $LogDir 'maj') -Force -ErrorAction Stop | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'))) { try { Get-ChildItem -LiteralPath $mj -Force -ErrorAction Stop | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique
 try {
     $uk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare'

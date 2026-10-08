@@ -26,8 +26,7 @@ RequestExecutionLevel admin
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
 InstallDir "$PROGRAMFILES64\AeroxPCCare"
-; Dossier choisi lors d'une installation 1.0.3+ (les versions précédentes étaient dans « AEROX PC Care »)
-InstallDirRegKey HKLM "${UNINSTKEY}" "Dossier"
+; Le dossier choisi lors d'une installation précédente est relu dans .onInit (registre 64 bits)
 BrandingText "${APPNAME} ${VERSION}"
 
 VIProductVersion "${VERSION}.0"
@@ -141,6 +140,14 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
+  ; Mise à jour / réinstallation : on garde le dossier déjà utilisé (sauf si /D= est donné)
+  ${If} "$INSTDIR" == "$PROGRAMFILES64\AeroxPCCare"
+    ReadRegStr $R2 HKLM "${UNINSTKEY}" "Dossier"
+    ${If} $R2 != ""
+    ${AndIf} ${FileExists} "$R2\*.*"
+      StrCpy $INSTDIR $R2
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 ; Mise à jour automatique ratée : on relance quand même le logiciel (ancienne version) pour ne pas laisser l'utilisateur sans rien
@@ -174,7 +181,8 @@ Section "Installer"
   ${EndIf}
 
   ; Ancien emplacement (versions 1.0.0 à 1.0.2) : on fait le ménage
-  ${If} "$INSTDIR" != "$PROGRAMFILES64\${APPNAME}"
+  ${StrStr} $0 "$INSTDIR" "$PROGRAMFILES64\${APPNAME}"
+  ${If} $0 == ""
     ; Fichiers des versions 1.0.0 à 1.0.2 (supprimés au redémarrage s'ils sont bloqués)
     Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\${OLDEXE}"
     Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\AeroxPCCare.ps1"
@@ -223,13 +231,10 @@ Section "Uninstall"
   Delete "$INSTDIR\aerox.ico"
   Delete "$INSTDIR\LISEZMOI.txt"
   Delete "$INSTDIR\Desinstaller.exe"
-  ; Fichiers ajoutés par les mises à jour automatiques : seulement si c'est bien le dossier du logiciel
-  ${UnStrStr} $0 "$INSTDIR" "Aerox"
-  ${If} $0 != ""
-    RMDir /r "$INSTDIR"
-  ${Else}
-    RMDir "$INSTDIR"
-  ${EndIf}
+  ; Uniquement les fichiers du logiciel (jamais un dossier entier choisi par l'utilisateur)
+  Delete "$INSTDIR\maj\AeroxPCCare_Setup_*.exe"
+  RMDir "$INSTDIR\maj"
+  RMDir "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTKEY}"
 
   ; Journaux, réglages et outils téléchargés (températures, FPS) : au choix

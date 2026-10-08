@@ -18,7 +18,9 @@ crée l'Issue sur GitHub. La clé d'accès GitHub reste dans le relais : elle n'
    - **Add** > type *Text* > nom `REPO` > valeur `Aerox62550/AeroxPCCare`
    - **Add** > type *Secret* > nom `GITHUB_TOKEN` > colle le jeton de l'étape 1
    - **Deploy**.
-5. Note l'adresse du Worker, du style `https://aerox-relais.<ton-nom>.workers.dev`.
+5. Anti-abus (recommandé) : **Storage & Databases** > **KV** > **Create** (nom `aerox-limites`), puis dans le Worker :
+   **Settings** > **Bindings** > **Add** > *KV namespace* > nom de variable `LIMITES` > `aerox-limites` > **Deploy**.
+6. Note l'adresse du Worker, du style `https://aerox-relais.<ton-nom>.workers.dev`.
 
 ## 3. Brancher le logiciel
 Mets cette adresse (une seule ligne) dans le fichier `relais.txt` à la racine du dépôt.

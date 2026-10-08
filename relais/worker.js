@@ -5,6 +5,7 @@
 // Variables du Worker :
 //   REPO          : Aerox62550/AeroxPCCare
 //   GITHUB_TOKEN  : (secret) jeton GitHub « fine-grained », accès au seul dépôt AeroxPCCare, permission Issues : Read and write
+//   LIMITES       : (liaison KV, recommandée) espace KV pour la limite anti-abus
 
 const MAX_BODY = 60000;      // taille maximale d'un rapport (octets)
 const PER_HOUR = 5;          // rapports maximum par heure et par adresse IP
@@ -26,13 +27,23 @@ export default {
     const version = String(data.version || '').slice(0, 20);
     if (!body.trim()) return json({ error: 'Rapport vide.' }, 400);
 
-    // Limite anti-abus : quelques rapports par heure et par adresse IP
+    // Limite anti-abus : quelques rapports par heure et par adresse IP.
+    // Avec un espace KV lié sous le nom LIMITES (recommandé) la limite est fiable partout ;
+    // sinon on se rabat sur le cache (qui ne fonctionne pas sur les adresses *.workers.dev).
     const ip = request.headers.get('CF-Connecting-IP') || 'inconnu';
-    const key = new Request('https://limite.aerox/' + encodeURIComponent(ip) + '/' + Math.floor(Date.now() / 3600000));
-    const hit = await caches.default.match(key);
-    const n = hit ? Number(await hit.text()) : 0;
-    if (n >= PER_HOUR) return json({ error: 'Trop de rapports envoyés : réessaie dans une heure.' }, 429);
-    await caches.default.put(key, new Response(String(n + 1), { headers: { 'Cache-Control': 'max-age=3600' } }));
+    const slot = Math.floor(Date.now() / 3600000);
+    if (env.LIMITES) {
+      const k = `${ip}:${slot}`;
+      const n = Number(await env.LIMITES.get(k)) || 0;
+      if (n >= PER_HOUR) return json({ error: 'Trop de rapports envoyés : réessaie dans une heure.' }, 429);
+      await env.LIMITES.put(k, String(n + 1), { expirationTtl: 3700 });
+    } else {
+      const key = new Request('https://limite.aerox/' + encodeURIComponent(ip) + '/' + slot);
+      const hit = await caches.default.match(key);
+      const n = hit ? Number(await hit.text()) : 0;
+      if (n >= PER_HOUR) return json({ error: 'Trop de rapports envoyés : réessaie dans une heure.' }, 429);
+      await caches.default.put(key, new Response(String(n + 1), { headers: { 'Cache-Control': 'max-age=3600' } }));
+    }
 
     const r = await fetch(`https://api.github.com/repos/${env.REPO}/issues`, {
       method: 'POST',

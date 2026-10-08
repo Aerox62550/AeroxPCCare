@@ -212,7 +212,33 @@ function Get-NetworkStatus {
 # ---------------------------------------------------------------- Historique des changements (avec annulation)
 # Chaque modification faite par AEROX est notée dans changements.jsonl ; si elle est réversible,
 # « Undo » contient l'action qui la défait. Les annulations faites sont notées dans changements_annules.txt.
-function ConvertTo-PsLiteral([string]$Text) { return "'" + ($Text -replace "'", "''") + "'" }
+# Texte -> chaîne PowerShell entre apostrophes, sûre (gère aussi les apostrophes typographiques ‘ ’ ‚ ‛)
+function ConvertTo-PsLiteral([string]$Text) { return "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($Text) + "'" }
+function ConvertTo-PsList([string[]]$Items) {
+    if (-not $Items -or -not $Items.Count) { return '@()' }
+    return '@(' + (($Items | ForEach-Object { ConvertTo-PsLiteral $_ }) -join ',') + ')'
+}
+# Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
+# avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
+function Test-SafeUndo([string]$Code) {
+    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns'
+    $tok = $null; $err = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
+    if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
+    $pipe = $ast.EndBlock.Statements[0]
+    if ($pipe -isnot [System.Management.Automation.Language.PipelineAst] -or $pipe.PipelineElements.Count -ne 1) { return $false }
+    $cmd = $pipe.PipelineElements[0]
+    if ($cmd -isnot [System.Management.Automation.Language.CommandAst] -or $allowed -notcontains $cmd.GetCommandName()) { return $false }
+    foreach ($el in @($cmd.CommandElements | Select-Object -Skip 1)) {
+        $bad = $el.FindAll({ param($n) -not ($n -is [System.Management.Automation.Language.CommandParameterAst] -or $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                                               $n -is [System.Management.Automation.Language.ConstantExpressionAst] -or $n -is [System.Management.Automation.Language.ArrayExpressionAst] -or
+                                               $n -is [System.Management.Automation.Language.ArrayLiteralAst] -or $n -is [System.Management.Automation.Language.StatementBlockAst] -or
+                                               $n -is [System.Management.Automation.Language.PipelineAst] -or $n -is [System.Management.Automation.Language.CommandExpressionAst] -or
+                                               ($n -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.VariablePath.UserPath -in 'true', 'false')) }, $true)
+        if (@($bad).Count) { return $false }
+    }
+    return $true
+}
 function Add-Change {
     param([string]$Title, [string]$Detail = '', [string]$Undo = '', [string]$Kind = 'reglage')
     if ($script:AeroxUndo) { return }
@@ -614,10 +640,19 @@ function Test-Updates {
 }
 
 # ---------------------------------------------------------------- Coupures de connexion (contrôles prudents, corrections annulables)
+function Get-ActiveAdapterIndex {
+    # La carte réellement utilisée pour aller sur Internet (même choix que Windows)
+    try { $f = Find-NetRoute -RemoteIPAddress 1.1.1.1 -ErrorAction Stop | Where-Object { $_.InterfaceIndex } | Select-Object -First 1; if ($f) { return [int]$f.InterfaceIndex } } catch {}
+    $r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | ForEach-Object {
+        $m = (Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).InterfaceMetric
+        [pscustomobject]@{ Index = $_.ifIndex; Metric = [int]$_.RouteMetric + [int]$m } } | Sort-Object Metric | Select-Object -First 1
+    if ($r) { return [int]$r.Index }
+    return $null
+}
 function Get-ActiveAdapter {
-    $r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
-    if (-not $r) { return $null }
-    $a = Get-NetAdapter -InterfaceIndex $r.ifIndex -ErrorAction SilentlyContinue
+    $idx = Get-ActiveAdapterIndex
+    if (-not $idx) { return $null }
+    $a = Get-NetAdapter -InterfaceIndex $idx -ErrorAction SilentlyContinue
     if (-not $a) { return $null }
     $wifi = ("$($a.PhysicalMediaType)" -match '802\.11' -or "$($a.InterfaceDescription) $($a.Name)" -match '(?i)wi-?fi|wireless|wlan|802\.11')
     return @{ Name = $a.Name; Index = $a.ifIndex; Desc = "$($a.InterfaceDescription)"; Guid = "$($a.InterfaceGuid)"; Wifi = $wifi; DriverDate = (ConvertTo-DateSafe $a.DriverDate); DriverVersion = "$($a.DriverVersionString)" }
@@ -669,9 +704,12 @@ function Test-ConnectionStability {
     }
     # 3. DNS lents (mesurés) : proposition uniquement si l'écart est net
     try {
-        $mine = Measure-Dns ''
+        $srv = @((Get-DnsClientServerAddress -InterfaceIndex $a.Index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object { $_ })
+        if (-not $srv.Count -or $srv[0] -in '1.1.1.1', '1.0.0.1') { throw 'pas de mesure' }
+        $mine = Measure-Dns $srv[0]
         $cf = Measure-Dns '1.1.1.1'
-        if ($mine -ge 80 -and $cf -lt 2000 -and $mine -ge 2 * $cf) {
+        if ($mine -ge 2000 -or $cf -ge 2000) { throw 'mesure impossible' }
+        if ($mine -ge 80 -and $mine -ge 2 * $cf) {
             Add-Issue -Id 'dnsslow' -Sev 'warn' -Title ("Les DNS de ta connexion sont lents ({0} ms)" -f $mine) -Detail ("Cloudflare (1.1.1.1) répond en {0} ms" -f $cf) `
                 -Cause "Le DNS traduit le nom des sites en adresses. Celui de ton fournisseur répond lentement : chaque nouveau site ou serveur de jeu met plus de temps à s'ouvrir." `
                 -Effect "Sites et lancements de jeux plus lents, parfois des « serveur introuvable »." `
@@ -700,16 +738,18 @@ function Set-FastDns([int]$Index) {
         Set-DnsClientServerAddress -InterfaceIndex $Index -ServerAddresses @('1.1.1.1', '1.0.0.1') -ErrorAction Stop
         Clear-DnsClientCache -ErrorAction SilentlyContinue
         Log "   ✔ DNS de « $($a.Name) » : 1.1.1.1 et 1.0.0.1"
-        $undo = if ($static) { "Restore-Dns {0} {1}" -f $Index, (ConvertTo-PsLiteral $static) } else { "Restore-Dns {0} ''" -f $Index }
+        $undo = "Restore-Dns {0} {1}" -f (ConvertTo-PsLiteral "$($a.InterfaceGuid)"), (ConvertTo-PsLiteral $static)
         Add-Change -Title ("DNS de « {0} » : Cloudflare (1.1.1.1)" -f $a.Name) -Detail $(if ($static) { "Avant : $static" } else { "Avant : DNS automatiques de la box / du fournisseur" }) -Undo $undo
     } catch {
         Add-TaskError -Title "Impossible de changer les DNS" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres réseau" -FixAction "Start-Process 'ms-settings:network-status'"
     }
 }
-function Restore-Dns([int]$Index, [string]$Servers) {
+function Restore-Dns([string]$Guid, [string]$Servers) {
     Step "Retour aux DNS d'avant"
-    if ($Servers) { Set-DnsClientServerAddress -InterfaceIndex $Index -ServerAddresses @($Servers -split '[,\s]+' | Where-Object { $_ }) -ErrorAction Stop }
-    else { Set-DnsClientServerAddress -InterfaceIndex $Index -ResetServerAddresses -ErrorAction Stop }
+    $a = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { "$($_.InterfaceGuid)" -eq $Guid } | Select-Object -First 1
+    if (-not $a) { Add-TaskError -Title "Carte réseau introuvable" -Cause "La carte réseau dont les DNS avaient été changés n'existe plus sur ce PC."; return }
+    if ($Servers) { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses @($Servers -split '[,\s]+' | Where-Object { $_ }) -ErrorAction Stop }
+    else { $null = Invoke-Native 'netsh.exe' @('interface', 'ipv4', 'set', 'dnsservers', "name=$($a.ifIndex)", 'source=dhcp') }
     Clear-DnsClientCache -ErrorAction SilentlyContinue
     Log "   ✔ DNS remis comme avant."
 }
@@ -742,7 +782,7 @@ function Test-Display {
 }
 function Set-DisplayHz([string]$Device, [int]$Hz) {
     Step ("Réglage de l'écran à {0} Hz" -f $Hz)
-    $r = [AeroxDisplay]::SetFrequency($Device, $Hz)
+    $r = [AeroxDisplay]::SetFrequency($Device, $Hz, $true)
     if ($r -eq 0) { Log ("   ✔ Écran réglé à {0} Hz." -f $Hz) }
     else { Add-TaskError -Title "Impossible de régler l'écran à $Hz Hz" -Code "$r" -Cause "Windows ou le pilote de la carte graphique refuse ce réglage." -FixLabel "Ouvrir les paramètres d'affichage" -FixAction "Start-Process 'ms-settings:display-advanced'" }
 }
@@ -1985,7 +2025,8 @@ function Find-AppUpdate {
         $h = @{ 'User-Agent' = 'AeroxPCCare' }
         if ($AppInfo.Beta) {
             # Canal test : la version la plus récente, versions de test (pré-versions) comprises
-            $all = @(Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases?per_page=15" -f $AppInfo.Repo) -Headers $h -TimeoutSec 10 -ErrorAction Stop)
+            # (pas de @() autour : en PowerShell 5.1 la liste JSON arrive en un seul objet et serait emballée)
+            $all = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases?per_page=15" -f $AppInfo.Repo) -Headers $h -TimeoutSec 10 -ErrorAction Stop
             $r = $all | Where-Object { -not $_.draft -and ($_.tag_name -replace '^[vV]', '') -as [version] } | Sort-Object { [version]($_.tag_name -replace '^[vV]', '') } -Descending | Select-Object -First 1
             if (-not $r) { return }
         } else {
@@ -2012,10 +2053,12 @@ function Install-AppUpdate {
     Step ("Téléchargement d'AEROX PC Care {0} depuis GitHub" -f $u.Version)
     try {
         $sha = if ("$($u.Digest)" -match '^sha256:([0-9a-fA-F]{64})$') { $Matches[1] } else { '' }
-        $dest = Join-Path (Join-Path $AppInfo.LogDir 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
+        # Dossier du logiciel (Program Files, modifiable seulement en administrateur) : le fichier ne peut pas être échangé
+        $root = if ($AppInfo.Root -and (Test-Path -LiteralPath $AppInfo.Root)) { $AppInfo.Root } else { $AppInfo.LogDir }
+        $dest = Join-Path (Join-Path $root 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
         [AeroxUpdate]::Download($u.Setup, $dest, $sha)
         Log ("   ✔ Installateur téléchargé{0}." -f $(if ($sha) { ' et vérifié (empreinte SHA-256 identique à celle publiée)' } else { '' }))
-        $sync.UpdateReady = $dest
+        $sync.UpdateReady = @{ Path = $dest; Sha = $sha }
     } catch {
         $m = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
         Add-TaskError -Title "La mise à jour n'a pas pu être téléchargée" -Cause $m -Effect "Tu gardes la version actuelle, rien n'a été modifié." `

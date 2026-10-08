@@ -706,13 +706,15 @@ public static class AeroxDisplay {
     }
 
     // Change la fréquence de l'écran (même résolution). Renvoie 0 si c'est fait, un code Windows sinon.
-    public static int SetFrequency(string device, int hz) {
+    // persist = false : essai seulement (rien n'est enregistré, un redémarrage remet l'ancien réglage)
+    // persist = true  : réglage enregistré
+    public static int SetFrequency(string device, int hz, bool persist) {
         DEVMODE cur = NewMode();
         if (!EnumDisplaySettings(device, ENUM_CURRENT_SETTINGS, ref cur)) return -100;
         cur.dmDisplayFrequency = hz; cur.dmFields = DM_DISPLAYFREQUENCY;
         int t = ChangeDisplaySettingsEx(device, ref cur, IntPtr.Zero, CDS_TEST, IntPtr.Zero);
         if (t != 0) return t;
-        return ChangeDisplaySettingsEx(device, ref cur, IntPtr.Zero, CDS_UPDATEREGISTRY, IntPtr.Zero);
+        return ChangeDisplaySettingsEx(device, ref cur, IntPtr.Zero, persist ? CDS_UPDATEREGISTRY : 0, IntPtr.Zero);
     }
 
     static DEVMODE NewMode() { DEVMODE d = new DEVMODE(); d.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)); return d; }

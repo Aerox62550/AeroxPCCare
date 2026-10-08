@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Numéro de version et canal
         id: v
@@ -35,9 +37,15 @@ jobs:
           echo "test=$([ "$CANAL" = test ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           if gh release view "v$VER" --repo "$GITHUB_REPOSITORY" --json isPrerelease -q .isPrerelease > pre.txt 2>/dev/null; then
             echo "publier=non" >> "$GITHUB_OUTPUT"
+            git fetch --tags --quiet
+            # Le code du logiciel a-t-il changé depuis la version publiée ? Alors il faut un nouveau numéro.
+            if ! git diff --quiet "v$VER" HEAD -- src native launcher installer build.sh docs/LISEZMOI.txt; then
+              echo "::error::Le code a changé depuis la publication de v$VER : augmente \$AppVersion dans src/1_head.ps1 pour publier ces changements."
+              exit 1
+            fi
             if [ "$(cat pre.txt)" = "true" ] && [ "$CANAL" = "public" ]; then
               echo "La version de test v$VER passe en public."
-              gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest
+              gh release edit "v$VER" --repo "$GITHUB_REPOSITORY" --prerelease=false --latest --title "AEROX PC Care $VER"
             else
               echo "La version v$VER est déjà publiée ($CANAL) : rien à faire."
             fi
