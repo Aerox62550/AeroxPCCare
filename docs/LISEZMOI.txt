@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.0.2
+﻿AEROX PC Care - v1.0.3
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -9,7 +9,7 @@ UTILISATION
    clique sur « Informations complémentaires » puis « Exécuter quand même ».
    (Le programme n'est pas encore signé numériquement, c'est normal pour l'instant.)
    Si ton antivirus le bloque, autorise-le (ou ajoute le dossier
-   C:\Program Files\AEROX PC Care à ses exceptions).
+   C:\Program Files\AeroxPCCare à ses exceptions).
 3. Clique sur « Oui » quand Windows demande l'autorisation, puis Suivant > Installer.
 4. Ouvre AEROX PC Care avec le raccourci du Bureau ou du menu Démarrer.
 5. Sur l'accueil, clique sur « Lancer le diagnostic ».

@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '1.0.2'
+$AppVersion = '1.0.3'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -19,10 +19,10 @@ $GitHubRepo = 'Aerox62550/AeroxPCCare'
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 $isSTA   = [Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA'
 
-# Le logiciel se lance avec « AEROX PC Care.exe », qui demande les droits administrateur
+# Le logiciel se lance avec « AeroxPCCare.exe », qui demande les droits administrateur
 if (-not $isAdmin -or -not $isSTA) {
     Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show("Lance AEROX PC Care avec le programme « AEROX PC Care.exe » (dans le même dossier).`n`nIl demandera les droits administrateur nécessaires pour analyser et réparer Windows.", $AppName, 'OK', 'Information') | Out-Null
+    [System.Windows.MessageBox]::Show("Lance AEROX PC Care avec le programme « AeroxPCCare.exe » (ou le raccourci AEROX PC Care du Bureau).`n`nIl demandera les droits administrateur nécessaires pour analyser et réparer Windows.", $AppName, 'OK', 'Information') | Out-Null
     exit
 }
 

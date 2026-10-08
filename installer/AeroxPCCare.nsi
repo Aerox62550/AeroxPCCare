@@ -17,15 +17,17 @@ RequestExecutionLevel admin
 !endif
 
 !define APPNAME   "AEROX PC Care"
-!define EXENAME   "AEROX PC Care.exe"
+!define EXENAME   "AeroxPCCare.exe"
+!define OLDEXE    "AEROX PC Care.exe"
 !define PUBLISHER "AEROX"
 !define WEBSITE   "https://github.com/Aerox62550/AeroxPCCare"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare"
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
-InstallDir "$PROGRAMFILES64\${APPNAME}"
-InstallDirRegKey HKLM "${UNINSTKEY}" "InstallLocation"
+InstallDir "$PROGRAMFILES64\AeroxPCCare"
+; Dossier choisi lors d'une installation 1.0.3+ (les versions précédentes étaient dans « AEROX PC Care »)
+InstallDirRegKey HKLM "${UNINSTKEY}" "Dossier"
 BrandingText "${APPNAME} ${VERSION}"
 
 VIProductVersion "${VERSION}.0"
@@ -81,10 +83,10 @@ FunctionEnd
 Function CheckRunning
   StrCpy $3 0
   retry:
-    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${EXENAME}" /NH'
+    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq AEROX*" /NH'
     Pop $0
     Pop $1
-    ${StrStr} $2 $1 "${EXENAME}"
+    ${StrStr} $2 $1 "AEROX"
     ${If} $2 != ""
     ${AndIf} $IsUpdate == 1
     ${AndIf} $3 < 15
@@ -100,10 +102,10 @@ FunctionEnd
 
 Function un.CheckRunning
   retry:
-    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${EXENAME}" /NH'
+    nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq AEROX*" /NH'
     Pop $0
     Pop $1
-    ${UnStrStr} $2 $1 "${EXENAME}"
+    ${UnStrStr} $2 $1 "AEROX"
     ${If} $2 != ""
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." IDRETRY retry
       Abort
@@ -135,11 +137,22 @@ Section "Installer"
   SetShellVarContext all
   SetOutPath "$INSTDIR"
   SetOverwrite on
-  File "${SRC}\${EXENAME}"
-  File "${SRC}\AeroxPCCare.ps1"
-  File "${SRC}\AeroxPCCare.Native.dll"
-  File "${SRC}\aerox.ico"
-  File "${SRC}\LISEZMOI.txt"
+  copie:
+  ClearErrors
+  File /nonfatal "${SRC}\${EXENAME}"
+  File /nonfatal "${SRC}\AeroxPCCare.ps1"
+  File /nonfatal "${SRC}\AeroxPCCare.Native.dll"
+  File /nonfatal "${SRC}\aerox.ico"
+  File /nonfatal "${SRC}\LISEZMOI.txt"
+  ${If} ${Errors}
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Windows ou ton antivirus empêche de copier les fichiers d'${APPNAME} dans :$\r$\n$INSTDIR$\r$\n$\r$\nCe qu'il faut faire :$\r$\n1. Ouvre ton antivirus, va dans la Quarantaine et restaure (ou supprime) les éléments « AEROX ».$\r$\n2. Ajoute ce dossier aux exceptions de l'antivirus.$\r$\n3. Clique sur Réessayer.$\r$\n$\r$\nTu peux aussi Annuler et relancer l'installation en choisissant un autre dossier." IDRETRY copie
+    Abort "Installation annulée : les fichiers n'ont pas pu être copiés."
+  ${EndIf}
+
+  ; Ancien emplacement (versions 1.0.0 à 1.0.2) : on fait le ménage
+  ${If} "$INSTDIR" != "$PROGRAMFILES64\${APPNAME}"
+    RMDir /r "$PROGRAMFILES64\${APPNAME}"
+  ${EndIf}
 
   WriteUninstaller "$INSTDIR\Desinstaller.exe"
 
@@ -151,6 +164,7 @@ Section "Installer"
   WriteRegStr   HKLM "${UNINSTKEY}" "Publisher"            "${PUBLISHER}"
   WriteRegStr   HKLM "${UNINSTKEY}" "DisplayIcon"          "$INSTDIR\aerox.ico"
   WriteRegStr   HKLM "${UNINSTKEY}" "InstallLocation"      "$INSTDIR"
+  WriteRegStr   HKLM "${UNINSTKEY}" "Dossier"              "$INSTDIR"
   WriteRegStr   HKLM "${UNINSTKEY}" "UninstallString"      '"$INSTDIR\Desinstaller.exe"'
   WriteRegStr   HKLM "${UNINSTKEY}" "QuietUninstallString" '"$INSTDIR\Desinstaller.exe" /S'
   WriteRegStr   HKLM "${UNINSTKEY}" "URLInfoAbout"         "${WEBSITE}"
@@ -172,13 +186,14 @@ Section "Uninstall"
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$INSTDIR\${EXENAME}"
+  Delete "$INSTDIR\${OLDEXE}"
   Delete "$INSTDIR\AeroxPCCare.ps1"
   Delete "$INSTDIR\AeroxPCCare.Native.dll"
   Delete "$INSTDIR\aerox.ico"
   Delete "$INSTDIR\LISEZMOI.txt"
   Delete "$INSTDIR\Desinstaller.exe"
   ; Fichiers ajoutés par les mises à jour automatiques : seulement si c'est bien le dossier du logiciel
-  ${UnStrStr} $0 "$INSTDIR" "${APPNAME}"
+  ${UnStrStr} $0 "$INSTDIR" "Aerox"
   ${If} $0 != ""
     RMDir /r "$INSTDIR"
   ${Else}

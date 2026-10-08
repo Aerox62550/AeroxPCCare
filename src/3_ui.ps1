@@ -1945,7 +1945,7 @@ $script:OverheatState = @{}
 
 $SensorLoopCode = @'
 $ErrorActionPreference = 'SilentlyContinue'
-# Les températures sont lues par « AEROX PC Care.exe --capteurs » dans un processus séparé :
+# Les températures sont lues par « AeroxPCCare.exe --capteurs » dans un processus séparé :
 # si le module LibreHardwareMonitor plante, le logiciel reste ouvert et on garde les mesures de base.
 $lhmDir = Join-Path (Join-Path $AppInfo.LogDir 'outils') 'lhm'
 $sp = $null
@@ -1954,7 +1954,7 @@ if ((Test-Path (Join-Path $lhmDir 'LibreHardwareMonitorLib.dll')) -and $AppInfo.
     $sp = New-Object AeroxSensorProc
     if (-not $sp.Start($AppInfo.Launcher, $lhmDir)) { $sync.SensError = $sp.LastError; $sp = $null }
 } elseif (Test-Path (Join-Path $lhmDir 'LibreHardwareMonitorLib.dll')) {
-    $sync.SensError = "Lance le logiciel avec « AEROX PC Care.exe » pour avoir les températures."
+    $sync.SensError = "Lance le logiciel avec le raccourci AEROX PC Care pour avoir les températures."
 }
 $spWait = 0
 $smi = "$env:SystemRoot\System32\nvidia-smi.exe"

@@ -6,7 +6,7 @@
 |---|---|
 | `src/` | Le logiciel (PowerShell + WPF), en 4 parties assemblées à la construction : réglages, chargement de la DLL, fonctions qui touchent au PC (`$TaskLibrary`), interface. |
 | `native/` | `AeroxPCCare.Native.dll` : tailles de dossiers, overlay, raccourci clavier, FPS, capteurs, NuGet, mise à jour, test de débit. |
-| `launcher/` | `AEROX PC Care.exe` : demande les droits admin et exécute le script ; modes `--capteurs` (températures dans un processus séparé) et `--maj` (remplacement des fichiers lors d'une mise à jour). |
+| `launcher/` | `AeroxPCCare.exe` : demande les droits admin et exécute le script ; mode `--capteurs` (températures dans un processus séparé). |
 | `installer/` | Script NSIS de l'installateur. |
 | `docs/` | Mode d'emploi (copié dans le logiciel) et ce guide. |
 | `build.sh` | Construit le zip et l'installateur dans `build/`. |

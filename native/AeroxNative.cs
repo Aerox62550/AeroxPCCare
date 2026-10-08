@@ -111,7 +111,7 @@ public static class AeroxNative {
     }
 }
 
-// Capteurs : lance « AEROX PC Care.exe --capteurs » (processus séparé) et garde la dernière mesure.
+// Capteurs : lance « AeroxPCCare.exe --capteurs » (processus séparé) et garde la dernière mesure.
 // Si le module de températures plante, seul ce processus s'arrête : le logiciel reste ouvert.
 public class AeroxSensorProc {
     Process proc;

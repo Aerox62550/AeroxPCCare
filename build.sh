@@ -17,7 +17,7 @@ MCS="mcs -langversion:5 -sdk:4.5 -optimize+ -nologo"
 $MCS -target:library -out:"$OUT/AeroxPCCare.Native.dll" \
      -r:System.Windows.Forms.dll -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Xml.dll \
      native/AeroxNative.cs build/Version.cs
-$MCS -target:winexe -platform:anycpu -win32icon:launcher/aerox.ico -out:"$OUT/AEROX PC Care.exe" \
+$MCS -target:winexe -platform:anycpu -win32icon:launcher/aerox.ico -out:"$OUT/AeroxPCCare.exe" \
      -r:System.Windows.Forms.dll launcher/Launcher.cs build/Version.cs
 
 # Script : les 4 parties assemblées, en UTF-8 avec BOM et fins de ligne Windows (obligatoire pour PowerShell 5.1)
