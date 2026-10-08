@@ -1,0 +1,5 @@
+build/
+*.exe
+*.dll
+*.zip
+!launcher/aerox.ico

@@ -1,0 +1,113 @@
+﻿AEROX PC Care - v1.0.0
+Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
+==================================================================================
+
+UTILISATION
+-----------
+1. Lance « AeroxPCCare_Setup_v1.0.0.exe ».
+2. Si Windows affiche « Windows a protégé votre ordinateur » :
+   clique sur « Informations complémentaires » puis « Exécuter quand même ».
+   (Le programme n'est pas encore signé numériquement, c'est normal pour l'instant.)
+   Si ton antivirus le bloque, autorise-le (ou ajoute le dossier
+   C:\Program Files\AEROX PC Care à ses exceptions).
+3. Clique sur « Oui » quand Windows demande l'autorisation, puis Suivant > Installer.
+4. Ouvre AEROX PC Care avec le raccourci du Bureau ou du menu Démarrer.
+5. Sur l'accueil, clique sur « Lancer le diagnostic ».
+
+Pour le désinstaller : Paramètres > Applications > AEROX PC Care > Désinstaller.
+
+LE DIAGNOSTIC
+-------------
+Il vérifie 10 points : stockage, mémoire, système, stabilité (écrans bleus,
+plantages), mises à jour, pilotes, sécurité, réseau, démarrage, santé des disques.
+
+Pour chaque problème trouvé, tu vois :
+  - ce qui se passe (et le code d'erreur s'il y en a un),
+  - la cause,
+  - la conséquence,
+  - un bouton vert pour le réparer automatiquement quand c'est possible,
+  - sinon « Voir comment faire » avec les étapes à suivre.
+
+« Tout réparer » lance toutes les réparations automatiques d'un coup,
+après avoir créé un point de restauration.
+
+NETTOYAGE APPROFONDI
+--------------------
+Onglet Nettoyage > « Nettoyage approfondi » : une analyse affiche chaque catégorie
+avec sa taille (temporaires, caches, mises à jour, rapports de plantage, nettoyage
+Windows, anciens composants, Windows.old, veille prolongée...). Tu coches, ça nettoie.
+« Ce qui prend de la place » affiche un arbre des plus gros dossiers du disque.
+
+MISES À JOUR AU CHOIX
+---------------------
+Onglet Mises à jour > « Choisir les mises à jour » : coche ce que tu veux mettre à
+jour, « Ignorer » met un logiciel de côté (mémorisé, même pour « Tout mettre à jour »).
+
+MONITEUR ET OVERLAY
+-------------------
+Onglet Moniteur : températures, utilisation CPU / GPU, VRAM, RAM et FPS en direct.
+Les composants de mesure s'installent en un clic (sources officielles) :
+  - LibreHardwareMonitor (températures), licence MPL-2.0
+  - Pilote PawnIO (température du processeur)
+  - PresentMon d'Intel (FPS), licence MIT, sans injection dans les jeux
+L'overlay se place où tu veux, à la taille que tu veux, avec les infos de ton choix.
+Raccourci : Ctrl + Maj + O pour l'afficher / le masquer, même en jeu.
+Il fonctionne avec les jeux en mode « fenêtré sans bordure ».
+
+TEST DE DÉBIT
+-------------
+Onglet Réparation > « Test de débit Internet » : ping, vitesse de réception et d'envoi
+(serveurs Cloudflare, ~25 secondes), avec l'explication : bon pour jouer ? pour la 4K ?
+Wi-Fi qui bride ? câble limité à 100 Mb/s ? Les 10 derniers résultats sont gardés.
+
+MON PC (BIOS)
+-------------
+Modèle du PC ou de la carte mère, version et âge du BIOS (avec un bouton pour trouver
+la page officielle du fabricant), mode de démarrage UEFI / Legacy, TPM, Secure Boot,
+compatibilité Windows 11 et matériel. Si quelque chose est désactivé, les étapes pour
+l'activer sont affichées, et « Redémarrer dans le BIOS » y emmène directement.
+
+ALERTE SURCHAUFFE
+-----------------
+Onglet Moniteur > Overlay : choisis un seuil pour le processeur et la carte graphique.
+Au-dessus, la ligne clignote en rouge dans l'overlay et c'est noté dans le journal.
+
+AIDE À DISTANCE
+---------------
+Onglet Aide > « J'ai besoin d'aide » :
+  1. « Préparer et copier mon rapport » : résumé du PC et de ses problèmes, à coller
+     dans un message à la personne qui t'aide (aussi enregistré sur le Bureau).
+  2. « Ouvrir Assistance rapide » : l'outil gratuit de Microsoft. La personne qui aide
+     clique sur « Aider quelqu'un » et te donne un code à 6 caractères.
+  3. Tape le code, accepte le partage d'écran. Tu peux arrêter à tout moment.
+ATTENTION : n'accepte jamais l'aide de quelqu'un qui t'a contacté de lui-même
+(faux « support Microsoft ») : c'est une arnaque très répandue.
+
+MISE À JOUR DU LOGICIEL
+-----------------------
+Quand une nouvelle version existe, l'accueil affiche « Mettre à jour » : un clic,
+le logiciel se met à jour et redémarre. Tes réglages sont gardés.
+
+QUAND UNE ERREUR ARRIVE
+-----------------------
+Une fenêtre t'explique ce qui a coincé, pourquoi, et propose la réparation.
+Si c'est un bug du logiciel, clique sur « Signaler ce bug ».
+
+SIGNALER UN BUG
+---------------
+Bouton « Signaler un bug » (en bas, ou dans l'onglet Aide).
+Le rapport ne contient ni ton nom, ni tes fichiers, ni tes mots de passe :
+version de Windows, erreurs du logiciel et fin du journal. Tu peux tout relire
+avant de l'envoyer.
+
+SÉCURITÉ
+--------
+- Ne touche jamais aux fichiers perso (photos, documents, téléchargements, jeux).
+- Point de restauration avant l'optimisation rapide et « Tout réparer ».
+- Uniquement des outils officiels de Windows. Pas de « nettoyeur de registre ».
+- Les actions lourdes demandent une confirmation avant de se lancer.
+- Journaux enregistrés dans %LOCALAPPDATA%\AeroxPCCare
+
+COMPATIBILITÉ
+-------------
+Windows 10 et Windows 11 (PowerShell 5.1, déjà inclus dans Windows).

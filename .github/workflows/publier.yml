@@ -1,0 +1,36 @@
+# Publie une nouvelle version : il suffit de pousser une étiquette « v1.0.1 » (la même que $AppVersion).
+# GitHub construit le logiciel, crée la Release avec le zip (mises à jour automatiques) et l'installateur.
+name: Publier une version
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publier:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Outils de construction
+        run: sudo apt-get update && sudo apt-get install -y mono-devel nsis zip
+
+      - name: Vérifier le numéro de version
+        run: |
+          VER=$(sed -n "s/^\$AppVersion = '\([0-9.]*\)'.*/\1/p" src/1_head.ps1)
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then echo "L'étiquette $GITHUB_REF_NAME ne correspond pas à \$AppVersion ($VER)"; exit 1; fi
+
+      - name: Construire
+        run: ./build.sh
+
+      - name: Publier la Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AEROX PC Care ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            build/AeroxPCCare_v*.zip
+            build/AeroxPCCare_Setup_v*.exe
