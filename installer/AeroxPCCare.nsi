@@ -40,6 +40,7 @@ VIAddVersionKey /LANG=1036 "LegalCopyright" "${PUBLISHER}"
 !include "x64.nsh"
 !include "LogicLib.nsh"
 !include "StrFunc.nsh"
+!include "FileFunc.nsh"
 ${StrStr}
 ${UnStrStr}
 
@@ -54,9 +55,21 @@ ${UnStrStr}
 !define MUI_FINISHPAGE_SHOWREADME_TEXT "Lire le mode d'emploi"
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 
+; Mode mise à jour (/UPDATE, lancé par le logiciel) : pas de questions, juste la barre de progression,
+; puis le logiciel se relance tout seul.
+Var IsUpdate
+Function SkipIfUpdate
+  ${If} $IsUpdate == 1
+    Abort
+  ${EndIf}
+FunctionEnd
+
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -66,11 +79,19 @@ ${UnStrStr}
 
 ; ------------------------------------------------------------------ Logiciel ouvert ?
 Function CheckRunning
+  StrCpy $3 0
   retry:
     nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq ${EXENAME}" /NH'
     Pop $0
     Pop $1
     ${StrStr} $2 $1 "${EXENAME}"
+    ${If} $2 != ""
+    ${AndIf} $IsUpdate == 1
+    ${AndIf} $3 < 15
+      IntOp $3 $3 + 1
+      Sleep 1000
+      Goto retry
+    ${EndIf}
     ${If} $2 != ""
       MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." IDRETRY retry
       Abort
@@ -90,6 +111,13 @@ Function un.CheckRunning
 FunctionEnd
 
 Function .onInit
+  StrCpy $IsUpdate 0
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/UPDATE" $R1
+  ${IfNot} ${Errors}
+    StrCpy $IsUpdate 1
+  ${EndIf}
   ${IfNot} ${RunningX64}
     MessageBox MB_YESNO|MB_ICONEXCLAMATION "Ce PC fonctionne en 32 bits. ${APPNAME} marchera, mais sans les températures.$\r$\n$\r$\nContinuer quand même ?" IDYES +2
     Abort
@@ -130,6 +158,11 @@ Section "Installer"
   WriteRegDWORD HKLM "${UNINSTKEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
   WriteRegDWORD HKLM "${UNINSTKEY}" "EstimatedSize" 600
+
+  ${If} $IsUpdate == 1
+    SetAutoClose true
+    Exec '"$INSTDIR\${EXENAME}"'
+  ${EndIf}
 SectionEnd
 
 ; ------------------------------------------------------------------ Désinstallation

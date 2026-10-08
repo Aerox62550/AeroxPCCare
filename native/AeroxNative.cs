@@ -347,41 +347,27 @@ public static class AeroxNuget {
     }
 }
 
-// Mise à jour du logiciel : télécharge le zip de la nouvelle version (GitHub), vérifie son empreinte,
-// le dézippe, puis lance « AEROX PC Care.exe --maj » de la nouvelle version qui remplace les fichiers.
+// Mise à jour du logiciel : télécharge l'installateur officiel de la nouvelle version (GitHub) et vérifie
+// son empreinte SHA-256. Le logiciel lance ensuite cet installateur, comme un utilisateur le ferait.
 public static class AeroxUpdate {
-    public static string Prepare(string url, string workDir, string sha256) {
+    public static void Download(string url, string path, string sha256) {
         ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-        Directory.CreateDirectory(workDir);
-        string zip = Path.Combine(workDir, "maj.zip");
-        string ex = Path.Combine(workDir, "fichiers");
-        try { if (Directory.Exists(ex)) Directory.Delete(ex, true); } catch { }
-        using (WebClient wc = new WebClient()) { wc.Headers.Add("User-Agent", "AeroxPCCare"); wc.DownloadFile(url, zip); }
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        string tmp = path + ".part";
+        using (WebClient wc = new WebClient()) { wc.Headers.Add("User-Agent", "AeroxPCCare"); wc.DownloadFile(url, tmp); }
         if (!string.IsNullOrEmpty(sha256)) {
             string h;
-            using (FileStream fs = File.OpenRead(zip))
+            using (FileStream fs = File.OpenRead(tmp))
             using (System.Security.Cryptography.SHA256 sh = System.Security.Cryptography.SHA256.Create()) {
                 h = BitConverter.ToString(sh.ComputeHash(fs)).Replace("-", "");
             }
             if (!string.Equals(h, sha256, StringComparison.OrdinalIgnoreCase)) {
-                try { File.Delete(zip); } catch { }
+                try { File.Delete(tmp); } catch { }
                 throw new Exception("Le fichier téléchargé ne correspond pas à celui publié (empreinte différente). Mise à jour annulée par sécurité.");
             }
         }
-        ZipFile.ExtractToDirectory(zip, ex);
-        try { File.Delete(zip); } catch { }
-        foreach (string f in Directory.GetFiles(ex, "AEROX PC Care.exe", SearchOption.AllDirectories)) {
-            string d = Path.GetDirectoryName(f);
-            if (File.Exists(Path.Combine(d, "AeroxPCCare.ps1")) && File.Exists(Path.Combine(d, "AeroxPCCare.Native.dll"))) return d;
-        }
-        throw new Exception("Le paquet téléchargé est incomplet (fichiers du logiciel introuvables).");
-    }
-
-    public static void Launch(string newDir, string installDir) {
-        ProcessStartInfo psi = new ProcessStartInfo(Path.Combine(newDir, "AEROX PC Care.exe"),
-            "--maj \"" + newDir.TrimEnd('\\') + "\" \"" + installDir.TrimEnd('\\') + "\" " + Process.GetCurrentProcess().Id);
-        psi.UseShellExecute = false; psi.WorkingDirectory = newDir;
-        Process.Start(psi);
+        if (File.Exists(path)) File.Delete(path);
+        File.Move(tmp, path);
     }
 }
 

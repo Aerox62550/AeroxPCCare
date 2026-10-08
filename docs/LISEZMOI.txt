@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.0.1
+﻿AEROX PC Care - v1.0.2
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -86,7 +86,8 @@ ATTENTION : n'accepte jamais l'aide de quelqu'un qui t'a contacté de lui-même
 MISE À JOUR DU LOGICIEL
 -----------------------
 Quand une nouvelle version existe, l'accueil affiche « Mettre à jour » : un clic,
-le logiciel se met à jour et redémarre. Tes réglages sont gardés.
+le logiciel télécharge l'installateur officiel, l'installe et se relance.
+Tes réglages sont gardés.
 
 QUAND UNE ERREUR ARRIVE
 -----------------------

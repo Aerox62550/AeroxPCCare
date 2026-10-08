@@ -60,5 +60,4 @@ jobs:
             Déjà installé ? Rien à faire : le logiciel propose la mise à jour tout seul au démarrage.
             ⚠️ « Source code » = le code du logiciel, pas le programme à installer.
           files: |
-            build/AeroxPCCare_v*.zip
             build/AeroxPCCare_Setup.exe

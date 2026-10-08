@@ -19,7 +19,6 @@ Construire en local (Linux / WSL) : `sudo apt install mono-devel nsis zip python
 2. Pousse sur la branche `main`.
 3. GitHub Actions (« Publier une version ») voit le nouveau numéro, construit le logiciel et crée la
    **Release** `v1.0.1` avec :
-   - `AeroxPCCare_v1.0.1.zip` : utilisé par la mise à jour automatique ;
    - `AeroxPCCare_Setup.exe` : l'installateur pour les nouveaux utilisateurs (lien direct stable :
      `https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe`).
 4. Au prochain démarrage, chaque PC voit « Nouvelle version disponible » > **Mettre à jour**.
@@ -62,9 +61,10 @@ La bonne solution, si un jour tu veux l'automatique, c'est un petit relais gratu
 ## 2. La mise à jour automatique
 
 Au démarrage, le logiciel lit la dernière Release du dépôt. Si elle est plus récente, il propose
-« Mettre à jour » : il télécharge le zip, vérifie son empreinte SHA-256 (fournie par GitHub), se ferme,
-remplace ses fichiers et redémarre. L'ancienne version est gardée dans
-`%LOCALAPPDATA%\AeroxPCCare\maj\ancienne_version` et remise en place si la copie échoue.
+« Mettre à jour » : il télécharge `AeroxPCCare_Setup.exe` de la Release, vérifie son empreinte SHA-256
+(fournie par GitHub), se ferme et lance l'installateur en mode `/UPDATE` (pas de questions, barre de
+progression, puis relance du logiciel). C'est le même installateur que pour une première installation :
+pas de copie de programmes « à la main », ce que les antivirus prennent pour un comportement suspect.
 
 ## Structure du script
 

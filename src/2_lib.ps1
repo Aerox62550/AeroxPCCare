@@ -1697,32 +1697,33 @@ function Find-AppUpdate {
         $r = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases/latest" -f $AppInfo.Repo) -Headers @{ 'User-Agent' = 'AeroxPCCare' } -TimeoutSec 10 -ErrorAction Stop
         $v = ($r.tag_name -replace '^[vV]', '')
         if ([version]$v -gt [version]$AppInfo.Version) {
-            $asset = @($r.assets | Where-Object { $_.name -match '\.zip$' }) | Select-Object -First 1
+            $asset = @($r.assets | Where-Object { $_.name -match '(?i)setup.*\.exe$' }) | Select-Object -First 1
             $sync.UpdateInfo = @{ Version = $v; Url = $r.html_url; Notes = "$($r.body)"
-                                  Zip = $(if ($asset) { [string]$asset.browser_download_url } else { '' })
+                                  Setup = $(if ($asset) { [string]$asset.browser_download_url } else { '' })
                                   Digest = $(if ($asset -and $asset.digest) { [string]$asset.digest } else { '' }) }
         }
     } catch {} finally { $sync.UpdateDone = $true }
 }
 
-# Télécharge et prépare la nouvelle version ; l'interface lance ensuite le remplacement des fichiers
+# Télécharge l'installateur officiel de la nouvelle version ; l'interface le lance ensuite (mode mise à jour)
 function Install-AppUpdate {
     $u = $sync.UpdateInfo
     $sync.UpdateReady = $null
-    if (-not $u -or -not $u.Zip) {
-        Add-TaskError -Title "Aucune mise à jour à installer" -Cause "La nouvelle version n'a pas de fichier zip à télécharger." -FixLabel "Ouvrir la page de téléchargement" -FixAction "Start-Process '$($u.Url)'"
+    if (-not $u -or -not $u.Setup) {
+        Add-TaskError -Title "Aucune mise à jour à installer" -Cause "La nouvelle version n'a pas d'installateur à télécharger." -FixLabel "Ouvrir la page de téléchargement" -FixAction "Start-Process '$($u.Url)'"
         return
     }
     Step ("Téléchargement d'AEROX PC Care {0} depuis GitHub" -f $u.Version)
     try {
         $sha = if ("$($u.Digest)" -match '^sha256:([0-9a-fA-F]{64})$') { $Matches[1] } else { '' }
-        $dir = [AeroxUpdate]::Prepare($u.Zip, (Join-Path $AppInfo.LogDir 'maj'), $sha)
-        Log ("   ✔ Nouvelle version téléchargée{0}." -f $(if ($sha) { ' et vérifiée (empreinte SHA-256 identique à celle publiée)' } else { '' }))
-        $sync.UpdateReady = $dir
+        $dest = Join-Path (Join-Path $AppInfo.LogDir 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
+        [AeroxUpdate]::Download($u.Setup, $dest, $sha)
+        Log ("   ✔ Installateur téléchargé{0}." -f $(if ($sha) { ' et vérifié (empreinte SHA-256 identique à celle publiée)' } else { '' }))
+        $sync.UpdateReady = $dest
     } catch {
         $m = if ($_.Exception.InnerException) { $_.Exception.InnerException.Message } else { $_.Exception.Message }
         Add-TaskError -Title "La mise à jour n'a pas pu être téléchargée" -Cause $m -Effect "Tu gardes la version actuelle, rien n'a été modifié." `
-            -FixLabel "Réessayer" -FixAction 'Install-AppUpdate' -Steps @("Vérifie ta connexion Internet.", "Si ton antivirus a bloqué le téléchargement, autorise-le puis réessaie.", "Sinon, télécharge la nouvelle version à la main sur la page GitHub du logiciel.")
+            -FixLabel "Réessayer" -FixAction 'Install-AppUpdate' -Steps @("Vérifie ta connexion Internet.", "Si ton antivirus a bloqué le téléchargement, autorise-le puis réessaie.", "Sinon, télécharge AeroxPCCare_Setup.exe à la main sur la page GitHub du logiciel.")
     }
 }
 }

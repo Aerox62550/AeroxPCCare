@@ -500,12 +500,12 @@ function Build-HomePage {
     if ($sync.UpdateInfo) {
         $u = New-CardBorder '#2A2350'
         $g = New-Object System.Windows.Controls.DockPanel
-        if ($sync.UpdateInfo.Zip) { $b = New-Button "Mettre à jour" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'selfupdate' } } $false }
+        if ($sync.UpdateInfo.Setup) { $b = New-Button "Mettre à jour" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'selfupdate' } } $false }
         else { $b = New-Button "Télécharger" 'PrimaryBtn' @{ Kind = 'openurl'; Url = $sync.UpdateInfo.Url } $false }
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $g $b
         $t = New-Object System.Windows.Controls.StackPanel
         Add-Child $t (New-Text ("Nouvelle version disponible : {0}" -f $sync.UpdateInfo.Version) 15 '#FFFFFF' 'SemiBold')
-        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Zip) { "Un clic : le logiciel se met à jour tout seul et redémarre. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
+        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : l'installateur de la nouvelle version s'ouvre, installe la mise à jour et relance le logiciel. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
     }
     # Bannière santé
@@ -871,25 +871,25 @@ function Invoke-UiCommand($T) {
 function Start-SelfUpdate {
     $u = $sync.UpdateInfo
     if (-not $u) { return }
-    if (-not $u.Zip) { Start-Process $u.Url; return }
+    if (-not $u.Setup) { Start-Process $u.Url; return }
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $notes = ("$($u.Notes)" -replace '\r', '').Trim()
     if ($notes.Length -gt 700) { $notes = $notes.Substring(0, 700) + '…' }
     $txt = "Installer AEROX PC Care $($u.Version) ?`n`n" + $(if ($notes) { "Nouveautés :`n$notes`n`n" } else { '' }) +
-           "Le logiciel va télécharger la nouvelle version, se fermer et redémarrer tout seul. Tes réglages et journaux sont gardés."
+           "Le logiciel va télécharger l'installateur officiel de la nouvelle version, se fermer, l'installer et se relancer. Tes réglages et journaux sont gardés."
     if (-not (Confirm-Box $txt)) { return }
     [void](Start-AeroxTask 'Install-AppUpdate' "Mise à jour d'AEROX PC Care" 'selfupdate')
 }
 function Complete-SelfUpdate {
-    $dir = $sync.UpdateReady; $sync.UpdateReady = $null
+    $setup = $sync.UpdateReady; $sync.UpdateReady = $null
     try {
-        [AeroxUpdate]::Launch($dir, $AppRoot)
-        Write-UiLog "Redémarrage sur la nouvelle version..."
+        Start-Process -FilePath $setup -ArgumentList '/UPDATE'
+        Write-UiLog "Installation de la nouvelle version..."
         $script:SelfUpdating = $true
         $window.Close()
     } catch {
         Write-Bug -Context 'Mise à jour du logiciel' -ErrorRecord $_
-        [System.Windows.MessageBox]::Show("La mise à jour n'a pas pu démarrer :`n`n$($_.Exception.Message)`n`nTu gardes la version actuelle.", $AppName, 'OK', 'Warning') | Out-Null
+        [System.Windows.MessageBox]::Show("L'installateur de la mise à jour n'a pas pu démarrer :`n`n$($_.Exception.Message)`n`nTu gardes la version actuelle. Tu peux aussi télécharger AeroxPCCare_Setup.exe sur la page GitHub du logiciel.", $AppName, 'OK', 'Warning') | Out-Null
     }
 }
 
@@ -2440,7 +2440,7 @@ $timer.Add_Tick({
         }
         if ($script:ManualUpdateCheck -and $sync.UpdateDone) {
             $script:ManualUpdateCheck = $false
-            if ($sync.UpdateInfo -and $sync.UpdateInfo.Zip) { Start-SelfUpdate }
+            if ($sync.UpdateInfo -and $sync.UpdateInfo.Setup) { Start-SelfUpdate }
             elseif ($sync.UpdateInfo) {
                 if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { Start-Process $sync.UpdateInfo.Url }
             } else { [System.Windows.MessageBox]::Show("Tu as déjà la dernière version ($AppVersion).", $AppName, 'OK', 'Information') | Out-Null }
@@ -2454,6 +2454,8 @@ Write-UiLog "Commence par « Lancer le diagnostic » sur l'accueil."
 $LogDot.Visibility = 'Collapsed'
 Load-Settings
 if ($script:Settings.LogOpen) { Set-LogOpen $true }
+# Fichiers temporaires d'une mise à jour terminée
+try { Get-ChildItem -LiteralPath (Join-Path $LogDir 'maj') -Force -ErrorAction Stop | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch {}
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique
 try {
     $uk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare'

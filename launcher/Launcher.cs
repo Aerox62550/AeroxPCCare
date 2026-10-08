@@ -38,7 +38,6 @@ static class Program {
     [STAThread]
     static int Main(string[] args) {
         if (args.Length >= 3 && args[0] == "--capteurs") return Sensors.Run(args[1], args[2]);
-        if (args.Length >= 4 && args[0] == "--maj") return Updater(args[1], args[2], args[3]);
         try {
             if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) {
                 try {
@@ -101,61 +100,6 @@ static class Program {
         } catch (Exception ex) {
             Report(AppDomain.CurrentDomain.BaseDirectory, ex.ToString());
             return 1;
-        }
-    }
-
-    // Mode « mise à jour » : lancé depuis la nouvelle version téléchargée. Attend la fermeture du logiciel,
-    // sauvegarde l'ancienne version, copie les nouveaux fichiers puis relance le logiciel.
-    // En cas d'échec, l'ancienne version est remise en place.
-    static int Updater(string src, string dst, string pid) {
-        try { Process p = Process.GetProcessById(int.Parse(pid)); p.WaitForExit(60000); } catch { }
-        Thread.Sleep(800);
-        src = src.TrimEnd('\\'); dst = dst.TrimEnd('\\');
-        string backup = Path.Combine(Path.Combine(LogDir(), "maj"), "ancienne_version");
-        try { if (Directory.Exists(backup)) Directory.Delete(backup, true); } catch { }
-        List<string> done = new List<string>();
-        try {
-            foreach (string f in Directory.GetFiles(src, "*", SearchOption.AllDirectories)) {
-                string rel = f.Substring(src.Length).TrimStart('\\');
-                string target = Path.Combine(dst, rel);
-                Directory.CreateDirectory(Path.GetDirectoryName(target));
-                if (File.Exists(target)) {
-                    string b = Path.Combine(backup, rel);
-                    Directory.CreateDirectory(Path.GetDirectoryName(b));
-                    CopyRetry(target, b);
-                }
-                CopyRetry(f, target);
-                done.Add(rel);
-            }
-        } catch (Exception ex) {
-            foreach (string rel in done) {
-                string b = Path.Combine(backup, rel);
-                try { if (File.Exists(b)) File.Copy(b, Path.Combine(dst, rel), true); } catch { }
-            }
-            MessageBox.Show("La mise à jour n'a pas pu être installée :\n\n" + ex.Message + "\n\nL'ancienne version a été remise en place.", Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            StartApp(dst);
-            return 1;
-        }
-        UnblockFolder(dst);
-        StartApp(dst);
-        return 0;
-    }
-    static void CopyRetry(string from, string to) {
-        Exception last = null;
-        for (int i = 0; i < 40; i++) {
-            try { File.Copy(from, to, true); return; }
-            catch (IOException ex) { last = ex; Thread.Sleep(500); }
-            catch (UnauthorizedAccessException ex) { last = ex; Thread.Sleep(500); }
-        }
-        throw new IOException("Impossible de remplacer " + Path.GetFileName(to) + " (fichier bloqué, peut-être par l'antivirus).", last);
-    }
-    static void StartApp(string dir) {
-        try {
-            ProcessStartInfo psi = new ProcessStartInfo(Path.Combine(dir, "AEROX PC Care.exe"));
-            psi.UseShellExecute = false; psi.WorkingDirectory = dir;
-            Process.Start(psi);
-        } catch (Exception ex) {
-            MessageBox.Show("Relance AEROX PC Care toi-même (double-clic sur « AEROX PC Care.exe »).\n\n" + ex.Message, Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 
