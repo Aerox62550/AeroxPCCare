@@ -199,6 +199,47 @@ function Get-NetworkStatus {
     return $st
 }
 
+# ---------------------------------------------------------------- Historique des changements (avec annulation)
+# Chaque modification faite par AEROX est notée dans changements.jsonl ; si elle est réversible,
+# « Undo » contient l'action qui la défait. Les annulations faites sont notées dans changements_annules.txt.
+function ConvertTo-PsLiteral([string]$Text) { return "'" + ($Text -replace "'", "''") + "'" }
+function Add-Change {
+    param([string]$Title, [string]$Detail = '', [string]$Undo = '', [string]$Kind = 'reglage')
+    if ($script:AeroxUndo) { return }
+    try {
+        $o = [ordered]@{ id = [guid]::NewGuid().ToString('N').Substring(0, 12); date = (Get-Date).ToString('s'); title = $Title; detail = $Detail; undo = $Undo; kind = $Kind; version = $AppInfo.Version }
+        $f = Join-Path $AppInfo.LogDir 'changements.jsonl'
+        [IO.File]::AppendAllText($f, (($o | ConvertTo-Json -Compress) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+}
+function Get-Changes([int]$Max = 300) {
+    $f = Join-Path $AppInfo.LogDir 'changements.jsonl'
+    $u = Join-Path $AppInfo.LogDir 'changements_annules.txt'
+    $undone = @(); if (Test-Path -LiteralPath $u) { $undone = @(Get-Content -LiteralPath $u -ErrorAction SilentlyContinue | Where-Object { $_ }) }
+    $list = New-Object System.Collections.ArrayList
+    if (Test-Path -LiteralPath $f) {
+        foreach ($l in @(Get-Content -LiteralPath $f -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -Last $Max)) {
+            try { $o = $l | ConvertFrom-Json; [void]$list.Add(@{ Id = $o.id; Date = [datetime]$o.date; Title = $o.title; Detail = $o.detail; Undo = $o.undo; Kind = $o.kind; Undone = ($undone -contains $o.id) }) } catch {}
+        }
+    }
+    $list.Reverse()
+    return ,$list
+}
+function Set-ChangeUndone([string]$Id) {
+    try { [IO.File]::AppendAllText((Join-Path $AppInfo.LogDir 'changements_annules.txt'), "$Id`r`n") } catch {}
+}
+function Set-PowerScheme([string]$Guid, [string]$Name) {
+    Step ("Retour au mode d'alimentation « {0} »" -f $Name)
+    $null = Invoke-Native 'powercfg.exe' @('/setactive', $Guid)
+    if ((Get-PowerStatus).Guid -eq $Guid.ToLower()) { Log "   ✔ Mode « $Name » rétabli." }
+    else { Add-TaskError -Title "Impossible de rétablir le mode « $Name »" -Cause "Ce mode d'alimentation n'existe plus sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'powercfg.cpl'" }
+}
+function Enable-Hibernation {
+    Step "Réactivation de la veille prolongée"
+    $null = Invoke-Native 'powercfg.exe' @('/hibernate', 'on')
+    Log "   ✔ Veille prolongée réactivée."
+}
+
 # ---------------------------------------------------------------- Démarrage (registre + dossiers)
 $script:StartupDisablePattern = '(?i)discord|steam|epicgames|epic games|spotify|battle\.net|eadesktop|ea app|origin|ubisoft|uplay|skype|teams|gog galaxy|galaxyclient|opera.*(assistant|browser)|opera gx|ccleaner|utorrent|bittorrent|overwolf|medal|riotclient|riot client'
 $script:StartupKeepPattern    = '(?i)security|defender|antivirus|avast|avg|kaspersky|bitdefender|norton|malwarebytes|eset|mcafee|realtek|rtkaud|rtkngui|nvidia|amd|radeon|intel|synaptics|elan|logitech|razer|corsair|steelseries|onedrive|vanguard|audio|sound'
@@ -252,6 +293,8 @@ function Set-StartupApps([string[]]$Disable = @(), [string[]]$Enable = @()) {
             if (-not (Test-Path -LiteralPath $e.Approved)) { New-Item -Path $e.Approved -Force | Out-Null }
             New-ItemProperty -LiteralPath $e.Approved -Name $e.ValueName -PropertyType Binary -Value ([byte[]]($want,0,0,0,0,0,0,0,0,0,0,0)) -Force -ErrorAction Stop | Out-Null
             Log ("   ✔ {0} : {1}" -f $e.Name, $(if ($want -eq 3) { 'ne se lance plus au démarrage' } else { 'se lance de nouveau au démarrage' }))
+            if ($want -eq 3) { Add-Change -Title ("« {0} » ne se lance plus au démarrage" -f $e.Name) -Detail "L'appli reste installée." -Undo ("Set-StartupApps -Enable @({0})" -f (ConvertTo-PsLiteral $e.Id)) }
+            else { Add-Change -Title ("« {0} » se lance de nouveau au démarrage" -f $e.Name) -Undo ("Set-StartupApps -Disable @({0})" -f (ConvertTo-PsLiteral $e.Id)) }
         } catch {
             Add-TaskError -Title "Impossible de modifier « $($e.Name) » au démarrage" -Cause $_.Exception.Message `
                 -FixLabel "Ouvrir le Gestionnaire des tâches" -FixAction "Start-Process taskmgr.exe -ArgumentList '/0 /startup'"
@@ -309,6 +352,7 @@ function Get-SystemInfo {
         $i.OsName = ($os.Caption -replace '^Microsoft\s+', ''); $i.OsBuild = [int]$os.BuildNumber
         $i.OsVersion = try { (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop).DisplayVersion } catch { '' }
         $i.Win11 = ($i.OsBuild -ge 22000)
+        try { $i.GpuDrivers = @(Get-GpuDrivers) } catch { $i.GpuDrivers = @() }
     } catch { $i.Error = $_.Exception.Message }
     # Mode de démarrage : 1 = ancien (Legacy / CSM), 2 = UEFI
     try { $fw = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control' -Name PEFirmwareType -ErrorAction Stop).PEFirmwareType; $i.Uefi = ($fw -eq 2) } catch { $i.Uefi = $null }
@@ -557,27 +601,88 @@ function Test-Updates {
     } else { Add-Ok $(if (@(Get-IgnoredApps).Count) { "Logiciels à jour ($(@(Get-IgnoredApps).Count) ignoré(s) à ta demande)" } else { "Tous les logiciels sont à jour" }) }
 }
 
-function Test-Drivers {
+# ---------------------------------------------------------------- Pilotes graphiques (version installée et dernière version)
+# NVIDIA : dernière version via l'API officielle de nvidia.com (identifiant du modèle tiré de la liste publique
+# ZenitH-AT/nvidia-data, utilisée aussi par TinyNvidiaUpdateChecker). AMD / Intel : pas d'API publique, on se fie à l'âge.
+function Get-NvidiaLatest([string]$GpuName, [bool]$Laptop) {
+    $ua = @{ 'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AeroxPCCare' }
+    $clean = ([regex]::Match($GpuName, '(?<=NVIDIA ).*').Value -replace '\s*\([A-Z]+\)$', '' -replace '\s+\d+GB$', '' -replace '\s+with Max-Q Design$', '' -replace '\s+COLLECTORS EDITION$', '').Trim() -replace 'Super', 'SUPER'
+    if (-not $clean) { return $null }
+    $data = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ZenitH-AT/nvidia-data/main/gpu-data.json' -Headers $ua -TimeoutSec 8 -UseBasicParsing -ErrorAction Stop).Content | ConvertFrom-Json
+    $pfid = $null
+    foreach ($kind in $(if ($Laptop) { 'notebook', 'desktop' } else { 'desktop', 'notebook' })) {
+        $p = $data.$kind.PSObject.Properties[$clean]
+        if ($p) { $pfid = $p.Value; break }
+    }
+    if (-not $pfid) { return $null }
+    $os = if ([Environment]::OSVersion.Version.Build -ge 22000) { 135 } else { 57 }
+    $url = "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&pfid=$pfid&osID=$os&dch=1&numberOfResults=10&languageCode=1078"
+    $r = (Invoke-WebRequest -Uri $url -Headers $ua -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop).Content | ConvertFrom-Json
+    if (-not $r -or [int]$r.Success -lt 1) { return $null }
+    $pick = @($r.IDS | ForEach-Object { $_.downloadInfo } | Where-Object { "$($_.IsCRD)" -eq '0' }) | Select-Object -First 1
+    if (-not $pick) { $pick = @($r.IDS)[0].downloadInfo }
+    $date = $null; try { $date = [datetime]::Parse("$($pick.ReleaseDateTime)", [Globalization.CultureInfo]::InvariantCulture) } catch {}
+    return @{ Version = "$($pick.Version)"; Date = $date; Url = "$($pick.DownloadURL)" }
+}
+
+function Get-GpuDrivers {
+    $laptop = $false
+    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    $list = New-Object System.Collections.ArrayList
     foreach ($g in @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
-        if ($g.Name -match '(?i)basic display|de base') {
-            Add-Issue -Id 'gpunone' -Sev 'crit' -Title "Aucun pilote de carte graphique installé" -Detail $g.Name `
+        if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage') { continue }
+        $vendor = if ("$($g.PNPDeviceID)" -match 'VEN_10DE' -or $g.Name -match 'NVIDIA') { 'NVIDIA' } elseif ("$($g.PNPDeviceID)" -match 'VEN_1002' -or $g.Name -match 'AMD|Radeon') { 'AMD' } elseif ("$($g.PNPDeviceID)" -match 'VEN_8086' -or $g.Name -match 'Intel') { 'Intel' } else { '' }
+        $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = $g.DriverDate; AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown' }
+        if ($o.Date) { $o.AgeDays = [int]((Get-Date) - $o.Date).TotalDays }
+        if ($vendor -eq 'NVIDIA') {
+            $digits = $o.Raw -replace '\D', ''
+            if ($digits.Length -ge 5) { $v = $digits.Substring($digits.Length - 5); $o.Version = $v.Substring(0, 3) + '.' + $v.Substring(3) }
+            try { $o.Latest = Get-NvidiaLatest $g.Name $laptop } catch { $o.LatestError = $_.Exception.Message }
+            if ($o.Latest -and $o.Latest.Version) {
+                $o.Status = if ([version]$o.Version -ge [version]$o.Latest.Version) { 'ok' } else { 'old' }
+            }
+        }
+        if ($o.Status -eq 'unknown' -and $null -ne $o.AgeDays) { $o.Status = if ($o.AgeDays -ge 365) { 'old' } else { 'ok' } }
+        if ($o.Basic) { $o.Status = 'none' }
+        $o.Page = switch ($vendor) {
+            'NVIDIA' { 'https://www.nvidia.com/fr-fr/drivers/' }
+            'AMD'    { 'https://www.amd.com/fr/support/download/drivers.html' }
+            'Intel'  { 'https://www.intel.fr/content/www/fr/fr/support/detect.html' }
+            default  { '' }
+        }
+        $o.Tool = switch ($vendor) { 'NVIDIA' { 'NVIDIA App' } 'AMD' { 'AMD Software: Adrenalin Edition' } 'Intel' { 'Intel Driver & Support Assistant' } default { '' } }
+        [void]$list.Add($o)
+    }
+    return ,$list
+}
+
+function Test-Drivers {
+    foreach ($o in @(Get-GpuDrivers)) {
+        if ($o.Status -eq 'none') {
+            Add-Issue -Id 'gpunone' -Sev 'crit' -Title "Aucun pilote de carte graphique installé" -Detail $o.Name `
                 -Cause "Windows utilise un pilote d'affichage de secours, sans accélération graphique." -Effect "Jeux et vidéos saccadent ou ne se lancent pas, résolution parfois limitée." `
                 -FixLabel "Rechercher les pilotes" -FixAction 'Open-DriverUpdates' -OpenOnly -Steps @("Installe le pilote depuis le site du fabricant : NVIDIA App, AMD Adrenalin ou Intel Driver & Support Assistant.")
             continue
         }
-        if (-not $g.DriverDate) { continue }
-        $months = [int](((Get-Date) - $g.DriverDate).TotalDays / 30)
-        if ($months -ge 12) {
-            $vendor = if ($g.Name -match 'NVIDIA') { @('NVIDIA App', 'https://www.nvidia.com/fr-fr/software/nvidia-app/') }
-                      elseif ($g.Name -match 'AMD|Radeon') { @('AMD Software: Adrenalin Edition', 'https://www.amd.com/fr/support/download/drivers.html') }
-                      elseif ($g.Name -match 'Intel') { @('Intel Driver & Support Assistant', 'https://www.intel.fr/content/www/fr/fr/support/detect.html') }
-                      else { $null }
-            $fixAction = if ($vendor) { "Start-Process '$($vendor[1])'; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { 'Open-DriverUpdates' }
-            $steps = if ($vendor) { @("Télécharge « $($vendor[0]) » sur la page officielle (bouton vert).", "Installe-le, ouvre-le et lance la mise à jour du pilote (installation express).", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
-            Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f $g.DriverDate.ToString('MMMM yyyy')) -Detail ("{0} (version {1})" -f $g.Name, $g.DriverVersion) `
+        $page = if ($o.Latest -and $o.Latest.Url) { $o.Latest.Url } else { $o.Page }
+        $fix = if ($page) { "Start-Process " + (ConvertTo-PsLiteral $page) + "; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { 'Open-DriverUpdates' }
+        if ($o.Vendor -eq 'NVIDIA' -and $o.Latest) {
+            $rel = if ($o.Latest.Date) { " (sortie le " + $o.Latest.Date.ToString('dd/MM/yyyy') + ")" } else { '' }
+            $late = if ($o.Latest.Date) { [int]((Get-Date) - $o.Latest.Date).TotalDays } else { 0 }
+            if ($o.Status -eq 'old' -and ($late -ge 21 -or ($o.AgeDays -ge 120))) {
+                Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Pilote NVIDIA pas à jour : {0} installé, {1} disponible" -f $o.Version, $o.Latest.Version) -Detail ("{0}{1}" -f $o.Name, $rel) `
+                    -Cause "NVIDIA sort régulièrement des pilotes qui corrigent des plantages et améliorent les performances des jeux récents." -Effect "Crashs ou bugs graphiques possibles dans certains jeux, performances un peu plus faibles." `
+                    -FixLabel "Télécharger le pilote officiel" -FixAction $fix -OpenOnly `
+                    -Steps @("Clique sur le bouton : le pilote officiel se télécharge depuis nvidia.com.", "Lance le fichier téléchargé et choisis l'installation « Express ».", "Ou, plus simple : installe la « NVIDIA App » qui fait les mises à jour toute seule.", "Redémarre le PC à la fin.")
+            } else { Add-Ok ("Pilote NVIDIA à jour : {0}{1}" -f $o.Version, $(if ($o.Status -eq 'old') { " (la {0} vient de sortir{1})" -f $o.Latest.Version, $rel } else { '' })) }
+            continue
+        }
+        if ($o.Status -eq 'old' -and $o.Date) {
+            $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
+            Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f $o.Date.ToString('MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
                 -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
-                -FixLabel "Télécharger le pilote officiel" -FixAction $fixAction -OpenOnly -Steps $steps
-        } else { Add-Ok ("Pilote graphique récent : {0}" -f $g.Name) }
+                -FixLabel "Télécharger le pilote officiel" -FixAction $fix -OpenOnly -Steps $steps
+        } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
     }
     $errNames = @{ 1 = 'mal configuré'; 3 = 'pilote abîmé'; 10 = 'ne peut pas démarrer'; 28 = 'pilote non installé'; 31 = 'ne fonctionne pas correctement'; 39 = 'pilote abîmé ou manquant'; 43 = 'arrêté après une erreur'; 52 = 'pilote non signé' }
     $bad = @(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' -ErrorAction SilentlyContinue | Where-Object { $_.ConfigManagerErrorCode -notin 22, 24, 45 })
@@ -810,6 +915,7 @@ function Clear-TempFiles {
         try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop | Out-Null; Log "   ✔ Cache d'optimisation de distribution vidé" } catch {}
     }
     Log ("✅ Total libéré : {0}" -f (Format-Size ($script:TotalFreed - $before)))
+    Add-Change -Kind 'info' -Title ("Fichiers temporaires supprimés : {0}" -f (Format-Size ($script:TotalFreed - $before))) -Detail "Fichiers inutiles : Windows les recrée si besoin."
 }
 
 function Clear-RecycleBinAll {
@@ -819,6 +925,7 @@ function Clear-RecycleBinAll {
     Clear-RecycleBin -Force -ErrorAction SilentlyContinue
     $script:TotalFreed += $size
     Log ("✅ Corbeille vidée : {0} libérés" -f (Format-Size $size))
+    Add-Change -Kind 'info' -Title ("Corbeille vidée : {0}" -f (Format-Size $size)) -Detail "Les fichiers de la corbeille ne sont plus récupérables."
 }
 
 function Stop-Browser([string]$Proc) {
@@ -904,6 +1011,7 @@ function Enable-StorageSense {
     Set-ItemProperty -Path $key -Name '01' -Value 1 -Type DWord
     Set-ItemProperty -Path $key -Name '04' -Value 1 -Type DWord
     Log "   ✔ Windows supprimera maintenant tout seul les fichiers temporaires régulièrement."
+    Add-Change -Title "Nettoyage automatique de Windows activé (Assistant stockage)" -Undo 'Disable-StorageSense'
     Start-Process 'ms-settings:storagesense'
 }
 
@@ -1221,10 +1329,12 @@ function Invoke-DeepClean([string[]]$Ids) {
         Step "Désactivation de la veille prolongée"
         $null = Invoke-Native 'powercfg.exe' @('/hibernate', 'off')
         if (Test-Path -LiteralPath "$env:SystemDrive\hiberfil.sys") { Log "   • Le fichier disparaîtra au prochain redémarrage" } else { Log "   ✔ hiberfil.sys supprimé" }
+        Add-Change -Title "Veille prolongée désactivée" -Detail "Libère la place du fichier hiberfil.sys." -Undo 'Enable-Hibernation'
     }
     $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     Step "Résultat"
     Log ("✅ Espace libéré sur {0} : {1} (maintenant {2} libres)" -f $env:SystemDrive, (Format-Size ([math]::Max(0, $free1 - $free0))), (Format-Size $free1))
+    Add-Change -Kind 'info' -Title ("Nettoyage approfondi : {0} libérés" -f (Format-Size ([math]::Max(0, $free1 - $free0)))) -Detail "Fichiers inutiles supprimés (temporaires, caches, anciennes mises à jour). Pas besoin de les récupérer : Windows et les logiciels les recréent si nécessaire."
 }
 
 # Ce qui prend de la place sur le disque (arbre des dossiers)
@@ -1248,8 +1358,12 @@ function Get-PowerStatus {
 }
 function Set-BalancedPower {
     Step "Retour au mode d'alimentation normal"
+    $prev = Get-PowerStatus
     $null = Invoke-Native 'powercfg.exe' @('/setactive', $script:PowerBalanced)
-    if ($LASTEXITCODE -eq 0 -or -not (Get-PowerStatus).Perf) { Log "   ✔ Mode « Utilisation normale / Équilibré » activé." }
+    if ($LASTEXITCODE -eq 0 -or -not (Get-PowerStatus).Perf) {
+        Log "   ✔ Mode « Utilisation normale / Équilibré » activé."
+        if ($prev.Guid -and $prev.Perf) { Add-Change -Title "Mode d'alimentation : Équilibré" -Detail ("Avant : {0}" -f $prev.Name) -Undo ("Set-PowerScheme {0} {1}" -f (ConvertTo-PsLiteral $prev.Guid), (ConvertTo-PsLiteral $prev.Name)) }
+    }
     else { Add-TaskError -Title "Impossible de revenir au mode Équilibré" -Cause "Le mode Équilibré n'existe pas sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'powercfg.cpl'" }
 }
 function Get-VisualFxStatus {
@@ -1264,6 +1378,7 @@ function Disable-StorageSense {
     $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'
     if (Test-Path $key) { Set-ItemProperty -Path $key -Name '01' -Value 0 -Type DWord }
     Log "   ✔ Nettoyage automatique désactivé."
+    Add-Change -Title "Nettoyage automatique de Windows désactivé (Assistant stockage)" -Undo 'Enable-StorageSense'
 }
 
 # ---------------------------------------------------------------- OUTILS DE MESURE (téléchargés à la demande)
@@ -1377,7 +1492,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names) {
         Step ("Mise à jour {0}/{1} : {2}" -f $n, $Ids.Count, $name)
         $idArgs = if ($id.EndsWith([string][char]0x2026)) { @('--id', $id.TrimEnd([char]0x2026)) } else { @('--id', $id, '--exact') }
         $ec = Invoke-Native $wg (@('upgrade') + $idArgs + @('--silent', '--accept-package-agreements', '--accept-source-agreements') + $extra) ([System.Text.Encoding]::UTF8)
-        if ($ec -eq 0) { $ok++; Log "   ✔ $name mis à jour" }
+        if ($ec -eq 0) { $ok++; Log "   ✔ $name mis à jour"; Add-Change -Kind 'info' -Title "« $name » mis à jour" -Detail "Pour revenir à l'ancienne version, il faut la réinstaller depuis le site du logiciel." }
         elseif ($ec -eq -1978335189) { $ok++; Log "   • $name : déjà à jour" }
         else {
             $why = switch ($ec) {
@@ -1542,6 +1657,7 @@ function Repair-Network {
     $null = Invoke-Native 'ipconfig.exe' @('/release')
     $null = Invoke-Native 'ipconfig.exe' @('/renew')
     Log "✅ Réseau réinitialisé. Redémarre le PC pour terminer la réparation."
+    Add-Change -Kind 'info' -Title "Réglages réseau de Windows remis à zéro" -Detail "DNS, Winsock et TCP/IP réinitialisés. Les connexions Wi-Fi enregistrées sont gardées."
     $sync.NeedReboot = $true
 }
 
@@ -1623,6 +1739,7 @@ function New-RestorePoint {
         New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore' -Name 'SystemRestorePointCreationFrequency' -Value 0 -PropertyType DWord -Force | Out-Null
         Checkpoint-Computer -Description "AEROX PC Care $(Get-Date -Format 'dd/MM/yyyy HH:mm')" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
         Log "   ✔ Point de restauration créé : tu pourras revenir en arrière si besoin."
+        Add-Change -Kind 'info' -Title "Point de restauration créé" -Detail "Permet de remettre Windows dans cet état (bouton « Restauration du système » ci-dessous)."
     } catch {
         $m = $_.Exception.Message
         Add-TaskError -Title "Le point de restauration n'a pas pu être créé" `
@@ -1646,6 +1763,7 @@ function Show-Startup {
 
 function Set-HighPerformance {
     Step "Mode d'alimentation performances maximales"
+    $prev = Get-PowerStatus
     $hp = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
     $list = (powercfg.exe /list) | Out-String
     $done = $false
@@ -1654,7 +1772,10 @@ function Set-HighPerformance {
         $dup = (powercfg.exe -duplicatescheme $hp 2>$null) | Out-String
         if ($dup -match '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})') { powercfg.exe /setactive $matches[1] | Out-Null; $done = ($LASTEXITCODE -eq 0) }
     }
-    if ($done) { Log "   ✔ Mode « Performances élevées » activé." }
+    if ($done) {
+        Log "   ✔ Mode « Performances élevées » activé."
+        if ($prev.Guid -and -not $prev.Perf) { Add-Change -Title "Mode d'alimentation : performances maximales" -Detail ("Avant : {0}" -f $prev.Name) -Undo ("Set-PowerScheme {0} {1}" -f (ConvertTo-PsLiteral $prev.Guid), (ConvertTo-PsLiteral $prev.Name)) }
+    }
     else {
         Log "   • Ce mode n'existe pas sur ce PC (normal sur beaucoup de portables récents)."
         Log "   → J'ouvre les réglages : dans « Mode d'alimentation », choisis « Meilleures performances »."
@@ -1689,6 +1810,15 @@ function Start-QuickOptimize {
 }
 
 # ---------------------------------------------------------------- Mise à jour d'AEROX PC Care (GitHub)
+# Adresse du relais des rapports de bug (fichier relais.txt du dépôt : modifiable sans nouvelle version)
+function Find-BugRelay {
+    try {
+        if (-not $AppInfo.Repo) { return }
+        $u = "$((Invoke-WebRequest -Uri ("https://raw.githubusercontent.com/{0}/main/relais.txt" -f $AppInfo.Repo) -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop).Content)".Trim()
+        if ($u -match '^https://[^\s]+$') { $sync.BugRelay = $u }
+    } catch {}
+}
+
 function Find-AppUpdate {
     $sync.UpdateDone = $false
     try {

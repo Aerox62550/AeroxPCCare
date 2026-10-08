@@ -8,7 +8,8 @@
 | `native/` | `AeroxPCCare.Native.dll` : tailles de dossiers, overlay, raccourci clavier, FPS, capteurs, NuGet, mise à jour, test de débit. |
 | `launcher/` | `AeroxPCCare.exe` : demande les droits admin et exécute le script ; mode `--capteurs` (températures dans un processus séparé). |
 | `installer/` | Script NSIS de l'installateur. |
-| `docs/` | Mode d'emploi (copié dans le logiciel) et ce guide. |
+| `docs/` | Mode d'emploi (copié dans le logiciel), ce guide, et la mise en place du relais des rapports (`RELAIS-RAPPORTS.md`). |
+| `relais/` | Relais Cloudflare Worker : publie les rapports de bug dans les Issues sans que l'utilisateur ait un compte GitHub. Adresse lue dans `relais.txt`. |
 | `build.sh` | Construit le zip et l'installateur dans `build/`. |
 
 Construire en local (Linux / WSL) : `sudo apt install mono-devel nsis zip python3` puis `./build.sh`.

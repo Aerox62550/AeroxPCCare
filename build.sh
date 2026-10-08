@@ -18,7 +18,7 @@ $MCS -target:library -out:"$OUT/AeroxPCCare.Native.dll" \
      -r:System.Windows.Forms.dll -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll -r:System.Xml.dll \
      native/AeroxNative.cs build/Version.cs
 $MCS -target:winexe -platform:anycpu -win32icon:launcher/aerox.ico -out:"$OUT/AeroxPCCare.exe" \
-     -r:System.Windows.Forms.dll launcher/Launcher.cs build/Version.cs
+     -r:System.Windows.Forms.dll -r:System.Drawing.dll launcher/Launcher.cs build/Version.cs
 
 # Script : les 4 parties assemblées, en UTF-8 avec BOM et fins de ligne Windows (obligatoire pour PowerShell 5.1)
 python3 - "$OUT/AeroxPCCare.ps1" src/1_head.ps1 src/1b_native.ps1 src/2_lib.ps1 src/3_ui.ps1 <<'PY'

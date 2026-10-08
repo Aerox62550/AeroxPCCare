@@ -25,6 +25,9 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 - **Test de débit Internet** (ping, réception, envoi) avec l'explication du résultat.
 - **Mon PC (BIOS)** : version et âge du BIOS, TPM, Secure Boot, UEFI, compatibilité Windows 11.
 - **Aide à distance** avec Assistance rapide de Microsoft, et un rapport du PC à envoyer.
+- **Pilotes graphiques** : compare le pilote NVIDIA installé avec la dernière version officielle (âge du pilote pour AMD / Intel).
+- **Historique des changements** : tout ce que le logiciel modifie est noté, avec un bouton « Annuler ».
+- **Rapports de bug en un clic**, sans compte à créer.
 - **Mise à jour automatique** du logiciel en un clic.
 
 ## Sécurité

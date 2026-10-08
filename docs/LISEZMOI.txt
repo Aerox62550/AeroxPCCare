@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.0.4
+﻿AEROX PC Care - v1.1.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -82,6 +82,18 @@ Onglet Aide > « J'ai besoin d'aide » :
   3. Tape le code, accepte le partage d'écran. Tu peux arrêter à tout moment.
 ATTENTION : n'accepte jamais l'aide de quelqu'un qui t'a contacté de lui-même
 (faux « support Microsoft ») : c'est une arnaque très répandue.
+
+HISTORIQUE ET ANNULATION
+------------------------
+Accueil ou onglet Aide > « Historique des changements » : tout ce qu'AEROX PC Care a
+modifié sur le PC. Chaque réglage (programmes au démarrage, mode d'alimentation,
+nettoyage automatique, veille prolongée) se remet comme avant avec « Annuler ».
+
+PILOTES GRAPHIQUES
+------------------
+Le diagnostic et l'onglet Mon PC comparent le pilote NVIDIA installé avec la dernière
+version officielle, et signalent les pilotes AMD / Intel de plus d'un an, avec le lien
+officiel pour les mettre à jour.
 
 MISE À JOUR DU LOGICIEL
 -----------------------

@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '1.0.4'
+$AppVersion = '1.1.0'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -20,7 +20,9 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 $isSTA   = [Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA'
 
 # Le logiciel se lance avec « AeroxPCCare.exe », qui demande les droits administrateur
+function Close-Splash { try { if ($AeroxSplash) { $AeroxSplash.Close() } } catch {} }
 if (-not $isAdmin -or -not $isSTA) {
+    Close-Splash
     Add-Type -AssemblyName PresentationFramework
     [System.Windows.MessageBox]::Show("Lance AEROX PC Care avec le programme « AeroxPCCare.exe » (ou le raccourci AEROX PC Care du Bureau).`n`nIl demandera les droits administrateur nécessaires pour analyser et réparer Windows.", $AppName, 'OK', 'Information') | Out-Null
     exit
@@ -34,6 +36,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 # Filet de sécurité : si le logiciel plante, l'erreur est écrite dans plantage.txt et affichée
 trap {
+    Close-Splash
     $msg = "{0}`r`n{1}`r`n{2}" -f $_.Exception.Message, ($_.InvocationInfo.PositionMessage), $_.ScriptStackTrace
     try { [IO.File]::WriteAllText((Join-Path $LogDir 'plantage.txt'), ("[{0}] AEROX PC Care {1}`r`n{2}" -f (Get-Date), $AppVersion, $msg)) } catch {}
     try { [System.Windows.MessageBox]::Show("AEROX PC Care a rencontré une erreur au démarrage :`n`n$($_.Exception.Message)`n`nLe détail est enregistré dans :`n$LogDir\plantage.txt", 'AEROX PC Care', 'OK', 'Error') | Out-Null } catch {}
@@ -61,6 +64,7 @@ $sync = [hashtable]::Synchronized(@{
     UpdateDone = $false
     UpdateReady = $null
     SysInfo    = $null
+    BugRelay   = ''
     AppList    = $null
     CleanList  = $null
     SpaceScan  = $null

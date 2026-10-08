@@ -24,6 +24,25 @@ static class Program {
     [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool DeleteFileW(string path);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+
+    // Une seule fenêtre du logiciel à la fois : si elle est déjà ouverte, on la ramène au premier plan
+    static bool AlreadyRunning() {
+        try {
+            System.Threading.Mutex m = System.Threading.Mutex.OpenExisting(@"Local\AeroxPCCare_Instance");
+            m.Close();
+        } catch (System.Threading.WaitHandleCannotBeOpenedException) { return false; }
+        catch (UnauthorizedAccessException) { }
+        catch { return false; }
+        try {
+            IntPtr h = FindWindow(null, Title);
+            if (h != IntPtr.Zero) { if (IsIconic(h)) ShowWindow(h, 9); SetForegroundWindow(h); }
+        } catch { }
+        return true;
+    }
+    static System.Threading.Mutex instance;
 
     // Retire la marque « téléchargé depuis Internet » (Zone.Identifier) des fichiers du logiciel,
     // comme le bouton « Débloquer » des propriétés d'un fichier : sinon .NET refuse de charger la DLL.
@@ -38,7 +57,9 @@ static class Program {
     [STAThread]
     static int Main(string[] args) {
         if (args.Length >= 3 && args[0] == "--capteurs") return Sensors.Run(args[1], args[2]);
+        AeroxSplash splash = null;
         try {
+            if (AlreadyRunning()) return 0;
             if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) {
                 try {
                     ProcessStartInfo psi = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location);
@@ -51,6 +72,13 @@ static class Program {
             }
 
             string dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+            bool created;
+            instance = new System.Threading.Mutex(true, @"Local\AeroxPCCare_Instance", out created);
+            if (!created) { AlreadyRunning(); return 0; }
+
+            // Écran de chargement tout de suite, le temps que le logiciel démarre
+            splash = new AeroxSplash();
+            splash.Show(Path.Combine(dir, "aerox.ico"));
 
             string script = Path.Combine(dir, "AeroxPCCare.ps1");
             if (!File.Exists(script)) {
@@ -77,6 +105,7 @@ static class Program {
             object ssp = rs.GetType().GetProperty("SessionStateProxy").GetValue(rs, null);
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxRoot", dir });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxLauncher", Assembly.GetExecutingAssembly().Location });
+            ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxSplash", splash });
 
             object ps = FindMethod(psType, "Create", 0).Invoke(null, null);
             psType.GetProperty("Runspace").SetValue(ps, rs, null);
@@ -84,9 +113,11 @@ static class Program {
             try {
                 FindMethod(psType, "Invoke", 0).Invoke(ps, null);
             } catch (TargetInvocationException tie) {
+                splash.Close();
                 Exception inner = tie.InnerException ?? tie;
                 if (inner.GetType().Name != "ExitException") Report(dir, inner.ToString());
             }
+            splash.Close();
 
             // Erreurs non attrapées par le script
             object streams = psType.GetProperty("Streams").GetValue(ps, null);
@@ -98,6 +129,7 @@ static class Program {
             }
             return 0;
         } catch (Exception ex) {
+            if (splash != null) splash.Close();
             Report(AppDomain.CurrentDomain.BaseDirectory, ex.ToString());
             return 1;
         }
@@ -218,4 +250,45 @@ static class Sensors {
         }
     }
     static string Clean(object o) { return o == null ? "" : o.ToString().Replace('|', '/').Replace('\n', ' '); }
+}
+
+
+// Écran de chargement : petite fenêtre affichée pendant que le logiciel démarre (fil séparé).
+// Le script la ferme dès que la fenêtre principale est affichée ($AeroxSplash.Close()).
+public class AeroxSplash {
+    Form f;
+    readonly System.Threading.ManualResetEvent ready = new System.Threading.ManualResetEvent(false);
+    volatile bool closed = false;
+
+    public void Show(string icoPath) {
+        Thread t = new Thread(delegate() {
+            try {
+                f = new Form();
+                f.Text = "AEROX PC Care"; f.FormBorderStyle = FormBorderStyle.None; f.StartPosition = FormStartPosition.CenterScreen;
+                f.Size = new System.Drawing.Size(400, 140); f.BackColor = System.Drawing.Color.FromArgb(20, 23, 32); f.ShowInTaskbar = true;
+                try { f.Icon = new System.Drawing.Icon(icoPath); } catch { }
+                PictureBox pb = new PictureBox(); pb.Size = new System.Drawing.Size(56, 56); pb.Location = new System.Drawing.Point(24, 32); pb.SizeMode = PictureBoxSizeMode.Zoom;
+                try { pb.Image = new System.Drawing.Icon(icoPath, 64, 64).ToBitmap(); } catch { }
+                Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 15f, System.Drawing.FontStyle.Bold);
+                t1.Location = new System.Drawing.Point(96, 30); t1.AutoSize = true;
+                Label t2 = new Label(); t2.Text = "Démarrage en cours…"; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 10f);
+                t2.Location = new System.Drawing.Point(98, 64); t2.AutoSize = true;
+                ProgressBar bar = new ProgressBar(); bar.Style = ProgressBarStyle.Marquee; bar.MarqueeAnimationSpeed = 30;
+                bar.Location = new System.Drawing.Point(98, 94); bar.Size = new System.Drawing.Size(270, 8);
+                f.Controls.Add(pb); f.Controls.Add(t1); f.Controls.Add(t2); f.Controls.Add(bar);
+                System.Windows.Forms.Timer safety = new System.Windows.Forms.Timer(); safety.Interval = 120000;
+                safety.Tick += delegate { safety.Stop(); f.Close(); }; safety.Start();
+                f.Shown += delegate { ready.Set(); if (closed) f.Close(); };
+                Application.Run(f);
+            } catch { }
+            ready.Set();
+        });
+        t.SetApartmentState(ApartmentState.STA); t.IsBackground = true; t.Start();
+        ready.WaitOne(2000);
+    }
+
+    public void Close() {
+        closed = true;
+        try { if (f != null && f.IsHandleCreated && !f.IsDisposed) f.BeginInvoke((MethodInvoker)delegate { try { f.Close(); } catch { } }); } catch { }
+    }
 }

@@ -458,7 +458,7 @@ $PageDefs = [ordered]@{
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
     @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
     @{ T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
-    @{ T = "Annuler des changements"; B = "Restaurer"; A = "Open-SystemRestore"; D = "Remets Windows dans l'état d'un point de restauration. Tes fichiers perso ne sont pas touchés." },
+    @{ T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
     @{ T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
     @{ T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
 }
@@ -540,6 +540,8 @@ function Build-HomePage {
     }
     Add-Child $sp $tiles
     Add-Child $sp (New-ActionCard @{ T = "Diagnostic complet"; Badge = "Commence ici"; P = $true; B = "Lancer"; Go = 'diag'; D = "Vérifie 10 points (stockage, stabilité, mises à jour, pilotes, sécurité, réseau...) et t'affiche chaque problème avec sa cause et sa réparation." })
+    $nCh = @(Get-Changes 300 | Where-Object { $_.Undo -and -not $_.Undone }).Count
+    Add-Child $sp (New-ActionCard @{ T = "Historique des changements"; B = "Voir"; UI = 'history'; D = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX PC Care peuvent être annulés en un clic." } else { "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." }) })
     Add-Child $sp (New-ActionCard @{ T = "Optimisation rapide"; Badge = "Recommandé"; P = $true; B = "Optimiser"; A = "Start-QuickOptimize"
         D = "En un clic : point de restauration, fichiers temporaires, cache des navigateurs et du DNS, mise à jour des logiciels."
         C = "L'optimisation rapide va :`n`n• créer un point de restauration (sécurité)`n• supprimer les fichiers temporaires`n• vider le cache des navigateurs fermés`n• mettre à jour tes logiciels`n`nFerme tes logiciels ouverts avant. Tes fichiers perso ne sont pas touchés.`n`nOn y va ?" })
@@ -753,6 +755,10 @@ function Complete-Job {
         Write-UiLog $(if ($left) { "Réparations terminées. Il reste $left chose(s) à faire toi-même (voir « Voir comment faire »)." } else { "Réparations terminées : tout est réglé !" })
     }
     if ($job.OnDone -eq 'tools') { Stop-Monitoring; if (Test-MonitorNeeded) { Start-Sensors; Start-FpsCounter } }
+    if ($job.OnDone -eq 'undo' -and $script:UndoId) {
+        if (-not $errs.Count) { Set-ChangeUndone $script:UndoId; Write-UiLog ("↩ Annulé : " + $script:UndoTitle) }
+        $script:UndoId = $null
+    }
     Refresh-Page
     if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
     elseif ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
@@ -829,6 +835,7 @@ function Invoke-UiCommand($T) {
                 switch ($T.Def.UI) {
                     'report' { Show-BugReport '' }
                     'remotehelp' { Show-RemoteHelpDialog }
+                    'history' { Show-HistoryDialog }
                     'speedtest' { Show-SpeedTestDialog }
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
@@ -865,6 +872,57 @@ function Invoke-UiCommand($T) {
         Write-UiLog ("❌ " + $_.Exception.Message)
         Write-Bug -Context "Interface ($($T.Kind))" -ErrorRecord $_
     }
+}
+
+# ---------------------------------------------------------------- Historique des changements
+function Show-HistoryDialog {
+    $w = New-Dialog "$AppName : historique des changements" 700
+    $script:HistWin = $w; $script:HistChoice = $null
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Historique des changements" 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Tout ce qu'AEROX PC Care a modifié sur ce PC, du plus récent au plus ancien. Les réglages se remettent comme avant avec « Annuler ». Les nettoyages et désinstallations sont notés pour info." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $changes = @(Get-Changes 300)
+    if (-not $changes.Count) { Add-Child $list (New-Text "Aucun changement pour l'instant." 13 '#8B93A7') }
+    foreach ($c in $changes) {
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
+        $dp = New-Object System.Windows.Controls.DockPanel
+        if ($c.Undone) { $x = New-Pill 'Annulé' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
+        elseif ($c.Undo) {
+            $b = New-Object System.Windows.Controls.Button; $b.Content = 'Annuler'; $b.Style = $window.FindResource('ActionBtn'); $b.Tag = $c; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
+            $b.Add_Click({ $script:HistChoice = $this.Tag; $script:HistWin.Close() })
+            [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+        } else { $x = New-Pill 'Info' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
+        $t = New-Object System.Windows.Controls.StackPanel
+        $h = New-Object System.Windows.Controls.WrapPanel
+        $d = New-Text ($c.Date.ToString('dd/MM HH:mm') + '   ') 12 '#6B7389'; $d.VerticalAlignment = 'Center'; Add-Child $h $d
+        Add-Child $h (New-Text $c.Title 13.5 $(if ($c.Undone) { '#8B93A7' } else { '#FFFFFF' }) 'SemiBold')
+        Add-Child $t $h
+        if ($c.Detail) { $dd = New-Text $c.Detail 12 '#8B93A7'; $dd.Margin = Th 0 2 0 0; Add-Child $t $dd }
+        Add-Child $dp $t
+        $row.Child = $dp; Add-Child $list $row
+    }
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 430; $sv.Content = $list
+    Add-Child $sp $sv
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 14 0 0
+    $bClose = New-Object System.Windows.Controls.Button; $bClose.Content = 'Fermer'; $bClose.Style = $window.FindResource('TextBtn')
+    [System.Windows.Controls.DockPanel]::SetDock($bClose, 'Right'); Add-Child $bar $bClose
+    $bRest = New-Object System.Windows.Controls.Button; $bRest.Content = 'Restauration complète de Windows'; $bRest.Style = $window.FindResource('GhostBtn'); $bRest.HorizontalAlignment = 'Left'
+    $bRest.ToolTip = "Remet tout Windows dans l'état d'un point de restauration (tes fichiers perso ne sont pas touchés)."
+    Add-Child $bar $bRest; Add-Child $sp $bar
+    $bClose.Add_Click({ $script:HistWin.Close() })
+    $bRest.Add_Click({ $script:HistChoice = 'restore'; $script:HistWin.Close() })
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+
+    $c = $script:HistChoice
+    if (-not $c) { return }
+    if ($c -eq 'restore') { Start-Process 'rstrui.exe'; Write-UiLog "Restauration du système ouverte : choisis un point de restauration et suis les étapes."; return }
+    if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
+    if (-not (Confirm-Box ("Annuler ce changement ?`n`n« {0} »" -f $c.Title))) { return }
+    $script:UndoId = $c.Id; $script:UndoTitle = $c.Title
+    if (-not (Start-AeroxTask ('$script:AeroxUndo = $true; ' + $c.Undo) ("Annulation : " + $c.Title) 'undo')) { $script:UndoId = $null }
 }
 
 # ---------------------------------------------------------------- Mise à jour du logiciel
@@ -1031,7 +1089,27 @@ function Build-SystemPage {
     Add-Child $sp (New-Section 'Matériel')
     $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
     Add-Child $cs (New-InfoRow 'Processeur' $i.Cpu)
-    if (@($i.Gpu).Count) { Add-Child $cs (New-InfoRow 'Carte graphique' (@($i.Gpu) -join "`n")) }
+    $drv = @($i.GpuDrivers)
+    if ($drv.Count) {
+        foreach ($g in $drv) {
+            $ver = $g.Version + $(if ($g.Date) { "  ·  du " + $g.Date.ToString('dd/MM/yyyy') } else { '' })
+            $pill = switch ($g.Status) { 'ok' { 'À jour' } 'old' { 'Mise à jour dispo' } 'none' { 'Pas de pilote' } default { '' } }
+            $pk = switch ($g.Status) { 'ok' { 'ok' } 'old' { 'warn' } 'none' { 'bad' } default { '' } }
+            $help = ''
+            if ($g.Vendor -eq 'NVIDIA' -and $g.Latest) {
+                $help = "Dernière version NVIDIA : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (sortie le " + $g.Latest.Date.ToString('dd/MM/yyyy') + ")" } else { '' }) + "."
+                if ($g.Status -eq 'old' -and $g.Latest.Date -and ((Get-Date) - $g.Latest.Date).TotalDays -lt 21 -and $g.AgeDays -lt 120) { $pill = 'Récent'; $pk = 'ok'; $help += " Elle vient de sortir, rien d'urgent." }
+            } elseif ($g.Vendor -eq 'NVIDIA') { $help = "Dernière version NVIDIA introuvable pour l'instant (pas de connexion, ou modèle inconnu)." }
+            elseif ($g.Status -eq 'old') { $help = "Le pilote a plus d'un an : une version plus récente existe sûrement ($($g.Tool))." }
+            Add-Child $cs (New-InfoRow 'Carte graphique' $g.Name)
+            Add-Child $cs (New-InfoRow 'Pilote graphique' $ver $pill $pk $help)
+            if ($g.Status -eq 'old' -and $pk -ne 'ok' -and ($g.Page -or $g.Latest)) {
+                $url = if ($g.Latest -and $g.Latest.Url) { $g.Latest.Url } else { $g.Page }
+                $b = New-Button $(if ($g.Latest -and $g.Latest.Url) { "Télécharger le pilote officiel $($g.Latest.Version)" } else { "Page officielle des pilotes $($g.Vendor)" }) 'ActionBtn' @{ Kind = 'openurl'; Url = $url } $false
+                $b.HorizontalAlignment = 'Left'; $b.Margin = Th 190 2 0 8; Add-Child $cs $b
+            }
+        }
+    } elseif (@($i.Gpu).Count) { Add-Child $cs (New-InfoRow 'Carte graphique' (@($i.Gpu) -join "`n")) }
     Add-Child $cs (New-InfoRow 'Mémoire' ("{0}{1}{2}" -f (Format-Size $i.Ram), $(if ($i.RamModules) { "  ·  $($i.RamModules) barrette(s)" } else { '' }), $(if ($i.RamSpeed) { "  ·  $($i.RamSpeed) MHz" } else { '' })))
     $c.Child = $cs; Add-Child $sp $c
 
@@ -1526,14 +1604,43 @@ function Show-BugReport([string]$Prefill) {
     $script:RptWin = $w; $script:RptDesc = $desc; $script:RptPrev = $prev
     $desc.Add_TextChanged({ $script:RptPrev.Text = Build-BugReport $script:RptDesc.Text })
     $note = New-Text "« Copier » : colle le rapport (Ctrl+V) dans un message Discord ou un mail au développeur." 12 '#6B7389'; $note.Margin = Th 0 0 0 10
-    if ($GitHubRepo) { $note.Text = "« Envoyer sur GitHub » ouvre la page de rapport préremplie (compte GitHub gratuit requis). Sinon, « Copier » puis colle-le dans un message au développeur." }
+    if ($sync.BugRelay) { $note.Text = "« Envoyer le rapport » l'envoie directement au développeur, sans compte à créer. Il sera visible dans la liste publique des bugs du logiciel sur GitHub (sans ton nom ni celui du PC)." }
+    elseif ($GitHubRepo) { $note.Text = "« Envoyer sur GitHub » ouvre la page de rapport préremplie (compte GitHub gratuit requis). Sinon, « Copier » puis colle-le dans un message au développeur." }
     Add-Child $sp $note
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
     $bClose = New-Object System.Windows.Controls.Button; $bClose.Content = 'Fermer'; $bClose.Style = $window.FindResource('TextBtn'); $bClose.Margin = Th 0 0 8 0
     $bCopy  = New-Object System.Windows.Controls.Button; $bCopy.Content = 'Copier le rapport'; $bCopy.Style = $window.FindResource($(if ($GitHubRepo) { 'ActionBtn' } else { 'PrimaryBtn' }))
     Add-Child $row $bClose; Add-Child $row $bCopy
+    if ($sync.BugRelay) {
+        $bCopy.Style = $window.FindResource('ActionBtn')
+        $bSend = New-Object System.Windows.Controls.Button; $bSend.Content = 'Envoyer le rapport'; $bSend.Style = $window.FindResource('PrimaryBtn'); $bSend.Margin = Th 8 0 0 0
+        Add-Child $row $bSend
+        $bSend.Add_Click({
+            $btn = $this
+            try {
+                $btn.IsEnabled = $false; $btn.Content = 'Envoi...'
+                [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+                $title = "[Bug v$AppVersion] " + $(if ($script:RptDesc.Text.Trim()) { ($script:RptDesc.Text.Trim() -split "`r?`n")[0] } else { "Rapport automatique" })
+                if ($title.Length -gt 100) { $title = $title.Substring(0, 97) + '...' }
+                $payload = @{ title = $title; body = (Build-BugReport $script:RptDesc.Text); version = $AppVersion } | ConvertTo-Json -Compress
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
+                $r = Invoke-RestMethod -Uri $sync.BugRelay -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -TimeoutSec 20 -ErrorAction Stop
+                [System.Windows.Input.Mouse]::OverrideCursor = $null
+                Save-ReportDone
+                Write-UiLog ("✔ Rapport de bug envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci !")
+                [System.Windows.MessageBox]::Show("Rapport envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci, ça aide à corriger le logiciel !", $AppName, 'OK', 'Information') | Out-Null
+                $script:RptWin.Close()
+            } catch {
+                [System.Windows.Input.Mouse]::OverrideCursor = $null
+                $btn.IsEnabled = $true; $btn.Content = 'Envoyer le rapport'
+                $m = $_.Exception.Message
+                try { $resp = $_.ErrorDetails.Message | ConvertFrom-Json; if ($resp.error) { $m = $resp.error } } catch {}
+                [System.Windows.MessageBox]::Show("Le rapport n'a pas pu être envoyé : $m`n`nUtilise « Copier le rapport » et colle-le dans un message au développeur.", $AppName, 'OK', 'Warning') | Out-Null
+            }
+        })
+    }
     if ($GitHubRepo) {
-        $bGh = New-Object System.Windows.Controls.Button; $bGh.Content = 'Envoyer sur GitHub'; $bGh.Style = $window.FindResource('PrimaryBtn'); $bGh.Margin = Th 8 0 0 0
+        $bGh = New-Object System.Windows.Controls.Button; $bGh.Content = $(if ($sync.BugRelay) { 'Avec mon compte GitHub' } else { 'Envoyer sur GitHub' }); $bGh.Style = $window.FindResource($(if ($sync.BugRelay) { 'TextBtn' } else { 'PrimaryBtn' })); $bGh.Margin = Th 8 0 0 0
         Add-Child $row $bGh
         $bGh.Add_Click({
             try {
@@ -1811,6 +1918,7 @@ function Invoke-UninstallApp($A) {
     if (-not (Confirm-Box $msg)) { return }
     try {
         Uninstall-App $A.Kind $A.Cmd $A.Name
+        Add-Change -Kind 'info' -Title ("Désinstallation de « {0} »" -f $A.Name) -Detail $(if ($A.Kind -eq 'store') { "Pour la récupérer : Microsoft Store." } else { "Pour le récupérer : réinstalle-le depuis son site officiel." })
         Write-UiLog ("✔ Désinstallation de « {0} » {1}." -f $A.Name, $(if ($A.Kind -eq 'store') { 'terminée' } else { 'lancée' }))
         $A.Removed = $true
         & $script:RenderUni
@@ -2463,6 +2571,7 @@ try {
 } catch {}
 # L'overlay se rouvre seulement une fois la fenêtre principale affichée
 $window.Add_ContentRendered({
+    Close-Splash
     if ($script:OvStarted) { return }
     $script:OvStarted = $true
     if ($script:Settings.Overlay.Visible) { try { Show-Overlay $true } catch { Write-Bug -Context 'Overlay au démarrage' -ErrorRecord $_ } }
@@ -2470,7 +2579,7 @@ $window.Add_ContentRendered({
 Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
-if ($GitHubRepo) { Start-Background 'Find-AppUpdate' }
+if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay' }
 [void]$window.ShowDialog()
 $timer.Stop()
 try { Stop-Monitoring } catch {}
