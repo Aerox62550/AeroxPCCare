@@ -104,7 +104,7 @@ Function CheckRunning
       Goto retry
     ${EndIf}
     ${If} $2 != ""
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." IDRETRY retry
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." /SD IDCANCEL IDRETRY retry
       Abort
     ${EndIf}
 FunctionEnd
@@ -123,7 +123,7 @@ Function un.CheckRunning
       ${UnStrStr} $2 $1 "${OLDEXE}"
     ${EndIf}
     ${If} $2 != ""
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." IDRETRY retry
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." /SD IDCANCEL IDRETRY retry
       Abort
     ${EndIf}
 FunctionEnd
@@ -137,10 +137,18 @@ Function .onInit
     StrCpy $IsUpdate 1
   ${EndIf}
   ${IfNot} ${RunningX64}
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION "Ce PC fonctionne en 32 bits. ${APPNAME} marchera, mais sans les températures.$\r$\n$\r$\nContinuer quand même ?" IDYES +2
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION "Ce PC fonctionne en 32 bits. ${APPNAME} marchera, mais sans les températures.$\r$\n$\r$\nContinuer quand même ?" /SD IDYES IDYES +2
     Abort
   ${EndIf}
   SetRegView 64
+FunctionEnd
+
+; Mise à jour automatique ratée : on relance quand même le logiciel (ancienne version) pour ne pas laisser l'utilisateur sans rien
+Function .onInstFailed
+  ${If} $IsUpdate == 1
+  ${AndIf} ${FileExists} "$INSTDIR\${EXENAME}"
+    Exec '"$INSTDIR\${EXENAME}"'
+  ${EndIf}
 FunctionEnd
 
 Function un.onInit
@@ -161,13 +169,20 @@ Section "Installer"
   File /nonfatal "${SRC}\aerox.ico"
   File /nonfatal "${SRC}\LISEZMOI.txt"
   ${If} ${Errors}
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Windows ou ton antivirus empêche de copier les fichiers d'${APPNAME} dans :$\r$\n$INSTDIR$\r$\n$\r$\nCe qu'il faut faire :$\r$\n1. Ouvre ton antivirus, va dans la Quarantaine et restaure (ou supprime) les éléments « AEROX ».$\r$\n2. Ajoute ce dossier aux exceptions de l'antivirus.$\r$\n3. Clique sur Réessayer.$\r$\n$\r$\nTu peux aussi Annuler et relancer l'installation en choisissant un autre dossier." IDRETRY copie
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Windows ou ton antivirus empêche de copier les fichiers d'${APPNAME} dans :$\r$\n$INSTDIR$\r$\n$\r$\nCe qu'il faut faire :$\r$\n1. Ouvre ton antivirus, va dans la Quarantaine et restaure (ou supprime) les éléments « AEROX ».$\r$\n2. Ajoute ce dossier aux exceptions de l'antivirus.$\r$\n3. Clique sur Réessayer.$\r$\n$\r$\nTu peux aussi Annuler et relancer l'installation en choisissant un autre dossier." /SD IDCANCEL IDRETRY copie
     Abort "Installation annulée : les fichiers n'ont pas pu être copiés."
   ${EndIf}
 
   ; Ancien emplacement (versions 1.0.0 à 1.0.2) : on fait le ménage
   ${If} "$INSTDIR" != "$PROGRAMFILES64\${APPNAME}"
-    RMDir /r "$PROGRAMFILES64\${APPNAME}"
+    ; Fichiers des versions 1.0.0 à 1.0.2 (supprimés au redémarrage s'ils sont bloqués)
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\${OLDEXE}"
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\AeroxPCCare.ps1"
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\AeroxPCCare.Native.dll"
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\aerox.ico"
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\LISEZMOI.txt"
+    Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\Desinstaller.exe"
+    RMDir /r /REBOOTOK "$PROGRAMFILES64\${APPNAME}"
   ${EndIf}
 
   WriteUninstaller "$INSTDIR\Desinstaller.exe"

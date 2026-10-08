@@ -1711,9 +1711,20 @@ function Test-Disk {
             }
         }
     } catch {}
-    $ec = Invoke-Native 'chkdsk.exe' @($env:SystemDrive, '/scan')
-    if ($ec -ge 3 -or ($ec -eq 2 -and ($script:NativeOutput -join ' ') -match '(?i)/f|problems|problèmes')) {
-        Add-TaskError -Title "Des erreurs ont été trouvées sur le disque $env:SystemDrive" -Code "chkdsk $ec" -Cause "Le système de fichiers a des incohérences, souvent après une coupure de courant ou un arrêt forcé." `
+    # Outil officiel de Windows (Repair-Volume -Scan = chkdsk /scan, sans lancer de programme externe)
+    $bad = $false; $code = ''
+    try {
+        Log "   Analyse du système de fichiers de $env:SystemDrive (1 à 5 minutes)..."
+        $res = "$(Repair-Volume -DriveLetter $env:SystemDrive[0] -Scan -ErrorAction Stop)"
+        Log "   Résultat de l'analyse : $res"
+        $bad = ($res -notmatch '(?i)NoErrorsFound'); $code = "Repair-Volume $res"
+    } catch {
+        Log ("   • Analyse par Repair-Volume impossible ({0}), essai avec chkdsk" -f $_.Exception.Message)
+        $ec = Invoke-Native 'chkdsk.exe' @($env:SystemDrive, '/scan')
+        $bad = ($ec -ge 3 -or ($ec -eq 2 -and ($script:NativeOutput -join ' ') -match '(?i)/f|problems|problèmes')); $code = "chkdsk $ec"
+    }
+    if ($bad) {
+        Add-TaskError -Title "Des erreurs ont été trouvées sur le disque $env:SystemDrive" -Code $code -Cause "Le système de fichiers a des incohérences, souvent après une coupure de courant ou un arrêt forcé." `
             -Effect "Des fichiers peuvent devenir illisibles et Windows peut buguer." -FixLabel "Réparer au prochain redémarrage" -FixAction 'Set-DiskRepairAtBoot'
     } else { Log "✅ Aucun problème trouvé sur le disque." }
 }

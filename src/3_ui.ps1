@@ -505,7 +505,7 @@ function Build-HomePage {
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $g $b
         $t = New-Object System.Windows.Controls.StackPanel
         Add-Child $t (New-Text ("Nouvelle version disponible : {0}" -f $sync.UpdateInfo.Version) 15 '#FFFFFF' 'SemiBold')
-        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : l'installateur de la nouvelle version s'ouvre, installe la mise à jour et relance le logiciel. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
+        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
     }
     # Bannière santé
@@ -943,14 +943,15 @@ function Start-SelfUpdate {
     $notes = ("$($u.Notes)" -replace '\r', '').Trim()
     if ($notes.Length -gt 700) { $notes = $notes.Substring(0, 700) + '…' }
     $txt = "Installer AEROX PC Care $($u.Version) ?`n`n" + $(if ($notes) { "Nouveautés :`n$notes`n`n" } else { '' }) +
-           "Le logiciel va télécharger l'installateur officiel de la nouvelle version, se fermer, l'installer et se relancer. Tes réglages et journaux sont gardés."
+           "Le logiciel va télécharger la nouvelle version, se fermer, l'installer et se rouvrir tout seul (quelques secondes). Tes réglages et journaux sont gardés."
     if (-not (Confirm-Box $txt)) { return }
     [void](Start-AeroxTask 'Install-AppUpdate' "Mise à jour d'AEROX PC Care" 'selfupdate')
 }
 function Complete-SelfUpdate {
     $setup = $sync.UpdateReady; $sync.UpdateReady = $null
     try {
-        Start-Process -FilePath $setup -ArgumentList '/UPDATE'
+        [System.Windows.MessageBox]::Show("La nouvelle version est prête.`n`nAEROX PC Care va se fermer, l'installer et se rouvrir tout seul dans quelques secondes.", $AppName, 'OK', 'Information') | Out-Null
+        Start-Process -FilePath $setup -ArgumentList '/S', '/UPDATE'
         Write-UiLog "Installation de la nouvelle version..."
         $script:SelfUpdating = $true
         $window.Close()
