@@ -633,7 +633,16 @@ function Show-Page([string]$Key) {
     $same = ($Key -eq $script:Cur); $offset = $Scroll.VerticalOffset
     $script:Cur = $Key
     $script:PageButtons.Clear()
-    $page = switch ($Key) { 'home' { Build-HomePage } 'diag' { Build-DiagPage } 'monitor' { Build-MonitorPage } 'system' { Build-SystemPage } default { Build-StaticPage $Key } }
+    try {
+        $page = switch ($Key) { 'home' { Build-HomePage } 'diag' { Build-DiagPage } 'monitor' { Build-MonitorPage } 'system' { Build-SystemPage } default { Build-StaticPage $Key } }
+    } catch {
+        # Une page qui plante ne doit jamais fermer le logiciel : on affiche l'erreur à la place
+        Write-Bug -Context "Page $Key" -ErrorRecord $_
+        $page = New-Object System.Windows.Controls.StackPanel
+        Add-Child $page (New-Text "Cette page n'a pas pu s'afficher" 20 '#FFFFFF' 'Bold')
+        $t = New-Text ("Un bug du logiciel l'en empêche : " + $_.Exception.Message + "`n`nLe reste du logiciel fonctionne. Clique sur « Signaler un bug » en bas pour qu'il soit corrigé.") 13 '#A9B0C2'
+        $t.Margin = Th 0 8 0 0; Add-Child $page $t
+    }
     if ($Key -ne 'monitor') { $script:MonUi = $null }
     $PageHost.Children.Clear()
     Add-Child $PageHost $page
@@ -896,7 +905,7 @@ function Show-HistoryDialog {
         } else { $x = New-Pill 'Info' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
         $t = New-Object System.Windows.Controls.StackPanel
         $h = New-Object System.Windows.Controls.WrapPanel
-        $d = New-Text ($c.Date.ToString('dd/MM HH:mm') + '   ') 12 '#6B7389'; $d.VerticalAlignment = 'Center'; Add-Child $h $d
+        $d = New-Text ((Format-Date $c.Date 'dd/MM HH:mm') + '   ') 12 '#6B7389'; $d.VerticalAlignment = 'Center'; Add-Child $h $d
         Add-Child $h (New-Text $c.Title 13.5 $(if ($c.Undone) { '#8B93A7' } else { '#FFFFFF' }) 'SemiBold')
         Add-Child $t $h
         if ($c.Detail) { $dd = New-Text $c.Detail 12 '#8B93A7'; $dd.Margin = Th 0 2 0 0; Add-Child $t $dd }
@@ -1021,7 +1030,7 @@ function Build-SystemPage {
         elseif ($age -le 1095) { $pill = 'À vérifier'; $pk = 'warn'; $help = "Ton BIOS a plus d'un an : une version plus récente existe peut-être. Compare ta version avec celle du site du fabricant." }
         else { $pill = 'Ancien'; $pk = 'warn'; $help = "Ton BIOS a plus de 3 ans. Si le fabricant suit encore ton modèle, une mise à jour corrige souvent des bugs, la compatibilité TPM / Secure Boot et la prise en charge des nouveaux processeurs." }
     }
-    Add-Child $cs (New-InfoRow 'Version du BIOS' ("{0}{1}" -f $i.BiosVersion, $(if ($i.BiosDate) { "  ·  du " + $i.BiosDate.ToString('dd/MM/yyyy') + " ($ageTxt)" } else { '' })) $pill $pk $help)
+    Add-Child $cs (New-InfoRow 'Version du BIOS' ("{0}{1}" -f $i.BiosVersion, $(if ($i.BiosDate) { "  ·  du " + (Format-Date $i.BiosDate) + " ($ageTxt)" } else { '' })) $pill $pk $help)
     $n = New-Text ("AEROX ne peut pas connaître la dernière version de chaque modèle : le bouton ci-dessous cherche ta page sur le site officiel du fabricant pour comparer." +
         $(if ($i.BrandTool) { "`n" + $i.BrandTool } else { '' }) +
         "`nMets à jour le BIOS seulement si tu en as besoin (TPM, Secure Boot, nouveau processeur, plantages), avec le fichier du site officiel uniquement, et sans jamais couper le courant pendant l'opération.") 12 '#6B7389'
@@ -1092,12 +1101,12 @@ function Build-SystemPage {
     $drv = @($i.GpuDrivers)
     if ($drv.Count) {
         foreach ($g in $drv) {
-            $ver = $g.Version + $(if ($g.Date) { "  ·  du " + $g.Date.ToString('dd/MM/yyyy') } else { '' })
+            $ver = $g.Version + $(if ($g.Date) { "  ·  du " + (Format-Date $g.Date) } else { '' })
             $pill = switch ($g.Status) { 'ok' { 'À jour' } 'old' { 'Mise à jour dispo' } 'none' { 'Pas de pilote' } default { '' } }
             $pk = switch ($g.Status) { 'ok' { 'ok' } 'old' { 'warn' } 'none' { 'bad' } default { '' } }
             $help = ''
             if ($g.Vendor -eq 'NVIDIA' -and $g.Latest) {
-                $help = "Dernière version NVIDIA : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (sortie le " + $g.Latest.Date.ToString('dd/MM/yyyy') + ")" } else { '' }) + "."
+                $help = "Dernière version NVIDIA : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (sortie le " + (Format-Date $g.Latest.Date) + ")" } else { '' }) + "."
                 if ($g.Status -eq 'old' -and $g.Latest.Date -and ((Get-Date) - $g.Latest.Date).TotalDays -lt 21 -and $g.AgeDays -lt 120) { $pill = 'Récent'; $pk = 'ok'; $help += " Elle vient de sortir, rien d'urgent." }
             } elseif ($g.Vendor -eq 'NVIDIA') { $help = "Dernière version NVIDIA introuvable pour l'instant (pas de connexion, ou modèle inconnu)." }
             elseif ($g.Status -eq 'old') { $help = "Le pilote a plus d'un an : une version plus récente existe sûrement ($($g.Tool))." }
@@ -1290,7 +1299,7 @@ function Build-HelpReport {
         $si = $sync.SysInfo
         if ($si -and $si.BiosVersion) {
             [void]$sb.AppendLine("Carte mère / modèle : $($si.Maker) $($si.Model)")
-            [void]$sb.AppendLine("BIOS : $($si.BiosVersion) du $(if ($si.BiosDate) { $si.BiosDate.ToString('dd/MM/yyyy') } else { '?' })")
+            [void]$sb.AppendLine("BIOS : $($si.BiosVersion) du $(if ($si.BiosDate) { (Format-Date $si.BiosDate) } else { '?' })")
             [void]$sb.AppendLine("Démarrage : $(if ($si.Uefi) { 'UEFI' } elseif ($si.Uefi -eq $false) { 'Legacy (ancien)' } else { '?' }), disque $($si.DiskStyle), Secure Boot $($si.SecureBoot), TPM $(if ($si.TpmPresent) { $si.TpmVersion + $(if ($si.TpmReady) { ' prêt' } else { ' pas prêt' }) } else { 'absent ou désactivé' })")
         }
         $lastSp = @($script:Settings.SpeedHistory) | Select-Object -Last 1

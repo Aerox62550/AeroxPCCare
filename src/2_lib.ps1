@@ -16,6 +16,16 @@ function Log([string]$Message) {
 }
 function Step([string]$Message) { $sync.Progress = -1; Log ''; Log ("▶ " + $Message) }
 
+function ConvertTo-DateSafe($d) {
+    if ($null -eq $d) { return $null }
+    if ($d -is [datetime]) { return $d }
+    $t = "$d"
+    if ($t -match '^\d{14}\.\d{6}[+-]\d{3}$') { try { return [Management.ManagementDateTimeConverter]::ToDateTime($t) } catch {} }
+    try { return [datetime]::Parse($t, [Globalization.CultureInfo]::InvariantCulture) } catch {}
+    try { return [datetime]$t } catch {}
+    return $null
+}
+function Format-Date($d, [string]$Fmt = 'dd/MM/yyyy') { $x = ConvertTo-DateSafe $d; if ($x) { return $x.ToString($Fmt) } else { return '?' } }
 function Format-Size([double]$Bytes) {
     if ($Bytes -ge 1GB) { return ("{0:N2} Go" -f ($Bytes / 1GB)) }
     if ($Bytes -ge 1MB) { return ("{0:N1} Mo" -f ($Bytes / 1MB)) }
@@ -223,7 +233,7 @@ function Get-Changes([int]$Max = 300) {
         }
     }
     $list.Reverse()
-    return ,$list
+    return $list.ToArray()
 }
 function Set-ChangeUndone([string]$Id) {
     try { [IO.File]::AppendAllText((Join-Path $AppInfo.LogDir 'changements_annules.txt'), "$Id`r`n") } catch {}
@@ -338,7 +348,7 @@ function Get-SystemInfo {
         $i.Maker = if ($i.Custom) { $i.BoardMaker } else { $i.PcMaker }
         $i.Model = if ($i.Custom) { $i.BoardModel } else { $i.PcModel }
         $i.BiosMaker = "$($bios.Manufacturer)".Trim(); $i.BiosVersion = "$($bios.SMBIOSBIOSVersion)".Trim()
-        if ($bios.ReleaseDate) { $i.BiosDate = [datetime]$bios.ReleaseDate; $i.BiosAgeDays = [int]((Get-Date) - $i.BiosDate).TotalDays }
+        if ($bios.ReleaseDate) { $i.BiosDate = ConvertTo-DateSafe $bios.ReleaseDate; $i.BiosAgeDays = [int]((Get-Date) - $i.BiosDate).TotalDays }
         $brand = $script:BrandSites | Where-Object { $i.Maker -match "(?i)$($_.Re)" } | Select-Object -First 1
         if ($brand) { $i.Brand = $brand.Name; $i.BrandSite = $brand.Site; $i.BrandTool = $brand.Tool }
         $i.Cpu = ("$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name)".Trim() -replace '\s+', ' ')
@@ -632,7 +642,7 @@ function Get-GpuDrivers {
     foreach ($g in @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
         if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage') { continue }
         $vendor = if ("$($g.PNPDeviceID)" -match 'VEN_10DE' -or $g.Name -match 'NVIDIA') { 'NVIDIA' } elseif ("$($g.PNPDeviceID)" -match 'VEN_1002' -or $g.Name -match 'AMD|Radeon') { 'AMD' } elseif ("$($g.PNPDeviceID)" -match 'VEN_8086' -or $g.Name -match 'Intel') { 'Intel' } else { '' }
-        $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = $g.DriverDate; AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown' }
+        $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = (ConvertTo-DateSafe $g.DriverDate); AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown' }
         if ($o.Date) { $o.AgeDays = [int]((Get-Date) - $o.Date).TotalDays }
         if ($vendor -eq 'NVIDIA') {
             $digits = $o.Raw -replace '\D', ''
@@ -653,7 +663,7 @@ function Get-GpuDrivers {
         $o.Tool = switch ($vendor) { 'NVIDIA' { 'NVIDIA App' } 'AMD' { 'AMD Software: Adrenalin Edition' } 'Intel' { 'Intel Driver & Support Assistant' } default { '' } }
         [void]$list.Add($o)
     }
-    return ,$list
+    return $list.ToArray()
 }
 
 function Test-Drivers {
@@ -667,7 +677,7 @@ function Test-Drivers {
         $page = if ($o.Latest -and $o.Latest.Url) { $o.Latest.Url } else { $o.Page }
         $fix = if ($page) { "Start-Process " + (ConvertTo-PsLiteral $page) + "; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { 'Open-DriverUpdates' }
         if ($o.Vendor -eq 'NVIDIA' -and $o.Latest) {
-            $rel = if ($o.Latest.Date) { " (sortie le " + $o.Latest.Date.ToString('dd/MM/yyyy') + ")" } else { '' }
+            $rel = if ($o.Latest.Date) { " (sortie le " + (Format-Date $o.Latest.Date) + ")" } else { '' }
             $late = if ($o.Latest.Date) { [int]((Get-Date) - $o.Latest.Date).TotalDays } else { 0 }
             if ($o.Status -eq 'old' -and ($late -ge 21 -or ($o.AgeDays -ge 120))) {
                 Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Pilote NVIDIA pas à jour : {0} installé, {1} disponible" -f $o.Version, $o.Latest.Version) -Detail ("{0}{1}" -f $o.Name, $rel) `
@@ -679,7 +689,7 @@ function Test-Drivers {
         }
         if ($o.Status -eq 'old' -and $o.Date) {
             $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
-            Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f $o.Date.ToString('MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
+            Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
                 -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
                 -FixLabel "Télécharger le pilote officiel" -FixAction $fix -OpenOnly -Steps $steps
         } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
