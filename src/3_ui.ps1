@@ -2056,7 +2056,7 @@ function New-SpaceItem([string]$Path, [double]$Size, [double]$Max, [bool]$IsFile
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.Margin = Th 0 3 0 3
     $barBg = New-Object System.Windows.Controls.Border; $barBg.Width = 90; $barBg.Height = 8; $barBg.Background = Brush '#252A3A'; $barBg.CornerRadius = Corner 4; $barBg.VerticalAlignment = 'Center'
     $bar = New-Object System.Windows.Controls.Border; $bar.HorizontalAlignment = 'Left'; $bar.Height = 8; $bar.CornerRadius = Corner 4; $bar.Background = Brush '#7C5CFF'
-    $bar.Width = [math]::Max(2, [math]::Min(90, 90 * $Size / [math]::Max(1, $Max))); $barBg.Child = $bar
+    $bar.Width = [math]::Max([double]2, [math]::Min([double]90, 90.0 * [double]$Size / [math]::Max([double]1, [double]$Max))); $barBg.Child = $bar
     Add-Child $row $barBg
     $sz = New-Text (Format-Size $Size) 13 '#FFFFFF' 'SemiBold'; $sz.Width = 90; $sz.TextAlignment = 'Right'; $sz.Margin = Th 0 0 12 0; Add-Child $row $sz
     $name = [IO.Path]::GetFileName($Path); if (-not $name) { $name = $Path }

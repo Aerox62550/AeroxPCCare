@@ -1183,7 +1183,7 @@ function Start-DeepClean {
     $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     $ec = Invoke-Native 'dism.exe' @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
     $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
-    $gain = [math]::Max(0, $free1 - $free0)
+    $gain = [math]::Max([double]0, [double]$free1 - [double]$free0)
     $script:TotalFreed += $gain
     if ($ec -ne 0) {
         Add-TaskError -Title "Le nettoyage profond n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
@@ -1520,8 +1520,8 @@ function Invoke-DeepClean([string[]]$Ids) {
     }
     $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     Step "Résultat"
-    Log ("✅ Espace libéré sur {0} : {1} (maintenant {2} libres)" -f $env:SystemDrive, (Format-Size ([math]::Max(0, $free1 - $free0))), (Format-Size $free1))
-    Add-Change -Kind 'info' -Title ("Nettoyage approfondi : {0} libérés" -f (Format-Size ([math]::Max(0, $free1 - $free0)))) -Detail "Fichiers inutiles supprimés (temporaires, caches, anciennes mises à jour). Pas besoin de les récupérer : Windows et les logiciels les recréent si nécessaire."
+    Log ("✅ Espace libéré sur {0} : {1} (maintenant {2} libres)" -f $env:SystemDrive, (Format-Size ([math]::Max([double]0, [double]$free1 - [double]$free0))), (Format-Size $free1))
+    Add-Change -Kind 'info' -Title ("Nettoyage approfondi : {0} libérés" -f (Format-Size ([math]::Max([double]0, [double]$free1 - [double]$free0)))) -Detail "Fichiers inutiles supprimés (temporaires, caches, anciennes mises à jour). Pas besoin de les récupérer : Windows et les logiciels les recréent si nécessaire."
 }
 
 # Ce qui prend de la place sur le disque (arbre des dossiers)
