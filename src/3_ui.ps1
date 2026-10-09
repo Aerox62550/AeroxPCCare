@@ -1692,7 +1692,8 @@ function Get-SensitiveNames {
     return $script:SensitiveNames
 }
 function Protect-Text([string]$Text) {
-    foreach ($n in Get-SensitiveNames) { $Text = $Text -replace [regex]::Escape($n), '<utilisateur>' }
+    # Mot entier uniquement : un compte « Admin » ne doit pas transformer « administrateur » en « <utilisateur>istrateur »
+    foreach ($n in Get-SensitiveNames) { $Text = $Text -replace ('(?<![\p{L}\d_])' + [regex]::Escape($n) + '(?![\p{L}\d_])'), '<utilisateur>' }
     $Text = $Text -replace '[\w\.\-]+@[\w\-]+\.[\w\.\-]+', '<email>'
     return $Text
 }

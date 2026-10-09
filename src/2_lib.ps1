@@ -169,13 +169,45 @@ function Invoke-Native {
     return $LASTEXITCODE
 }
 
+# winget est une appli du Microsoft Store installée PAR COMPTE : quand AEROX tourne avec le mot de passe d'un autre
+# compte (compte standard + ADMIN), winget peut exister sur le PC mais refuser de se lancer (« Accès refusé »).
+# On vérifie donc qu'il démarre vraiment avant de s'en servir.
 function Get-Winget {
+    if ($null -ne $script:WingetPath) { if ($script:WingetPath) { return $script:WingetPath } else { return $null } }
+    $script:WingetBlocked = $false
+    $cands = New-Object System.Collections.ArrayList
     $w = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($w) { return $w.Source }
-    $p = Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*_x64__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue |
-         Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($p) { return $p.FullName }
+    if ($w) { [void]$cands.Add($w.Source) }
+    foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { [void]$cands.Add($p.FullName) }
+    foreach ($c in $cands) {
+        try {
+            $out = (& $c --version 2>&1 | Out-String)
+            if ($out -match 'v?\d+\.\d+') { $script:WingetPath = $c; return $c }
+        } catch {}
+        $script:WingetBlocked = $true
+    }
+    $script:WingetPath = ''
     return $null
+}
+# AEROX lancé avec le mot de passe d'un autre compte que celui de la session ouverte ?
+function Test-OtherAccount {
+    try {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $console = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        return ($console -and $me -and $console -ne $me)
+    } catch { return $false }
+}
+# Message clair quand winget manque ou ne peut pas être lancé
+function Add-WingetError([string]$What) {
+    if ($script:WingetBlocked -or (Test-OtherAccount)) {
+        Add-TaskError -Title "Les logiciels ne peuvent pas être mis à jour depuis ce compte" `
+            -Cause "AEROX a été ouvert avec le mot de passe d'un autre compte (administrateur). L'outil de Microsoft qui met les logiciels à jour (winget) n'est installé que pour le compte de la personne." `
+            -Effect "$What impossible pour l'instant. Le reste du logiciel marche normalement." `
+            -Steps @("Ouvre la session du compte administrateur (Démarrer > icône de profil > changer d'utilisateur).", "Lance AEROX PC Care depuis cette session : les mises à jour des logiciels fonctionneront.")
+    } else {
+        Add-TaskError -Title "L'outil de mise à jour des logiciels (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
+            -Effect "$What impossible pour l'instant." -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
+    }
 }
 function Get-WingetExtraArgs([string]$Winget) {
     try { $v = ((& $Winget --version) | Out-String) -replace '[^\d\.]', ''; if ([version]$v -ge [version]'1.4') { return @('--disable-interactivity') } } catch {}
@@ -654,7 +686,9 @@ function Test-Updates {
         } elseif ($still.Count -eq 0) { Add-Ok "Windows à jour (dernière mise à jour il y a $age jours)" }
     }
     $apps = Get-AppUpdates
-    if ($null -eq $apps) {
+    if ($null -eq $apps -and ($script:WingetBlocked -or (Test-OtherAccount))) {
+        Add-Ok "Logiciels : non vérifiés depuis ce compte (ouvre AEROX depuis la session administrateur pour les vérifier)"
+    } elseif ($null -eq $apps) {
         Add-Issue -Id 'winget' -Sev 'warn' -Title "L'outil de mise à jour des logiciels est absent" -Detail 'winget introuvable' `
             -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." -Effect "AEROX PC Care ne peut pas mettre tes logiciels à jour automatiquement." `
             -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore' -OpenOnly
@@ -1104,13 +1138,14 @@ function Invoke-Diagnostic {
         $script:CurrentCat = $k
         $sync.Scan[$k] = 'run'; $sync.ScanVer++
         $before = $script:Issues.Count
+        $failed = $false
         try { & $checks[$k] }
-        catch { Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » impossible : {1}" -f $k, $_.Exception.Message) }
+        catch { $failed = $true; Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » incomplète : {1}" -f $k, $_.Exception.Message) }
         $new = @($script:Issues | Select-Object -Skip $before)
-        $sync.Scan[$k] = if (@($new | Where-Object { $_.Sev -eq 'crit' }).Count) { 'bad' } elseif ($new.Count) { 'warn' } else { 'ok' }
+        $sync.Scan[$k] = if (@($new | Where-Object { $_.Sev -eq 'crit' }).Count) { 'bad' } elseif ($new.Count -or $failed) { 'warn' } else { 'ok' }
         $sync.ScanVer++
         if ($new.Count) { foreach ($i in $new) { Log ("   {0} {1} : {2}" -f $(if ($i.Sev -eq 'crit') { '❌' } else { '⚠' }), $k, $i.Title) } }
-        else { Log ("   ✔ {0} : OK" -f $k) }
+        elseif (-not $failed) { Log ("   ✔ {0} : OK" -f $k) }
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
     $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
@@ -1629,11 +1664,7 @@ function Find-PresentMon {
 
 function Install-WingetTool([string]$Id, [string]$Label) {
     $wg = Get-Winget
-    if (-not $wg) {
-        Add-TaskError -Title "L'outil d'installation de Microsoft (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
-            -Effect "$Label ne peut pas être installé automatiquement." -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
-        return $false
-    }
+    if (-not $wg) { Add-WingetError "L'installation de $Label est"; return $false }
     $ec = Invoke-Native $wg (@('install', '--id', $Id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) ([System.Text.Encoding]::UTF8)
     return ($ec -eq 0 -or $ec -eq -1978335189 -or $ec -eq -1978335135)
 }
@@ -1698,11 +1729,7 @@ function Update-Apps {
 
 function Update-SelectedApps([string[]]$Ids, [string[]]$Names) {
     $wg = Get-Winget
-    if (-not $wg) {
-        Add-TaskError -Title "L'outil de mise à jour des logiciels (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
-            -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
-        return
-    }
+    if (-not $wg) { Add-WingetError "La mise à jour des logiciels est"; return }
     $extra = Get-WingetExtraArgs $wg
     $failed = @(); $ok = 0; $n = 0
     for ($k = 0; $k -lt $Ids.Count; $k++) {
@@ -1737,11 +1764,7 @@ function Get-AppUpdatesForUi {
     Step "Recherche des logiciels à mettre à jour"
     $sync.AppList = $null
     $apps = Get-AppUpdates -IncludeIgnored
-    if ($null -eq $apps) {
-        Add-TaskError -Title "L'outil de mise à jour des logiciels (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
-            -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
-        return
-    }
+    if ($null -eq $apps) { Add-WingetError "La recherche des mises à jour des logiciels est"; return }
     $sync.AppList = @($apps)
     Log ("   {0} logiciel(s) ont une mise à jour (dont {1} ignoré(s))." -f $apps.Count, @($apps | Where-Object { $_.Ignored }).Count)
 }
