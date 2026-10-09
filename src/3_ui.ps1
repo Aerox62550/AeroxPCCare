@@ -457,7 +457,7 @@ $PageDefs = [ordered]@{
     @{ T = "Choisir les mises à jour de logiciels"; P = $true; B = "Voir la liste"; UI = 'appupdates'; UiBusy = $true; StatusFn = { Get-IgnoredCardStatus }; D = "Liste les logiciels qui ont une nouvelle version : coche ceux à mettre à jour, ignore ceux que tu ne veux pas toucher (c'est mémorisé)." },
     @{ T = "Tout mettre à jour"; B = "Tout mettre à jour"; A = "Update-Apps"; D = "Met à jour d'un coup tous les logiciels, sauf ceux que tu as ignorés. Outil officiel de Microsoft (winget)."; C = "Tous les logiciels qui ont une mise à jour vont être mis à jour (sauf ceux que tu as ignorés).`n`nFerme tes logiciels ouverts avant de continuer.`n`nContinuer ?" },
     @{ T = "Mises à jour Windows"; P = $true; B = "Rechercher et installer"; A = "Update-Windows"; D = "Recherche, télécharge et installe les mises à jour de sécurité de Windows. Peut prendre 5 à 30 minutes."; C = "L'installation peut prendre du temps et le PC devra peut-être redémarrer ensuite.`n`nContinuer ?" },
-    @{ T = "Pilotes (drivers)"; B = "Vérifier"; A = "Open-DriverUpdates"; D = "Affiche ta carte graphique avec le bon outil officiel pour la mettre à jour, et ouvre les mises à jour de pilotes de Windows." },
+    @{ T = "Pilotes (drivers)"; B = "Vérifier"; UI = 'drivers'; UiBusy = $true; D = "Compare le pilote de ta carte graphique à la dernière version officielle, liste les pilotes que Windows propose (tu choisis lesquels installer) et les périphériques qui ont un problème. 1 à 2 minutes." },
     @{ T = "Ouvrir Windows Update"; B = "Ouvrir"; A = "Open-WindowsUpdate"; D = "Ouvre la page Windows Update des Paramètres, si tu préfères regarder toi-même." }) }
  repair = @{ Title = "Réparation"; Sub = "Pour les bugs, les plantages, les problèmes de connexion ou un Windows Update bloqué."; Cards = @(
     @{ T = "Test de débit Internet"; Badge = "Speedtest® by Ookla"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
@@ -790,6 +790,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
+    elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
     elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { Complete-SelfUpdate; return }
     if ($sync.NeedReboot -and -not $script:Job) {
@@ -835,6 +836,7 @@ function Invoke-UiCommand($T) {
                 if ($i.UiFix -eq 'apps') { Start-AppUpdatesList $i; return }
                 if ($i.UiFix -eq 'clean') { Start-CleanAnalysis $i; return }
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
+                if ($i.UiFix -eq 'drivers') { Start-DriverCheck $i; return }
                 if ($i.Confirm -and -not (Confirm-Box $i.Confirm)) { return }
                 $i.Status = 'fixing'; $script:FixingIssue = $i
                 if (-not (Start-AeroxTask $i.FixAction $i.FixLabel)) { $i.Status = 'open'; $script:FixingIssue = $null }
@@ -877,6 +879,7 @@ function Invoke-UiCommand($T) {
                     'deepclean' { Start-CleanAnalysis $null }
                     'uninstall' { Start-UninstallList $null }
                     'space' { [void](Start-AeroxTask 'Get-SpaceUsage' 'Analyse de l''espace disque' 'spacedialog') }
+                    'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
                     'inst-pawn' {
@@ -2130,6 +2133,117 @@ function Start-CleanAnalysis($Issue) {
     $script:CleanIssue = $Issue
     [void](Start-AeroxTask 'Get-CleanupAnalysis' 'Analyse du nettoyage' 'cleandialog')
 }
+# ---------------------------------------------------------------- Fenêtre : pilotes (carte graphique, Windows Update, périphériques)
+function Start-DriverCheck($Issue) {
+    $script:DrvIssue = $Issue
+    [void](Start-AeroxTask 'Get-DriverReport' 'Vérification des pilotes' 'driverdialog')
+}
+
+function New-DrvSection([string]$Text) { $h = New-Text $Text 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 14 0 8; return $h }
+
+function Show-DriverDialog($Issue) {
+    $rep = $sync.DriverScan
+    if (-not $rep) { return }
+    $w = New-Dialog "$AppName : pilotes" 720
+    $script:DrvWin = $w; $script:DrvChoice = $null; $script:DrvRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Pilotes (drivers)" 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Les pilotes font le lien entre Windows et ton matériel. Ici tu vois s'ils sont à jour, et tu installes en un clic ceux que Windows propose. AEROX n'utilise que des sources officielles (fabricant et Windows Update)." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 4; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 470; $sv.Content = $list
+    Add-Child $sp $sv
+
+    # 1. Carte(s) graphique(s)
+    Add-Child $list (New-DrvSection 'CARTE GRAPHIQUE')
+    if (-not @($rep.Gpus).Count) { Add-Child $list (New-Text "Aucune carte graphique détectée." 13 '#8B93A7') }
+    foreach ($g in @($rep.Gpus)) {
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 10 12 10; $row.Margin = Th 0 0 6 6
+        $dp = New-Object System.Windows.Controls.DockPanel
+        $url = if ($g.Latest -and $g.Latest.Url) { $g.Latest.Url } else { $g.Page }
+        if ($url) {
+            $b = New-DlgButton $(if ($g.Status -in 'old', 'none') { 'Télécharger le pilote officiel' } else { 'Page officielle' }) $(if ($g.Status -in 'old', 'none') { 'PrimaryBtn' } else { 'TextBtn' })
+            $b.Tag = $url; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
+            $b.Add_Click({ Start-Process ([string]$this.Tag); Write-UiLog "   ✔ Page officielle du pilote ouverte dans le navigateur" })
+            [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+        }
+        $txt = New-Object System.Windows.Controls.StackPanel
+        $head = New-Object System.Windows.Controls.StackPanel; $head.Orientation = 'Horizontal'
+        Add-Child $head (New-Text $g.Name 14 '#FFFFFF' 'SemiBold')
+        switch ($g.Status) {
+            'ok'   { Add-Child $head (New-Pill 'À jour' '#4ADE80' '#173326') }
+            'old'  { Add-Child $head (New-Pill 'Pas à jour' '#FFB547' '#3A2D17') }
+            'none' { Add-Child $head (New-Pill 'Pas de pilote' '#FF6B6B' '#3A1E24') }
+            default { Add-Child $head (New-Pill 'Non vérifiable' '#8B93A7' '#222736') }
+        }
+        Add-Child $txt $head
+        $info = "Installé : $($g.Version)" + $(if ($g.Date) { " (du " + (Format-Date $g.Date) + ")" } else { '' })
+        if ($g.Latest -and $g.Latest.Version) { $info += "   ·   Dernier officiel : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (du " + (Format-Date $g.Latest.Date) + ")" } else { '' }) }
+        Add-Child $txt (New-Text $info 12 '#8B93A7')
+        if ($g.Tool -and $g.Status -ne 'ok') { $t = New-Text ("Le plus simple : installe « {0} », il garde le pilote à jour tout seul." -f $g.Tool) 12 '#6B7389'; $t.Margin = Th 0 3 0 0; Add-Child $txt $t }
+        Add-Child $dp $txt
+        $row.Child = $dp; Add-Child $list $row
+    }
+
+    # 2. Pilotes proposés par Windows Update
+    $wu = @($rep.Wu | Where-Object { -not $_.Display }); $wuDisp = @($rep.Wu | Where-Object { $_.Display })
+    Add-Child $list (New-DrvSection 'PROPOSÉS PAR WINDOWS UPDATE')
+    if ($rep.WuError) {
+        Add-Child $list (New-Text ("Windows Update n'a pas répondu ({0}). Si ça se répète : onglet Réparation > « Débloquer Windows Update »." -f $rep.WuError) 13 '#FFB547')
+    } elseif (-not $wu.Count) {
+        Add-Child $list (New-Text "Rien à installer : Windows ne propose aucun nouveau pilote pour ton PC." 13 '#4ADE80')
+    }
+    foreach ($u in $wu) {
+        $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+        Add-Child $txt (New-Text $u.Title 13.5 '#FFFFFF' 'SemiBold')
+        $meta = @(); if ($u.Maker) { $meta += $u.Maker }; if ($u.Class) { $meta += $u.Class }; if ($u.Date) { $meta += "pilote du " + (Format-Date $u.Date) }; if ($u.Size -gt 0) { $meta += (Format-Size $u.Size) }
+        if ($meta.Count) { Add-Child $txt (New-Text ($meta -join '  ·  ') 12 '#8B93A7') }
+        $r = New-CheckRow $true $txt $null
+        $r.Check.Add_Click({ & $script:CountDrv })
+        Add-Child $list $r.Row
+        [void]$script:DrvRows.Add(@{ U = $u; Check = $r.Check })
+    }
+    if ($wuDisp.Count) {
+        $t = New-Text ("{0} pilote(s) graphique(s) proposé(s) par Windows non affiché(s) : ils sont souvent plus vieux que ceux du fabricant. Pour la carte graphique, utilise le bouton officiel au-dessus." -f $wuDisp.Count) 12 '#6B7389'
+        $t.Margin = Th 2 2 0 0; Add-Child $list $t
+    }
+
+    # 3. Périphériques en erreur
+    if (@($rep.Devices).Count) {
+        Add-Child $list (New-DrvSection ("PÉRIPHÉRIQUES AVEC UN PROBLÈME ({0})" -f @($rep.Devices).Count))
+        foreach ($d in @($rep.Devices)) { $t = New-Text ("•  {0} — {1}" -f $d.Name, $d.Reason) 13 '#E6E9F2'; $t.Margin = Th 4 0 0 4; Add-Child $list $t }
+        $t = New-Text $(if ($wu.Count) { "Installe d'abord les pilotes proposés au-dessus et redémarre : ça règle souvent ces problèmes. Sinon, prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC)." } else { "Windows n'a pas de pilote pour eux : prends-le sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC > « Chercher sur le site officiel »)." }) 12 '#6B7389'
+        $t.Margin = Th 4 4 0 0; Add-Child $list $t
+    }
+
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 14 0 0
+    $right = New-Object System.Windows.Controls.StackPanel; $right.Orientation = 'Horizontal'; [System.Windows.Controls.DockPanel]::SetDock($right, 'Right')
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Installer' 'PrimaryBtn'; $script:DrvApply = $bApply
+    Add-Child $right $bClose; Add-Child $right $bApply; Add-Child $bar $right
+    $bDev = New-DlgButton 'Gestionnaire de périphériques' 'GhostBtn'; $bDev.HorizontalAlignment = 'Left'; Add-Child $bar $bDev
+    Add-Child $sp $bar
+    $w.Content = $sp
+
+    $script:CountDrv = {
+        $n = @($script:DrvRows | Where-Object { $_.Check.IsChecked }).Count
+        $script:DrvApply.Content = $(if ($n) { "Installer ($n)" } else { 'Installer' })
+        $script:DrvApply.IsEnabled = ($n -gt 0)
+    }
+    $bDev.Add_Click({ Start-Process 'devmgmt.msc' })
+    $bClose.Add_Click({ $script:DrvWin.Close() })
+    $bApply.Add_Click({ $script:DrvChoice = @($script:DrvRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.U }); $script:DrvWin.Close() })
+    & $script:CountDrv
+    [void]$w.ShowDialog()
+
+    $sel = $script:DrvChoice
+    if (-not $sel -or -not $sel.Count) { return }
+    if (-not (Confirm-Box ("Installer $($sel.Count) pilote(s) depuis Windows Update ?`n`nUn point de restauration est créé avant, pour pouvoir revenir en arrière si un pilote pose problème. Le PC devra peut-être redémarrer à la fin."))) { return }
+    $action = "Install-DriverUpdates -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id }))"
+    [void](Start-AeroxTask $action ("Installation de {0} pilote(s)" -f $sel.Count))
+    Refresh-Page
+}
+
 function Start-AppUpdatesList($Issue) {
     $script:AppsIssue = $Issue
     [void](Start-AeroxTask 'Get-AppUpdatesForUi' 'Recherche des mises à jour' 'appdialog')

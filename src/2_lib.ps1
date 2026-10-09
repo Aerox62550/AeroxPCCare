@@ -695,11 +695,11 @@ function Test-ConnectionStability {
         $age = [int]((Get-Date) - $a.DriverDate).TotalDays
         if ($age -ge 730) {
             $intel = ($a.Desc -match '(?i)intel|killer')
-            $url = if ($intel) { 'https://www.intel.fr/content/www/fr/fr/support/detect.html' } else { 'ms-settings:windowsupdate-optionalupdates' }
+            $url = 'https://www.intel.fr/content/www/fr/fr/support/detect.html'
             Add-Issue -Id 'wifidrv' -Sev 'warn' -Title ("Le pilote Wi-Fi date de {0}" -f (Format-Date $a.DriverDate 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $a.Desc, $a.DriverVersion) `
                 -Cause "Un pilote Wi-Fi ancien est une cause fréquente de coupures, de débit bas et de connexion qui saute après la veille." -Effect "Wi-Fi instable : déconnexions, lags et débit plus faible que prévu." `
-                -FixLabel $(if ($intel) { "Mettre à jour (outil Intel)" } else { "Voir les pilotes proposés" }) -FixAction ("Start-Process {0}; Log '   ✔ Ouvert'" -f (ConvertTo-PsLiteral $url)) -OpenOnly `
-                -Steps $(if ($intel) { @("Installe « Intel Driver & Support Assistant » depuis la page officielle.", "Lance-le : il trouve et installe le dernier pilote Wi-Fi.", "Redémarre le PC.") } else { @("Windows Update > Options avancées > Mises à jour facultatives > Pilotes : installe le pilote Wi-Fi s'il est proposé.", "Sinon, prends le pilote sur le site du fabricant du PC ou de la carte mère (onglet Mon PC > « Chercher sur le site officiel »).") })
+                -FixLabel $(if ($intel) { "Mettre à jour (outil Intel)" } else { "Vérifier les pilotes" }) -FixAction $(if ($intel) { "Start-Process {0}; Log '   ✔ Ouvert'" -f (ConvertTo-PsLiteral $url) } else { '' }) -UiFix $(if ($intel) { '' } else { 'drivers' }) -OpenOnly:$intel `
+                -Steps $(if ($intel) { @("Installe « Intel Driver & Support Assistant » depuis la page officielle.", "Lance-le : il trouve et installe le dernier pilote Wi-Fi.", "Redémarre le PC.") } else { @("Clique sur « Vérifier les pilotes » : si Windows propose un pilote Wi-Fi plus récent, coche-le et installe-le.", "Sinon, prends le pilote sur le site du fabricant du PC ou de la carte mère (onglet Mon PC > « Chercher sur le site officiel »).") })
         } else { Add-Ok "Pilote Wi-Fi récent" }
     }
     # 3. DNS lents (mesurés) : proposition uniquement si l'écart est net
@@ -847,11 +847,11 @@ function Test-Drivers {
         if ($o.Status -eq 'none') {
             Add-Issue -Id 'gpunone' -Sev 'crit' -Title "Aucun pilote de carte graphique installé" -Detail $o.Name `
                 -Cause "Windows utilise un pilote d'affichage de secours, sans accélération graphique." -Effect "Jeux et vidéos saccadent ou ne se lancent pas, résolution parfois limitée." `
-                -FixLabel "Rechercher les pilotes" -FixAction 'Open-DriverUpdates' -OpenOnly -Steps @("Installe le pilote depuis le site du fabricant : NVIDIA App, AMD Adrenalin ou Intel Driver & Support Assistant.")
+                -FixLabel "Vérifier les pilotes" -UiFix 'drivers' -Steps @("Installe le pilote depuis le site du fabricant : NVIDIA App, AMD Adrenalin ou Intel Driver & Support Assistant.")
             continue
         }
         $page = if ($o.Latest -and $o.Latest.Url) { $o.Latest.Url } else { $o.Page }
-        $fix = if ($page) { "Start-Process " + (ConvertTo-PsLiteral $page) + "; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { 'Open-DriverUpdates' }
+        $fix = if ($page) { "Start-Process " + (ConvertTo-PsLiteral $page) + "; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { '' }
         if ($o.Vendor -eq 'NVIDIA' -and $o.Latest) {
             $rel = if ($o.Latest.Date) { " (sortie le " + (Format-Date $o.Latest.Date) + ")" } else { '' }
             $late = if ($o.Latest.Date) { [int]((Get-Date) - $o.Latest.Date).TotalDays } else { 0 }
@@ -867,7 +867,7 @@ function Test-Drivers {
             $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
             Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
                 -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
-                -FixLabel "Télécharger le pilote officiel" -FixAction $fix -OpenOnly -Steps $steps
+                -FixLabel $(if ($fix) { "Télécharger le pilote officiel" } else { "Vérifier les pilotes" }) -FixAction $fix -UiFix $(if ($fix) { '' } else { 'drivers' }) -OpenOnly:([bool]$fix) -Steps $steps
         } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
     }
     $errNames = @{ 1 = 'mal configuré'; 3 = 'pilote abîmé'; 10 = 'ne peut pas démarrer'; 28 = 'pilote non installé'; 31 = 'ne fonctionne pas correctement'; 39 = 'pilote abîmé ou manquant'; 43 = 'arrêté après une erreur'; 52 = 'pilote non signé' }
@@ -876,8 +876,8 @@ function Test-Drivers {
         $desc = ($bad | Select-Object -First 3 | ForEach-Object { $n = if ($_.Name) { $_.Name } else { 'Périphérique inconnu' }; $r = $errNames[[int]$_.ConfigManagerErrorCode]; if (-not $r) { $r = "code $($_.ConfigManagerErrorCode)" }; "$n ($r)" }) -join ', '
         Add-Issue -Id 'devices' -Sev 'warn' -Title "$($bad.Count) périphérique(s) ont un problème de pilote" -Detail $desc `
             -Cause "Windows n'a pas de pilote fonctionnel pour ces éléments (pilote manquant, abîmé ou incompatible)." -Effect "L'élément concerné peut ne pas marcher (son, Wi-Fi, Bluetooth, USB...)." `
-            -FixLabel "Rechercher les pilotes" -FixAction 'Open-DriverUpdates' -OpenOnly `
-            -Steps @("Dans Windows Update > Mises à jour facultatives > Pilotes, installe ce qui est proposé.", "Sinon, télécharge le pilote sur le site du fabricant de ton PC ou de ta carte mère.", "Pour voir le détail : clic droit sur Démarrer > Gestionnaire de périphériques.")
+            -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
+            -Steps @("Clique sur « Vérifier les pilotes » : AEROX cherche les pilotes proposés par Windows et tu choisis lesquels installer.", "Sinon, télécharge le pilote sur le site du fabricant de ton PC ou de ta carte mère.", "Pour voir le détail : clic droit sur Démarrer > Gestionnaire de périphériques.")
     } else { Add-Ok "Tous les périphériques ont un pilote qui fonctionne" }
 }
 
@@ -1764,17 +1764,92 @@ function Update-Windows {
     if ($res.RebootRequired) { Log "⚠ Un redémarrage est nécessaire pour terminer l'installation."; $sync.NeedReboot = $true }
 }
 
-function Open-DriverUpdates {
-    Step "Pilotes (drivers)"
-    foreach ($g in Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue) {
-        Log ("   • Carte graphique : {0} (pilote {1})" -f $g.Name, $g.DriverVersion)
-        if     ($g.Name -match 'NVIDIA')     { Log "     → Mets-la à jour avec « NVIDIA App » (site officiel nvidia.com)." }
-        elseif ($g.Name -match 'AMD|Radeon') { Log "     → Mets-la à jour avec « AMD Software: Adrenalin Edition » (site officiel amd.com)." }
-        elseif ($g.Name -match 'Intel')      { Log "     → Mets-la à jour avec « Intel Driver & Support Assistant » (site officiel intel.com)." }
+# ---------------------------------------------------------------- Pilotes : vérification dans le logiciel
+# Carte graphique : comparée au site du fabricant (Get-GpuDrivers). Autres pilotes : ceux que Windows Update propose
+# (recherche directe, sans ouvrir la page « Mises à jour facultatives » qui mélange pilotes et grosses mises à niveau de Windows).
+$script:DriverErrNames = @{ 1 = 'mal configuré'; 3 = 'pilote abîmé'; 10 = 'ne peut pas démarrer'; 28 = 'pilote non installé'; 31 = 'ne fonctionne pas correctement'; 39 = 'pilote abîmé ou manquant'; 43 = 'arrêté après une erreur'; 52 = 'pilote non signé' }
+function Get-ProblemDevices {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' -ErrorAction SilentlyContinue | Where-Object { $_.ConfigManagerErrorCode -notin 22, 24, 45 })) {
+        $r = $script:DriverErrNames[[int]$d.ConfigManagerErrorCode]; if (-not $r) { $r = "code $($d.ConfigManagerErrorCode)" }
+        [void]$out.Add(@{ Name = $(if ($d.Name) { "$($d.Name)" } else { 'Périphérique inconnu' }); Reason = $r })
     }
-    Log "   → J'ouvre les mises à jour facultatives de Windows : regarde dans « Mises à jour des pilotes »."
-    Log "   ⚠ N'utilise jamais de « logiciel de mise à jour de pilotes » trouvé sur Internet : souvent des arnaques."
-    Start-Process 'ms-settings:windowsupdate-optionalupdates'
+    return $out.ToArray()
+}
+
+function Get-DriverReport {
+    Step "Vérification des pilotes (drivers)"
+    $sync.DriverScan = $null
+    $rep = @{ Gpus = @(); Wu = @(); Devices = @(); WuError = '' }
+    Log "   • Cartes graphiques : comparaison avec la dernière version officielle…"
+    $rep.Gpus = @(Get-GpuDrivers)
+    foreach ($g in $rep.Gpus) {
+        $st = switch ($g.Status) { 'ok' { 'à jour' } 'old' { if ($g.Latest) { "pas à jour ($($g.Latest.Version) disponible)" } else { 'ancien' } } 'none' { 'aucun pilote' } default { 'non vérifiable' } }
+        Log ("     {0} : pilote {1} → {2}" -f $g.Name, $g.Version, $st)
+    }
+    $rep.Devices = @(Get-ProblemDevices)
+    if ($rep.Devices.Count) { Log ("   • {0} périphérique(s) avec un problème de pilote" -f $rep.Devices.Count) }
+    Log "   • Recherche des pilotes proposés par Windows Update (jusqu'à 2 minutes)…"
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session
+        $session.ClientApplicationID = 'AEROX PC Care'
+        $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Driver'")
+        $wu = New-Object System.Collections.ArrayList
+        foreach ($u in $res.Updates) {
+            $cls = "$($u.DriverClass)"
+            $date = $null; try { $date = [datetime]$u.DriverVerDate } catch {}
+            [void]$wu.Add(@{ Id = "$($u.Identity.UpdateID)"; Title = "$($u.Title)"; Class = $cls; Maker = "$($u.DriverManufacturer)"; Date = $date; Size = [double]$u.MaxDownloadSize; Display = ($cls -match '(?i)^display$') })
+        }
+        $rep.Wu = $wu.ToArray()
+        Log ("     {0} pilote(s) proposé(s)" -f $rep.Wu.Count)
+    } catch {
+        $rep.WuError = ('0x{0:X8}' -f $_.Exception.HResult)
+        Log ("     ⚠ Windows Update n'a pas répondu ({0})" -f $rep.WuError)
+    }
+    $sync.DriverScan = $rep
+}
+
+function Install-DriverUpdates([string[]]$Ids) {
+    if (-not $Ids -or -not $Ids.Count) { return }
+    New-RestorePoint
+    Step ("Installation de {0} pilote(s) (n'éteins pas le PC)" -f $Ids.Count)
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session
+        $session.ClientApplicationID = 'AEROX PC Care'
+        $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Driver'")
+        $coll = New-Object -ComObject Microsoft.Update.UpdateColl
+        foreach ($u in $res.Updates) {
+            if ($Ids -notcontains "$($u.Identity.UpdateID)") { continue }
+            if ("$($u.DriverClass)" -match '(?i)^display$') { continue }
+            if (-not $u.EulaAccepted) { try { $u.AcceptEula() } catch {} }
+            [void]$coll.Add($u); Log ("   • {0}" -f $u.Title)
+        }
+        if ($coll.Count -eq 0) { Log "✅ Rien à installer : ces pilotes sont déjà en place."; return }
+        Log "   Téléchargement…"
+        $dl = $session.CreateUpdateDownloader(); $dl.Updates = $coll; [void]$dl.Download()
+        Log "   Installation…"
+        $inst = $session.CreateUpdateInstaller(); $inst.Updates = $coll
+        $r = $inst.Install()
+    } catch {
+        $code = '0x{0:X8}' -f $_.Exception.HResult
+        $wi = Get-WuErrorInfo $code
+        Add-TaskError -Title "L'installation des pilotes a échoué" -Code $code -Cause $wi.Cause -Effect "Les pilotes ne sont pas installés. Ton PC reste comme avant." `
+            -FixLabel "Débloquer Windows Update" -FixAction 'Reset-WindowsUpdate' -Confirm "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite."
+        return
+    }
+    $ok = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $coll.Count; $i++) {
+        $t = $coll.Item($i).Title; $rc = $r.GetUpdateResult($i)
+        if ($rc.ResultCode -eq 4 -or $rc.ResultCode -eq 5) {
+            Add-TaskError -Title "Le pilote « $t » ne s'est pas installé" -Code ('0x{0:X8}' -f $rc.HResult) -Cause "Windows a refusé ce pilote (souvent : un pilote plus adapté est déjà en place, ou il faut redémarrer avant)." `
+                -Effect "Ce pilote reste dans son ancienne version. Le reste n'est pas touché." -Steps @("Redémarre le PC puis relance la vérification des pilotes.", "Si ça recommence, prends ce pilote sur le site du fabricant de ton PC ou de ta carte mère.")
+        } else { [void]$ok.Add($t); Log ("   ✔ Installé : {0}" -f $t) }
+    }
+    if ($ok.Count) {
+        Add-Change -Kind 'info' -Title ("{0} pilote(s) installé(s) depuis Windows Update" -f $ok.Count) -Detail ((@($ok) -join ' · ') + ". Pour revenir en arrière : point de restauration créé juste avant (bouton « Restauration du système »).")
+        Log ("✅ {0} pilote(s) installé(s)." -f $ok.Count)
+    }
+    if ($r.RebootRequired) { Log "⚠ Un redémarrage est nécessaire pour terminer l'installation."; $sync.NeedReboot = $true }
 }
 
 function Open-WindowsUpdate { Start-Process 'ms-settings:windowsupdate'; Log "   ✔ Windows Update ouvert" }
