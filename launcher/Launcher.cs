@@ -280,7 +280,7 @@ public class AeroxSplash {
                 try { f.Icon = new System.Drawing.Icon(icoPath); } catch { }
                 // Tout est calculé selon la mise à l'échelle de l'écran (100 %, 125 %, 150 %…) et centré dans le cadre
                 float k = 1f;
-                try { using (System.Drawing.Graphics g = f.CreateGraphics()) { k = g.DpiX / 96f; } } catch { }
+                try { using (System.Drawing.Graphics g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) { k = g.DpiX / 96f; } } catch { }
                 if (k < 1f) k = 1f;
                 Func<int, int> S = delegate(int v) { return (int)Math.Round(v * k); };
                 int W = S(420), H = S(196);
