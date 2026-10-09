@@ -904,7 +904,7 @@ function Invoke-UiCommand($T) {
                 Update-HomeStats; Update-DiagBadge; Refresh-Page
             }
             'done' { $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title); Update-DiagBadge; Refresh-Page }
-            'openurl' { Start-Process $T.Url }
+            'openurl' { [void](Open-Url $T.Url) }
             'errfix' { }
             'dlg' { }
             'ui' {
@@ -917,7 +917,7 @@ function Invoke-UiCommand($T) {
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
                     'bios-reboot' { Restart-ToBios }
-                    'pc-health' { Start-Process 'https://aka.ms/GetPCHealthCheckApp' }
+                    'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
                     'selfupdate' { Start-SelfUpdate }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
@@ -1069,7 +1069,7 @@ function Show-HistoryDialog {
 function Start-SelfUpdate {
     $u = $sync.UpdateInfo
     if (-not $u) { return }
-    if (-not $u.Setup) { Start-Process $u.Url; return }
+    if (-not $u.Setup) { [void](Open-Url $u.Url); return }
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $notes = ("$($u.Notes)" -replace '\r', '').Trim()
     if ($notes.Length -gt 700) { $notes = $notes.Substring(0, 700) + '…' }
@@ -1110,7 +1110,7 @@ function Open-BiosSupport {
     $i = $sync.SysInfo; if (-not $i) { return }
     $q = "$($i.Model) BIOS"
     if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
-    Start-Process ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q))
+    [void](Open-Url ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)))
 }
 function Restart-ToBios {
     $i = $sync.SysInfo
@@ -1324,7 +1324,7 @@ function Show-SpeedTestDialog {
     $lic = New-Object System.Windows.Controls.TextBlock; $lic.TextWrapping = 'Wrap'; $lic.FontSize = 11.5; $lic.Foreground = Brush '#6B7389'; $lic.Margin = Th 0 0 0 16
     $lic.Inlines.Add("Mesure faite avec Speedtest® by Ookla, l'outil officiel de speedtest.net (téléchargé la première fois, environ 1 Mo) : mêmes serveurs que le site. Gratuit pour un usage personnel ; en lançant le test, tu acceptes ses ")
     $hl = New-Object System.Windows.Documents.Hyperlink; $hl.Inlines.Add("conditions d'utilisation"); $hl.NavigateUri = [uri]'https://www.speedtest.net/about/eula'; $hl.Foreground = Brush '#B9A8FF'
-    $hl.Add_RequestNavigate({ param($s, $e) Start-Process $e.Uri.AbsoluteUri; $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
+    $hl.Add_RequestNavigate({ param($s, $e) [void](Open-Url $e.Uri.AbsoluteUri); $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
     Add-Child $sp $lic
 
     $big = New-Object System.Windows.Controls.StackPanel; $big.HorizontalAlignment = 'Center'
@@ -1397,7 +1397,7 @@ function Show-SpeedTestDialog {
                     }
                     if ([AeroxSpeed]::ResultUrl) {
                         $rb = New-Object System.Windows.Controls.Button; $rb.Content = 'Voir le résultat officiel sur speedtest.net'; $rb.Style = $window.FindResource('TextBtn'); $rb.HorizontalAlignment = 'Left'
-                        $rb.Tag = [AeroxSpeed]::ResultUrl; $rb.Add_Click({ Start-Process $this.Tag }); Add-Child $u.Verdict $rb
+                        $rb.Tag = [AeroxSpeed]::ResultUrl; $rb.Add_Click({ [void](Open-Url ([string]$this.Tag)) }); Add-Child $u.Verdict $rb
                     }
                     $hist = @($script:Settings.SpeedHistory) + @(@{ Date = (Get-Date -Format 'dd/MM HH:mm'); Down = [math]::Round($d, 1); Up = [math]::Round($up, 1); Ping = [math]::Round($pg); Wifi = [bool]($u.Link -and $u.Link.Wifi) })
                     $script:Settings.SpeedHistory = @($hist | Select-Object -Last 10); Save-Settings
@@ -1805,7 +1805,7 @@ function Show-BugReport([string]$Prefill) {
                     $url = "https://github.com/$GitHubRepo/issues/new?labels=bug&title=" + [uri]::EscapeDataString($title) + "&body=" + [uri]::EscapeDataString($body + "`n_(Si le rapport semble coupé, colle le rapport complet copié dans ton presse-papiers.)_")
                     $lines = [math]::Floor($lines / 2); $bugs = [math]::Max(3, [math]::Floor($bugs / 2))
                 } while ($url.Length -gt 7500 -and $lines -ge 2)
-                Start-Process $url
+                [void](Open-Url $url)
                 Save-ReportDone
                 Write-UiLog "Rapport de bug ouvert sur GitHub (le rapport complet est aussi copié)."
                 $script:RptWin.Close()
@@ -2210,7 +2210,7 @@ function Show-DriverDialog($Issue) {
         if ($url) {
             $b = New-DlgButton $(if ($g.Status -in 'old', 'none') { 'Télécharger le pilote officiel' } else { 'Page officielle' }) $(if ($g.Status -in 'old', 'none') { 'PrimaryBtn' } else { 'TextBtn' })
             $b.Tag = $url; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
-            $b.Add_Click({ Start-Process ([string]$this.Tag); Write-UiLog "   ✔ Page officielle du pilote ouverte dans le navigateur" })
+            $b.Add_Click({ if (Open-Url ([string]$this.Tag)) { Write-UiLog "   ✔ Page officielle du pilote ouverte dans le navigateur" } })
             [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
         }
         $txt = New-Object System.Windows.Controls.StackPanel
@@ -2808,7 +2808,7 @@ $timer.Add_Tick({
             $script:ManualUpdateCheck = $false
             if ($sync.UpdateInfo -and $sync.UpdateInfo.Setup) { Start-SelfUpdate }
             elseif ($sync.UpdateInfo) {
-                if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { Start-Process $sync.UpdateInfo.Url }
+                if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { [void](Open-Url $sync.UpdateInfo.Url) }
             } else { [System.Windows.MessageBox]::Show("Tu as déjà la dernière version ($AppVersion).", $AppName, 'OK', 'Information') | Out-Null }
         }
     } catch { Write-Bug -Context 'Boucle de l''interface' -ErrorRecord $_ }
