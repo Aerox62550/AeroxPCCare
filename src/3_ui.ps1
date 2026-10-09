@@ -228,6 +228,7 @@ $script:OverlayMetrics = [ordered]@{
 $script:Settings = @{
     LogOpen = $false
     IgnoredApps = @()
+    IgnoredIssues = @()
     StartupKept = @()
     SpeedHistory = @()
     BetaChannel = $false
@@ -243,7 +244,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -251,9 +252,11 @@ function Load-Settings {
     } catch { Write-Bug -Context 'Lecture des réglages' -ErrorRecord $_ }
     $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps | Where-Object { $_ })
     $script:Settings.StartupKept = @($script:Settings.StartupKept | Where-Object { $_ })
+    $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_ -is [hashtable] -and $_.Id })
     $script:Settings.SpeedHistory = @($script:Settings.SpeedHistory | Where-Object { $_ -is [hashtable] })
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
+    $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
@@ -262,6 +265,7 @@ function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if (
 function Save-Settings {
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
+    $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
 }
@@ -435,6 +439,9 @@ function New-IssueCard($I, [switch]$IsError) {
                 }
             }
             if ($hint) { $h = New-Text $hint 12 '#6B7389'; $h.VerticalAlignment = 'Center'; $h.Margin = Th 4 0 0 0; Add-Child $acts $h }
+            if (-not $IsError -and $I.Id -and $I.Cat -ne 'Sécurité') {
+                $bi = New-Button 'Ne plus signaler' 'TextBtn' @{ Kind = 'ignore'; Issue = $I } $false; $bi.Margin = Th 8 0 0 0; Add-Child $acts $bi
+            }
         }
         if ($acts.Children.Count) { Add-Child $sp $acts }
         if ($I.Steps -and $script:OpenSteps[$I.Title]) {
@@ -629,6 +636,22 @@ function Build-DiagPage {
         Add-Child $ol $row
     }
     $ok.Child = $ol; Add-Child $sp $ok
+    $ign = @($script:Diag.Ignored | Where-Object { $_ })
+    if ($ign.Count) {
+        Add-Child $sp (New-Section 'Ignoré à ta demande')
+        $ib = New-Object System.Windows.Controls.Border; $ib.Background = Brush '#13161E'; $ib.CornerRadius = Corner 12; $ib.Padding = Th 16 6 12 6
+        $il = New-Object System.Windows.Controls.StackPanel
+        foreach ($x in $ign) {
+            $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
+            $rb = New-Button 'Réactiver' 'TextBtn' @{ Kind = 'unignore'; Issue = $x } $false; [System.Windows.Controls.DockPanel]::SetDock($rb, 'Right'); Add-Child $row $rb
+            $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
+            Add-Child $tx (New-Text $x.Title 13 '#8B93A7' 'SemiBold')
+            if ($x.Detail) { Add-Child $tx (New-Text $x.Detail 12 '#5D6478') }
+            Add-Child $row $tx
+            Add-Child $il $row
+        }
+        $ib.Child = $il; Add-Child $sp $ib
+    }
     return $sp
 }
 
@@ -860,8 +883,28 @@ function Invoke-UiCommand($T) {
                 Refresh-Page
             }
             'steps' { $script:OpenSteps[$T.Key] = -not [bool]$script:OpenSteps[$T.Key]; Refresh-Page }
+            'ignore' {
+                $x = $T.Issue
+                if (Confirm-Box ("Ne plus signaler « $($x.Title) » ?`n`nCette alerte ne comptera plus dans les problèmes ni dans la note du diagnostic. Tu la retrouveras tout en bas du diagnostic, dans « Ignoré à ta demande », pour la réactiver quand tu veux.")) {
+                    $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_.Id -ne $x.Id }) + @(@{ Id = $x.Id; Title = $x.Title })
+                    Save-Settings
+                    $script:Diag.Issues = @($script:Diag.Issues | Where-Object { $_ -ne $x })
+                    $script:Diag.Ignored = @($script:Diag.Ignored) + @($x)
+                    Write-UiLog ("🔕 Ne sera plus signalé : " + $x.Title)
+                    Update-HomeStats; Update-DiagBadge; Refresh-Page
+                }
+            }
+            'unignore' {
+                $x = $T.Issue
+                $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_.Id -ne $x.Id })
+                Save-Settings
+                $script:Diag.Ignored = @($script:Diag.Ignored | Where-Object { $_ -ne $x })
+                if ($x.ContainsKey('Status')) { $x.Status = 'open'; $script:Diag.Issues = @($script:Diag.Issues) + @($x) }
+                Write-UiLog ("🔔 De nouveau signalé : " + $x.Title + " (relance le diagnostic pour tout revoir)")
+                Update-HomeStats; Update-DiagBadge; Refresh-Page
+            }
             'done' { $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title); Update-DiagBadge; Refresh-Page }
-            'openurl' { Start-Process $T.Url }
+            'openurl' { [void](Open-Url $T.Url) }
             'errfix' { }
             'dlg' { }
             'ui' {
@@ -874,7 +917,7 @@ function Invoke-UiCommand($T) {
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
                     'bios-reboot' { Restart-ToBios }
-                    'pc-health' { Start-Process 'https://aka.ms/GetPCHealthCheckApp' }
+                    'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
                     'selfupdate' { Start-SelfUpdate }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
@@ -1026,7 +1069,7 @@ function Show-HistoryDialog {
 function Start-SelfUpdate {
     $u = $sync.UpdateInfo
     if (-not $u) { return }
-    if (-not $u.Setup) { Start-Process $u.Url; return }
+    if (-not $u.Setup) { [void](Open-Url $u.Url); return }
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $notes = ("$($u.Notes)" -replace '\r', '').Trim()
     if ($notes.Length -gt 700) { $notes = $notes.Substring(0, 700) + '…' }
@@ -1067,7 +1110,7 @@ function Open-BiosSupport {
     $i = $sync.SysInfo; if (-not $i) { return }
     $q = "$($i.Model) BIOS"
     if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
-    Start-Process ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q))
+    [void](Open-Url ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)))
 }
 function Restart-ToBios {
     $i = $sync.SysInfo
@@ -1281,7 +1324,7 @@ function Show-SpeedTestDialog {
     $lic = New-Object System.Windows.Controls.TextBlock; $lic.TextWrapping = 'Wrap'; $lic.FontSize = 11.5; $lic.Foreground = Brush '#6B7389'; $lic.Margin = Th 0 0 0 16
     $lic.Inlines.Add("Mesure faite avec Speedtest® by Ookla, l'outil officiel de speedtest.net (téléchargé la première fois, environ 1 Mo) : mêmes serveurs que le site. Gratuit pour un usage personnel ; en lançant le test, tu acceptes ses ")
     $hl = New-Object System.Windows.Documents.Hyperlink; $hl.Inlines.Add("conditions d'utilisation"); $hl.NavigateUri = [uri]'https://www.speedtest.net/about/eula'; $hl.Foreground = Brush '#B9A8FF'
-    $hl.Add_RequestNavigate({ param($s, $e) Start-Process $e.Uri.AbsoluteUri; $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
+    $hl.Add_RequestNavigate({ param($s, $e) [void](Open-Url $e.Uri.AbsoluteUri); $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
     Add-Child $sp $lic
 
     $big = New-Object System.Windows.Controls.StackPanel; $big.HorizontalAlignment = 'Center'
@@ -1354,7 +1397,7 @@ function Show-SpeedTestDialog {
                     }
                     if ([AeroxSpeed]::ResultUrl) {
                         $rb = New-Object System.Windows.Controls.Button; $rb.Content = 'Voir le résultat officiel sur speedtest.net'; $rb.Style = $window.FindResource('TextBtn'); $rb.HorizontalAlignment = 'Left'
-                        $rb.Tag = [AeroxSpeed]::ResultUrl; $rb.Add_Click({ Start-Process $this.Tag }); Add-Child $u.Verdict $rb
+                        $rb.Tag = [AeroxSpeed]::ResultUrl; $rb.Add_Click({ [void](Open-Url ([string]$this.Tag)) }); Add-Child $u.Verdict $rb
                     }
                     $hist = @($script:Settings.SpeedHistory) + @(@{ Date = (Get-Date -Format 'dd/MM HH:mm'); Down = [math]::Round($d, 1); Up = [math]::Round($up, 1); Ping = [math]::Round($pg); Wifi = [bool]($u.Link -and $u.Link.Wifi) })
                     $script:Settings.SpeedHistory = @($hist | Select-Object -Last 10); Save-Settings
@@ -1762,7 +1805,7 @@ function Show-BugReport([string]$Prefill) {
                     $url = "https://github.com/$GitHubRepo/issues/new?labels=bug&title=" + [uri]::EscapeDataString($title) + "&body=" + [uri]::EscapeDataString($body + "`n_(Si le rapport semble coupé, colle le rapport complet copié dans ton presse-papiers.)_")
                     $lines = [math]::Floor($lines / 2); $bugs = [math]::Max(3, [math]::Floor($bugs / 2))
                 } while ($url.Length -gt 7500 -and $lines -ge 2)
-                Start-Process $url
+                [void](Open-Url $url)
                 Save-ReportDone
                 Write-UiLog "Rapport de bug ouvert sur GitHub (le rapport complet est aussi copié)."
                 $script:RptWin.Close()
@@ -2167,7 +2210,7 @@ function Show-DriverDialog($Issue) {
         if ($url) {
             $b = New-DlgButton $(if ($g.Status -in 'old', 'none') { 'Télécharger le pilote officiel' } else { 'Page officielle' }) $(if ($g.Status -in 'old', 'none') { 'PrimaryBtn' } else { 'TextBtn' })
             $b.Tag = $url; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
-            $b.Add_Click({ Start-Process ([string]$this.Tag); Write-UiLog "   ✔ Page officielle du pilote ouverte dans le navigateur" })
+            $b.Add_Click({ if (Open-Url ([string]$this.Tag)) { Write-UiLog "   ✔ Page officielle du pilote ouverte dans le navigateur" } })
             [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
         }
         $txt = New-Object System.Windows.Controls.StackPanel
@@ -2765,7 +2808,7 @@ $timer.Add_Tick({
             $script:ManualUpdateCheck = $false
             if ($sync.UpdateInfo -and $sync.UpdateInfo.Setup) { Start-SelfUpdate }
             elseif ($sync.UpdateInfo) {
-                if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { Start-Process $sync.UpdateInfo.Url }
+                if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { [void](Open-Url $sync.UpdateInfo.Url) }
             } else { [System.Windows.MessageBox]::Show("Tu as déjà la dernière version ($AppVersion).", $AppName, 'OK', 'Information') | Out-Null }
         }
     } catch { Write-Bug -Context 'Boucle de l''interface' -ErrorRecord $_ }

@@ -15,6 +15,30 @@ function Log([string]$Message) {
     if ($Message) { $sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Message)) }
     else          { $sync.Queue.Enqueue('') }
 }
+
+# Ouvre une page web sur n'importe quel PC. Start-Process seul échoue (« fichier introuvable ») quand le logiciel
+# tourne sous un autre compte que la personne devant le PC (compte standard + mot de passe d'un compte ADMIN) :
+# ce compte-là n'a souvent aucun navigateur par défaut. On essaie alors les navigateurs installés, puis l'Explorateur,
+# et en dernier recours le lien est copié pour être collé à la main.
+function Open-Url([string]$Url) {
+    if (-not $Url) { return $false }
+    try { Start-Process $Url -ErrorAction Stop; return $true } catch {}
+    $pf86 = ${env:ProgramFiles(x86)}
+    $cands = @(
+        (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'), (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
+        (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'), (Join-Path $pf86 'Google\Chrome\Application\chrome.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
+        (Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'), (Join-Path $pf86 'Mozilla Firefox\firefox.exe'),
+        (Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'), (Join-Path $env:ProgramFiles 'Opera\opera.exe')
+    )
+    foreach ($b in $cands) {
+        if ($b -and (Test-Path -LiteralPath $b)) { try { Start-Process -FilePath $b -ArgumentList ('"{0}"' -f $Url) -ErrorAction Stop; return $true } catch {} }
+    }
+    try { Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"{0}"' -f $Url) -ErrorAction Stop; return $true } catch {}
+    try { Set-Clipboard -Value $Url -ErrorAction Stop } catch {}
+    Log ("⚠ Impossible d'ouvrir le navigateur sur ce PC. Le lien est copié : colle-le dans ton navigateur (Ctrl+V) → {0}" -f $Url)
+    return $false
+}
 function Step([string]$Message) { $sync.Progress = -1; Log ''; Log ("▶ " + $Message) }
 
 function ConvertTo-DateSafe($d) {
@@ -447,6 +471,11 @@ $script:BugChecks = @{
 function Add-Issue {
     param([string]$Id, [string]$Sev, [string]$Title, [string]$Detail, [string]$Code, [string]$Cause, [string]$Effect,
           [string]$FixLabel, [string]$FixAction, [string]$Confirm, [string[]]$Steps, [string]$UiFix, [switch]$OpenOnly)
+    # Alerte que l'utilisateur a choisi de ne plus voir (jamais pour la sécurité) : rangée à part, hors de la note
+    if ($Id -and $script:CurrentCat -ne 'Sécurité' -and @($AppInfo.IgnoredIssues) -contains $Id) {
+        if ($null -ne $script:IgnoredList) { [void]$script:IgnoredList.Add(@{ Id = $Id; Sev = $Sev; Cat = $script:CurrentCat; Title = $Title; Detail = $Detail }) }
+        return
+    }
     [void]$script:Issues.Add(@{ Id = $Id; Sev = $Sev; Cat = $script:CurrentCat; Title = $Title; Detail = $Detail; Code = $Code; Cause = $Cause; Effect = $Effect;
                                 FixLabel = $FixLabel; FixAction = $FixAction; Confirm = $Confirm; Steps = $Steps; UiFix = $UiFix; OpenOnly = [bool]$OpenOnly; Status = 'open' })
 }
@@ -699,7 +728,7 @@ function Test-ConnectionStability {
             $url = 'https://www.intel.fr/content/www/fr/fr/support/detect.html'
             Add-Issue -Id 'wifidrv' -Sev 'warn' -Title ("Le pilote Wi-Fi date de {0}" -f (Format-Date $a.DriverDate 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $a.Desc, $a.DriverVersion) `
                 -Cause "Un pilote Wi-Fi ancien est une cause fréquente de coupures, de débit bas et de connexion qui saute après la veille." -Effect "Wi-Fi instable : déconnexions, lags et débit plus faible que prévu." `
-                -FixLabel $(if ($intel) { "Mettre à jour (outil Intel)" } else { "Vérifier les pilotes" }) -FixAction $(if ($intel) { "Start-Process {0}; Log '   ✔ Ouvert'" -f (ConvertTo-PsLiteral $url) } else { '' }) -UiFix $(if ($intel) { '' } else { 'drivers' }) -OpenOnly:$intel `
+                -FixLabel $(if ($intel) { "Mettre à jour (outil Intel)" } else { "Vérifier les pilotes" }) -FixAction $(if ($intel) { "if (Open-Url {0}) {{ Log '   ✔ Page officielle ouverte dans le navigateur' }}" -f (ConvertTo-PsLiteral $url) } else { '' }) -UiFix $(if ($intel) { '' } else { 'drivers' }) -OpenOnly:$intel `
                 -Steps $(if ($intel) { @("Installe « Intel Driver & Support Assistant » depuis la page officielle.", "Lance-le : il trouve et installe le dernier pilote Wi-Fi.", "Redémarre le PC.") } else { @("Clique sur « Vérifier les pilotes » : si Windows propose un pilote Wi-Fi plus récent, coche-le et installe-le.", "Sinon, prends le pilote sur le site du fabricant du PC ou de la carte mère (onglet Mon PC > « Chercher sur le site officiel »).") })
         } else { Add-Ok "Pilote Wi-Fi récent" }
     }
@@ -852,7 +881,7 @@ function Test-Drivers {
             continue
         }
         $page = if ($o.Latest -and $o.Latest.Url) { $o.Latest.Url } else { $o.Page }
-        $fix = if ($page) { "Start-Process " + (ConvertTo-PsLiteral $page) + "; Log '   ✔ Page officielle ouverte dans le navigateur'" } else { '' }
+        $fix = if ($page) { "if (Open-Url " + (ConvertTo-PsLiteral $page) + ") { Log '   ✔ Page officielle ouverte dans le navigateur' }" } else { '' }
         if ($o.Vendor -eq 'NVIDIA' -and $o.Latest) {
             $rel = if ($o.Latest.Date) { " (sortie le " + (Format-Date $o.Latest.Date) + ")" } else { '' }
             $late = if ($o.Latest.Date) { [int]((Get-Date) - $o.Latest.Date).TotalDays } else { 0 }
@@ -1062,6 +1091,7 @@ function Invoke-Diagnostic {
     Step "Diagnostic complet"
     $script:Issues = New-Object System.Collections.ArrayList
     $script:OkList = New-Object System.Collections.ArrayList
+    $script:IgnoredList = New-Object System.Collections.ArrayList
     $checks = [ordered]@{ 'Stockage' = 'Test-Storage'; 'Mémoire' = 'Test-Memory'; 'Système' = 'Test-SystemState'; 'Stabilité' = 'Test-Stability'; 'Mises à jour' = 'Test-Updates'
                           'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
     $sens = $sync.Sens
@@ -1083,7 +1113,8 @@ function Invoke-Diagnostic {
         else { Log ("   ✔ {0} : OK" -f $k) }
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
-    $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Date = (Get-Date) }
+    $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
+    if ($script:IgnoredList.Count) { Log ("   ({0} alerte(s) ignorée(s) à ta demande)" -f $script:IgnoredList.Count) }
     Step "Résultat"
     Log ("{0} problème(s) dont {1} critique(s), {2} point(s) OK" -f $script:Issues.Count, $crit, $script:OkList.Count)
 }
@@ -1641,7 +1672,7 @@ function Install-PawnIO {
     if (Test-PawnIO) { Log "   ✔ Pilote PawnIO installé. La température du processeur va apparaître (relance AEROX PC Care si besoin)." }
     else {
         Add-TaskError -Title "Le pilote PawnIO n'a pas pu être installé" -Cause "winget n'a pas réussi à l'installer, ou un redémarrage est nécessaire." -Effect "La température du processeur ne sera pas affichée (celle de la carte graphique oui)." `
-            -FixLabel "Ouvrir le site de PawnIO" -FixAction "Start-Process 'https://pawnio.eu/'" -Steps @("Redémarre le PC puis relance AEROX PC Care.", "Sinon, télécharge l'installateur officiel sur pawnio.eu et lance-le.")
+            -FixLabel "Ouvrir le site de PawnIO" -FixAction "[void](Open-Url 'https://pawnio.eu/')" -Steps @("Redémarre le PC puis relance AEROX PC Care.", "Sinon, télécharge l'installateur officiel sur pawnio.eu et lance-le.")
     }
 }
 
@@ -2123,7 +2154,7 @@ function Install-AppUpdate {
     $u = $sync.UpdateInfo
     $sync.UpdateReady = $null
     if (-not $u -or -not $u.Setup) {
-        Add-TaskError -Title "Aucune mise à jour à installer" -Cause "La nouvelle version n'a pas d'installateur à télécharger." -FixLabel "Ouvrir la page de téléchargement" -FixAction "Start-Process '$($u.Url)'"
+        Add-TaskError -Title "Aucune mise à jour à installer" -Cause "La nouvelle version n'a pas d'installateur à télécharger." -FixLabel "Ouvrir la page de téléchargement" -FixAction ("[void](Open-Url {0})" -f (ConvertTo-PsLiteral "$($u.Url)"))
         return
     }
     Step ("Téléchargement d'AEROX PC Care {0} depuis GitHub" -f $u.Version)
