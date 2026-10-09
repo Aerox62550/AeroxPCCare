@@ -179,15 +179,23 @@ function Get-Winget {
     $w = Get-Command winget.exe -ErrorAction SilentlyContinue
     if ($w) { [void]$cands.Add($w.Source) }
     foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { [void]$cands.Add($p.FullName) }
-    foreach ($c in $cands) {
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
+    if (Test-Path -LiteralPath $alias) { [void]$cands.Insert(0, $alias) }
+    foreach ($c in $cands) { if (Test-WingetRuns $c) { $script:WingetPath = $c; return $c }; $script:WingetBlocked = $true }
+    # Présent sur le PC mais pas pour ce compte : on l'active pour ce compte (commande officielle de Windows), puis on réessaie
+    if ($cands.Count -or (Test-Path "$env:ProgramFiles\WindowsApps")) {
         try {
-            $out = (& $c --version 2>&1 | Out-String)
-            if ($out -match 'v?\d+\.\d+') { $script:WingetPath = $c; return $c }
+            Add-AppxPackage -RegisterByFamilyName -MainPackage 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe' -ErrorAction Stop
+            Log "   ✔ Outil de mise à jour des logiciels (winget) activé pour ce compte"
+            Start-Sleep -Seconds 2
+            foreach ($c in @($alias) + @($cands)) { if ((Test-Path -LiteralPath $c) -and (Test-WingetRuns $c)) { $script:WingetPath = $c; $script:WingetBlocked = $false; return $c } }
         } catch {}
-        $script:WingetBlocked = $true
     }
     $script:WingetPath = ''
     return $null
+}
+function Test-WingetRuns([string]$Path) {
+    try { $out = (& $Path --version 2>&1 | Out-String); return ($out -match 'v?\d+\.\d+') } catch { return $false }
 }
 # AEROX lancé avec le mot de passe d'un autre compte que celui de la session ouverte ?
 function Test-OtherAccount {
