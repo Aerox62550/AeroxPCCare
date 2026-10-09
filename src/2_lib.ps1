@@ -2,6 +2,7 @@
 # =====================================================================
 #  Bibliothèque des tâches (exécutée en arrière-plan : l'interface ne fige pas)
 # =====================================================================
+Set-SplashStep 50 'Chargement des outils…'
 $TaskLibrary = {
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'

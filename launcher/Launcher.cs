@@ -89,10 +89,12 @@ static class Program {
             // Console invisible : les outils Windows lancés par le logiciel (winget, DISM...) l'utilisent sans ouvrir de fenêtre
             if (AllocConsole()) { IntPtr h = GetConsoleWindow(); if (h != IntPtr.Zero) ShowWindow(h, 0); }
 
+            splash.SetProgress(8, "Lecture du programme…");
             string code = ReadWithRetry(script);
             UnblockFolder(dir);
             UnblockFolder(Path.Combine(LogDir(), "outils"));
 
+            splash.SetProgress(15, "Démarrage du moteur…");
             Assembly sma = Assembly.Load("System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35");
             Type rsFactory = sma.GetType("System.Management.Automation.Runspaces.RunspaceFactory", true);
             Type psType = sma.GetType("System.Management.Automation.PowerShell", true);
@@ -107,6 +109,7 @@ static class Program {
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxLauncher", Assembly.GetExecutingAssembly().Location });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxSplash", splash });
 
+            splash.SetProgress(25, "Vérification des droits…");
             object ps = FindMethod(psType, "Create", 0).Invoke(null, null);
             psType.GetProperty("Runspace").SetValue(ps, rs, null);
             FindMethod(psType, "AddScript", 1).Invoke(ps, new object[] { code });
@@ -259,6 +262,11 @@ public class AeroxSplash {
     Form f;
     readonly System.Threading.ManualResetEvent ready = new System.Threading.ManualResetEvent(false);
     volatile bool closed = false;
+    // Avancement demandé par le lanceur et le script (0 à 100) et texte de l'étape ; lus par le minuteur de la fenêtre
+    volatile int target = 3;
+    volatile string stepText = "Démarrage en cours…";
+    double shown = 0;
+    const int BarW = 270;
 
     public void Show(string icoPath) {
         Thread t = new Thread(delegate() {
@@ -271,14 +279,40 @@ public class AeroxSplash {
                 try { pb.Image = new System.Drawing.Icon(icoPath, 64, 64).ToBitmap(); } catch { }
                 Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 15f, System.Drawing.FontStyle.Bold);
                 t1.Location = new System.Drawing.Point(96, 30); t1.AutoSize = true;
-                Label t2 = new Label(); t2.Text = "Démarrage en cours…"; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 10f);
-                t2.Location = new System.Drawing.Point(98, 64); t2.AutoSize = true;
-                ProgressBar bar = new ProgressBar(); bar.Style = ProgressBarStyle.Marquee; bar.MarqueeAnimationSpeed = 30;
-                bar.Location = new System.Drawing.Point(98, 94); bar.Size = new System.Drawing.Size(270, 8);
-                f.Controls.Add(pb); f.Controls.Add(t1); f.Controls.Add(t2); f.Controls.Add(bar);
+                Label t2 = new Label(); t2.Text = stepText; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 10f);
+                t2.Location = new System.Drawing.Point(98, 64); t2.AutoSize = false; t2.Size = new System.Drawing.Size(BarW, 20);
+                // Barre violette (couleur de l'appli) qui se remplit selon l'avancement réel du démarrage
+                Panel track = new Panel(); track.Location = new System.Drawing.Point(98, 94); track.Size = new System.Drawing.Size(BarW, 6);
+                track.BackColor = System.Drawing.Color.FromArgb(37, 42, 58);
+                Panel fill = new Panel(); fill.Location = new System.Drawing.Point(0, 0); fill.Size = new System.Drawing.Size(0, 6);
+                fill.BackColor = System.Drawing.Color.FromArgb(124, 92, 255);
+                track.Controls.Add(fill);
+                Label pct = new Label(); pct.ForeColor = System.Drawing.Color.FromArgb(185, 168, 255); pct.Font = new System.Drawing.Font("Segoe UI", 8.5f, System.Drawing.FontStyle.Bold);
+                pct.Location = new System.Drawing.Point(98 + BarW - 40, 104); pct.Size = new System.Drawing.Size(40, 16); pct.TextAlign = System.Drawing.ContentAlignment.MiddleRight; pct.Text = "0 %";
+                f.Controls.Add(pb); f.Controls.Add(t1); f.Controls.Add(t2); f.Controls.Add(track); f.Controls.Add(pct);
+
+                System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer(); anim.Interval = 15;
+                anim.Tick += delegate {
+                    try {
+                        int goal = closed ? 100 : target;
+                        // Entre deux étapes, la barre continue d'avancer doucement (sans dépasser l'étape suivante probable)
+                        double cap = closed ? 100 : Math.Min(goal + 7, 96);
+                        if (shown < goal) shown += Math.Max(0.6, (goal - shown) * 0.12);
+                        else if (shown < cap) shown += 0.04;
+                        if (shown > 100) shown = 100;
+                        int w = (int)Math.Round(BarW * shown / 100.0);
+                        if (fill.Width != w) fill.Width = w;
+                        string p = ((int)shown).ToString() + " %";
+                        if (pct.Text != p) pct.Text = p;
+                        string st = stepText;
+                        if (t2.Text != st) t2.Text = st;
+                        if (closed && shown >= 99.5) { anim.Stop(); f.Close(); }
+                    } catch { }
+                };
+                anim.Start();
                 System.Windows.Forms.Timer safety = new System.Windows.Forms.Timer(); safety.Interval = 120000;
                 safety.Tick += delegate { safety.Stop(); f.Close(); }; safety.Start();
-                f.Shown += delegate { ready.Set(); if (closed) f.Close(); };
+                f.Shown += delegate { ready.Set(); };
                 Application.Run(f);
             } catch { }
             ready.Set();
@@ -287,8 +321,27 @@ public class AeroxSplash {
         ready.WaitOne(2000);
     }
 
+    // Appelée par le lanceur et par le script ($AeroxSplash.SetProgress(60, "…")) : ne fait jamais reculer la barre
+    public void SetProgress(int percent, string text) {
+        try {
+            if (percent > 100) percent = 100;
+            if (percent > target) target = percent;
+            if (!string.IsNullOrEmpty(text)) stepText = text;
+        } catch { }
+    }
+
+    // La barre finit de se remplir puis la fenêtre se ferme (au plus ~1/2 seconde)
     public void Close() {
-        closed = true;
-        try { if (f != null && f.IsHandleCreated && !f.IsDisposed) f.BeginInvoke((MethodInvoker)delegate { try { f.Close(); } catch { } }); } catch { }
+        closed = true; stepText = "Prêt !";
+        try {
+            if (f != null && f.IsHandleCreated && !f.IsDisposed) {
+                Form ff = f;
+                System.Threading.ThreadPool.QueueUserWorkItem(delegate {
+                    Thread.Sleep(700);
+                    try { if (!ff.IsDisposed) ff.BeginInvoke((MethodInvoker)delegate { try { ff.Close(); } catch { } }); } catch { }
+                });
+            }
+        } catch { }
     }
 }
+

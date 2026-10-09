@@ -1,6 +1,8 @@
 
 # Rend les fonctions utilitaires (Format-Size, Write-Bug...) disponibles aussi pour l'interface
+Set-SplashStep 58 'Chargement des outils…'
 . $TaskLibrary
+Set-SplashStep 66 'Création de l''interface…'
 
 # =====================================================================
 #  Interface (WPF)
@@ -178,6 +180,7 @@
 '@
 
 $window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
+Set-SplashStep 78 'Création de l''interface…'
 foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
                'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavPerf','NavMonitor','NavSystem','NavHelp') {
     Set-Variable -Name $n -Value $window.FindName($n) -Scope Script
@@ -2769,6 +2772,7 @@ $timer.Add_Tick({
 })
 
 # ---------------------------------------------------------------- Lancement
+Set-SplashStep 88 'Lecture de tes réglages…'
 Write-UiLog ("Bienvenue dans $AppName $AppVersion — " + (Get-Date -Format 'dddd dd MMMM yyyy HH:mm'))
 Write-UiLog "Commence par « Lancer le diagnostic » sur l'accueil."
 $LogDot.Visibility = 'Collapsed'
@@ -2792,6 +2796,7 @@ Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
 if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay' }
+Set-SplashStep 95 'Ouverture…'
 [void]$window.ShowDialog()
 $timer.Stop()
 try { Stop-Monitoring } catch {}

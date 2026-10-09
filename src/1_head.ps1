@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '1.2.2'
+$AppVersion = '1.2.3'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -21,6 +21,9 @@ $isSTA   = [Threading.Thread]::CurrentThread.GetApartmentState() -eq 'STA'
 
 # Le logiciel se lance avec « AeroxPCCare.exe », qui demande les droits administrateur
 function Close-Splash { try { if ($AeroxSplash) { $AeroxSplash.Close() } } catch {} }
+# Avancement de l'écran de chargement (barre violette) : ne bloque jamais le démarrage
+function Set-SplashStep([int]$Percent, [string]$Text) { try { if ($AeroxSplash) { $AeroxSplash.SetProgress($Percent, $Text) } } catch {} }
+Set-SplashStep 32 'Préparation…'
 if (-not $isAdmin -or -not $isSTA) {
     Close-Splash
     Add-Type -AssemblyName PresentationFramework

@@ -6,6 +6,7 @@
 $AppRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($AeroxRoot) { $AeroxRoot } else { (Get-Location).Path }
 $AppInfo.Root = $AppRoot
 $NativeDll = Join-Path $AppRoot 'AeroxPCCare.Native.dll'
+Set-SplashStep 40 'Chargement des modules…'
 if (-not ('AeroxNative' -as [type])) {
     if (-not (Test-Path -LiteralPath $NativeDll)) { throw "Le fichier AeroxPCCare.Native.dll est introuvable. Dézippe tout le dossier (pas seulement le programme) puis relance." }
     # L'antivirus peut verrouiller la DLL quelques secondes pendant son analyse : on réessaie
