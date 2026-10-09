@@ -228,6 +228,7 @@ $script:OverlayMetrics = [ordered]@{
 $script:Settings = @{
     LogOpen = $false
     IgnoredApps = @()
+    IgnoredIssues = @()
     StartupKept = @()
     SpeedHistory = @()
     BetaChannel = $false
@@ -243,7 +244,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -251,9 +252,11 @@ function Load-Settings {
     } catch { Write-Bug -Context 'Lecture des réglages' -ErrorRecord $_ }
     $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps | Where-Object { $_ })
     $script:Settings.StartupKept = @($script:Settings.StartupKept | Where-Object { $_ })
+    $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_ -is [hashtable] -and $_.Id })
     $script:Settings.SpeedHistory = @($script:Settings.SpeedHistory | Where-Object { $_ -is [hashtable] })
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
+    $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
@@ -262,6 +265,7 @@ function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if (
 function Save-Settings {
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
+    $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
 }
@@ -435,6 +439,9 @@ function New-IssueCard($I, [switch]$IsError) {
                 }
             }
             if ($hint) { $h = New-Text $hint 12 '#6B7389'; $h.VerticalAlignment = 'Center'; $h.Margin = Th 4 0 0 0; Add-Child $acts $h }
+            if (-not $IsError -and $I.Id -and $I.Cat -ne 'Sécurité') {
+                $bi = New-Button 'Ne plus signaler' 'TextBtn' @{ Kind = 'ignore'; Issue = $I } $false; $bi.Margin = Th 8 0 0 0; Add-Child $acts $bi
+            }
         }
         if ($acts.Children.Count) { Add-Child $sp $acts }
         if ($I.Steps -and $script:OpenSteps[$I.Title]) {
@@ -629,6 +636,22 @@ function Build-DiagPage {
         Add-Child $ol $row
     }
     $ok.Child = $ol; Add-Child $sp $ok
+    $ign = @($script:Diag.Ignored | Where-Object { $_ })
+    if ($ign.Count) {
+        Add-Child $sp (New-Section 'Ignoré à ta demande')
+        $ib = New-Object System.Windows.Controls.Border; $ib.Background = Brush '#13161E'; $ib.CornerRadius = Corner 12; $ib.Padding = Th 16 6 12 6
+        $il = New-Object System.Windows.Controls.StackPanel
+        foreach ($x in $ign) {
+            $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
+            $rb = New-Button 'Réactiver' 'TextBtn' @{ Kind = 'unignore'; Issue = $x } $false; [System.Windows.Controls.DockPanel]::SetDock($rb, 'Right'); Add-Child $row $rb
+            $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
+            Add-Child $tx (New-Text $x.Title 13 '#8B93A7' 'SemiBold')
+            if ($x.Detail) { Add-Child $tx (New-Text $x.Detail 12 '#5D6478') }
+            Add-Child $row $tx
+            Add-Child $il $row
+        }
+        $ib.Child = $il; Add-Child $sp $ib
+    }
     return $sp
 }
 
@@ -860,6 +883,26 @@ function Invoke-UiCommand($T) {
                 Refresh-Page
             }
             'steps' { $script:OpenSteps[$T.Key] = -not [bool]$script:OpenSteps[$T.Key]; Refresh-Page }
+            'ignore' {
+                $x = $T.Issue
+                if (Confirm-Box ("Ne plus signaler « $($x.Title) » ?`n`nCette alerte ne comptera plus dans les problèmes ni dans la note du diagnostic. Tu la retrouveras tout en bas du diagnostic, dans « Ignoré à ta demande », pour la réactiver quand tu veux.")) {
+                    $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_.Id -ne $x.Id }) + @(@{ Id = $x.Id; Title = $x.Title })
+                    Save-Settings
+                    $script:Diag.Issues = @($script:Diag.Issues | Where-Object { $_ -ne $x })
+                    $script:Diag.Ignored = @($script:Diag.Ignored) + @($x)
+                    Write-UiLog ("🔕 Ne sera plus signalé : " + $x.Title)
+                    Update-HomeStats; Update-DiagBadge; Refresh-Page
+                }
+            }
+            'unignore' {
+                $x = $T.Issue
+                $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_.Id -ne $x.Id })
+                Save-Settings
+                $script:Diag.Ignored = @($script:Diag.Ignored | Where-Object { $_ -ne $x })
+                if ($x.ContainsKey('Status')) { $x.Status = 'open'; $script:Diag.Issues = @($script:Diag.Issues) + @($x) }
+                Write-UiLog ("🔔 De nouveau signalé : " + $x.Title + " (relance le diagnostic pour tout revoir)")
+                Update-HomeStats; Update-DiagBadge; Refresh-Page
+            }
             'done' { $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title); Update-DiagBadge; Refresh-Page }
             'openurl' { Start-Process $T.Url }
             'errfix' { }

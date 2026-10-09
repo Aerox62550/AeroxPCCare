@@ -447,6 +447,11 @@ $script:BugChecks = @{
 function Add-Issue {
     param([string]$Id, [string]$Sev, [string]$Title, [string]$Detail, [string]$Code, [string]$Cause, [string]$Effect,
           [string]$FixLabel, [string]$FixAction, [string]$Confirm, [string[]]$Steps, [string]$UiFix, [switch]$OpenOnly)
+    # Alerte que l'utilisateur a choisi de ne plus voir (jamais pour la sécurité) : rangée à part, hors de la note
+    if ($Id -and $script:CurrentCat -ne 'Sécurité' -and @($AppInfo.IgnoredIssues) -contains $Id) {
+        if ($null -ne $script:IgnoredList) { [void]$script:IgnoredList.Add(@{ Id = $Id; Sev = $Sev; Cat = $script:CurrentCat; Title = $Title; Detail = $Detail }) }
+        return
+    }
     [void]$script:Issues.Add(@{ Id = $Id; Sev = $Sev; Cat = $script:CurrentCat; Title = $Title; Detail = $Detail; Code = $Code; Cause = $Cause; Effect = $Effect;
                                 FixLabel = $FixLabel; FixAction = $FixAction; Confirm = $Confirm; Steps = $Steps; UiFix = $UiFix; OpenOnly = [bool]$OpenOnly; Status = 'open' })
 }
@@ -1062,6 +1067,7 @@ function Invoke-Diagnostic {
     Step "Diagnostic complet"
     $script:Issues = New-Object System.Collections.ArrayList
     $script:OkList = New-Object System.Collections.ArrayList
+    $script:IgnoredList = New-Object System.Collections.ArrayList
     $checks = [ordered]@{ 'Stockage' = 'Test-Storage'; 'Mémoire' = 'Test-Memory'; 'Système' = 'Test-SystemState'; 'Stabilité' = 'Test-Stability'; 'Mises à jour' = 'Test-Updates'
                           'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
     $sens = $sync.Sens
@@ -1083,7 +1089,8 @@ function Invoke-Diagnostic {
         else { Log ("   ✔ {0} : OK" -f $k) }
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
-    $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Date = (Get-Date) }
+    $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
+    if ($script:IgnoredList.Count) { Log ("   ({0} alerte(s) ignorée(s) à ta demande)" -f $script:IgnoredList.Count) }
     Step "Résultat"
     Log ("{0} problème(s) dont {1} critique(s), {2} point(s) OK" -f $script:Issues.Count, $crit, $script:OkList.Count)
 }
