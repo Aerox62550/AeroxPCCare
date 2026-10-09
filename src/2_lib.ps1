@@ -16,12 +16,38 @@ function Log([string]$Message) {
     else          { $sync.Queue.Enqueue('') }
 }
 
+# Ouvre un lien dans la session de la personne connectée (tâche planifiée temporaire « seulement si l'utilisateur
+# est connecté » : aucun mot de passe nécessaire), via un raccourci .url (pas de limite de longueur ni de souci de guillemets).
+function Open-UrlAsSessionUser([string]$Url) {
+    $tn = 'AEROX PC Care - ouvrir un lien'
+    try {
+        $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        if (-not $user) { return $false }
+        $dir = Join-Path $env:ProgramData 'AeroxPCCare'
+        New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+        $lnk = Join-Path $dir 'lien.url'
+        $abs = ([uri]$Url).AbsoluteUri
+        [IO.File]::WriteAllText($lnk, "[InternetShortcut]`r`nURL=$abs`r`n", [Text.Encoding]::ASCII)
+        $a = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'explorer.exe') -Argument ('"{0}"' -f $lnk)
+        $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+        Register-ScheduledTask -TaskName $tn -Action $a -Principal $p -Settings $st -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $tn -ErrorAction Stop
+        Start-Sleep -Milliseconds 1500
+        return $true
+    } catch { return $false }
+    finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
+}
+
 # Ouvre une page web sur n'importe quel PC. Start-Process seul échoue (« fichier introuvable ») quand le logiciel
 # tourne sous un autre compte que la personne devant le PC (compte standard + mot de passe d'un compte ADMIN) :
 # ce compte-là n'a souvent aucun navigateur par défaut. On essaie alors les navigateurs installés, puis l'Explorateur,
 # et en dernier recours le lien est copié pour être collé à la main.
 function Open-Url([string]$Url) {
     if (-not $Url) { return $false }
+    # Logiciel ouvert avec le mot de passe d'un autre compte : la page doit s'ouvrir chez la personne devant l'écran,
+    # avec SON navigateur, pas dans le compte administrateur (où rien n'apparaît)
+    if (Test-OtherAccount) { if (Open-UrlAsSessionUser $Url) { return $true } }
     try { Start-Process $Url -ErrorAction Stop; return $true } catch {}
     $pf86 = ${env:ProgramFiles(x86)}
     $cands = @(
@@ -199,6 +225,11 @@ function Test-WingetRuns([string]$Path) {
 }
 # AEROX lancé avec le mot de passe d'un autre compte que celui de la session ouverte ?
 function Test-OtherAccount {
+    if ($null -ne $script:OtherAccount) { return $script:OtherAccount }
+    $script:OtherAccount = Test-OtherAccountNow
+    return $script:OtherAccount
+}
+function Test-OtherAccountNow {
     try {
         $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
         $console = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
