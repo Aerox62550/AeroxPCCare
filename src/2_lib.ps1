@@ -927,8 +927,8 @@ function Test-ConnectionStability {
     try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     # 1. Économie d'énergie de la carte réseau (Windows peut la couper) : proposé seulement sur un PC fixe
     try {
-        $pm = Get-NetAdapterPowerManagement -Name $a.Name -ErrorAction Stop
-        if ("$($pm.AllowComputerToTurnOffDevice)" -eq 'Enabled') {
+        $sleep = Get-NetAdapterSleepState $a.Name
+        if ($sleep -eq 'Enabled') {
             if (-not $laptop) {
                 Add-Issue -Id 'netpower' -Sev 'warn' -Title "Windows peut couper ta carte réseau pour économiser l'énergie" -Detail $a.Desc `
                     -Cause "L'option « Autoriser l'ordinateur à éteindre ce périphérique » est activée : sur un PC fixe, c'est une cause classique de coupures et de déconnexions en jeu." `
@@ -937,7 +937,7 @@ function Test-ConnectionStability {
                     -Confirm "La carte réseau ne sera plus mise en veille par Windows. La connexion peut se couper 2 ou 3 secondes pendant le réglage.`n`nTu pourras annuler dans l'historique des changements." `
                     -Steps @("Le bouton désactive seulement cette option (annulable dans l'historique).", "À la main : Gestionnaire de périphériques > Cartes réseau > ta carte > Propriétés > Gestion de l'alimentation.")
             } else { Add-Ok "Carte réseau : économie d'énergie active (normal sur un portable, pour la batterie)" }
-        } elseif ("$($pm.AllowComputerToTurnOffDevice)" -eq 'Disabled') { Add-Ok "Carte réseau : jamais mise en veille par Windows" }
+        } elseif ($sleep -eq 'Disabled') { Add-Ok "Carte réseau : jamais mise en veille par Windows" }
     } catch {}
     # 2. Pilote Wi-Fi ancien
     if ($a.Wifi -and $a.DriverDate) {
@@ -968,14 +968,50 @@ function Test-ConnectionStability {
         } else { Add-Ok ("DNS rapides ({0} ms)" -f $mine) }
     } catch {}
 }
+# État de la case « Autoriser l'ordinateur à éteindre ce périphérique » : 'Enabled', 'Disabled' ou '' (inconnu).
+# Même source que celle modifiée par Set-NetAdapterSleep, pour que l'alerte disparaisse bien une fois réglée.
+function Get-NetAdapterSleepState([string]$Name) {
+    try {
+        $a = Get-NetAdapter -Name $Name -ErrorAction Stop
+        $pnp = "$($a.PnPDeviceID)"
+        $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
+        $key = Get-ChildItem -LiteralPath $cls -ErrorAction SilentlyContinue | Where-Object { "$((Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).NetCfgInstanceId)" -eq "$($a.InterfaceGuid)" } | Select-Object -First 1
+        if ($key) { $cap = (Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue).PnPCapabilities; if ($null -ne $cap -and ([int]$cap -band 0x10)) { return 'Disabled' } }
+        foreach ($x in @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSPower_DeviceEnable -ErrorAction SilentlyContinue)) {
+            if ($pnp -and "$($x.InstanceName)".StartsWith($pnp, [StringComparison]::OrdinalIgnoreCase)) { return $(if ($x.Enable) { 'Enabled' } else { 'Disabled' }) }
+        }
+        return "$((Get-NetAdapterPowerManagement -Name $Name -ErrorAction Stop).AllowComputerToTurnOffDevice)"
+    } catch { return '' }
+}
+# Case « Autoriser l'ordinateur à éteindre ce périphérique pour économiser l'énergie » (Gestionnaire de périphériques).
+# Set-NetAdapterPowerManagement ne sait pas la modifier : on passe par la classe WMI que le Gestionnaire utilise
+# (MSPower_DeviceEnable, effet immédiat), sinon par le réglage du pilote (PnPCapabilities, effet au redémarrage).
 function Set-NetAdapterSleep([string]$Name, [bool]$Allow) {
     Step $(if ($Allow) { "Réactivation de l'économie d'énergie de la carte réseau" } else { "Désactivation de l'économie d'énergie de la carte réseau" })
     try {
-        Set-NetAdapterPowerManagement -Name $Name -AllowComputerToTurnOffDevice $(if ($Allow) { 'Enabled' } else { 'Disabled' }) -ErrorAction Stop
+        $a = Get-NetAdapter -Name $Name -ErrorAction Stop
+        $pnp = "$($a.PnPDeviceID)"
+        $done = $false; $reboot = $false
+        foreach ($x in @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSPower_DeviceEnable -ErrorAction SilentlyContinue)) {
+            if ($pnp -and "$($x.InstanceName)".StartsWith($pnp, [StringComparison]::OrdinalIgnoreCase)) {
+                Set-CimInstance -InputObject $x -Property @{ Enable = $Allow } -ErrorAction Stop
+                $done = $true
+            }
+        }
+        if (-not $done) {
+            $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
+            $key = Get-ChildItem -LiteralPath $cls -ErrorAction Stop | Where-Object { "$((Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).NetCfgInstanceId)" -eq "$($a.InterfaceGuid)" } | Select-Object -First 1
+            if (-not $key) { throw "Le réglage de cette carte réseau est introuvable dans Windows." }
+            if ($Allow) { Remove-ItemProperty -LiteralPath $key.PSPath -Name PnPCapabilities -ErrorAction SilentlyContinue }
+            else { Set-ItemProperty -LiteralPath $key.PSPath -Name PnPCapabilities -Value 24 -Type DWord -ErrorAction Stop }
+            $reboot = $true
+        }
         Log ("   ✔ {0} : {1}" -f $Name, $(if ($Allow) { 'Windows peut de nouveau la mettre en veille.' } else { 'Windows ne la coupera plus.' }))
+        if ($reboot) { Log "   → Pris en compte au prochain redémarrage du PC." }
         if (-not $Allow) { Add-Change -Title ("Carte réseau « {0} » : plus de mise en veille par Windows" -f $Name) -Undo ("Set-NetAdapterSleep {0} `$true" -f (ConvertTo-PsLiteral $Name)) }
     } catch {
-        Add-TaskError -Title "Impossible de modifier la gestion d'énergie de la carte réseau" -Cause $_.Exception.Message -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc"
+        Add-TaskError -Title "Impossible de modifier la gestion d'énergie de la carte réseau" -Cause $_.Exception.Message -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" `
+            -Steps @("Dans le Gestionnaire de périphériques, ouvre « Cartes réseau » et double-clique sur ta carte.", "Onglet « Gestion de l'alimentation » : décoche « Autoriser l'ordinateur à éteindre ce périphérique pour économiser l'énergie ».", "Clique sur OK.")
     }
 }
 function Set-FastDns([int]$Index) {
