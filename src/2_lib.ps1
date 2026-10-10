@@ -1818,15 +1818,24 @@ function Clear-WindowsUpdateCache {
     Start-Service -Name bits, wuauserv -ErrorAction SilentlyContinue
 }
 
+# Mise à jour Windows qui attend un redémarrage : DISM refuse alors de nettoyer les composants (code 0x800F0806)
+function Test-ComponentsPending {
+    return (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+           (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending')
+}
+$script:PendingMsg = "   • Anciens composants : une mise à jour de Windows attend un redémarrage. Ce nettoyage-là se fera après : redémarre le PC puis relance le nettoyage approfondi."
+
 function Start-DeepClean {
     Step "Nettoyage profond des composants Windows (DISM)"
     Log "   Ça peut prendre un moment, laisse le logiciel ouvert..."
+    if (Test-ComponentsPending) { Log $script:PendingMsg; return }
     $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     $ec = Invoke-Native 'dism.exe' @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
     $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     $gain = [math]::Max([double]0, [double]$free1 - [double]$free0)
     $script:TotalFreed += $gain
-    if ($ec -ne 0) {
+    if ($ec -eq -2146498554) { Log $script:PendingMsg }
+    elseif ($ec -ne 0) {
         Add-TaskError -Title "Le nettoyage profond n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
             -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot' -Steps @("Redémarre le PC.", "Relance « Nettoyage profond » dans l'onglet Nettoyage.")
     } else { Log ("✅ Nettoyage profond terminé : environ {0} libérés" -f (Format-Size $gain)) }
@@ -2147,8 +2156,9 @@ function Invoke-DeepClean([string[]]$Ids) {
         Step "Anciens composants Windows (DISM, 5 à 20 minutes)"
         $dargs = @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
         if ($Ids -contains 'resetbase') { $dargs += '/ResetBase' }
-        $ec = Invoke-Native 'dism.exe' $dargs -Quiet
-        if ($ec -ne 0) {
+        $ec = if (Test-ComponentsPending) { -2146498554 } else { Invoke-Native 'dism.exe' $dargs -Quiet }
+        if ($ec -eq -2146498554) { Log $script:PendingMsg }
+        elseif ($ec -ne 0) {
             Add-TaskError -Title "Le nettoyage des anciens composants n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
                 -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot'
         } else { Log "   ✔ Anciens composants Windows nettoyés" }
