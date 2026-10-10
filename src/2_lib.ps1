@@ -95,6 +95,12 @@ function Write-Bug {
     } catch {}
 }
 
+# Code d'erreur Windows (0x8024...) : PowerShell enveloppe les erreurs COM, le vrai code est dans l'exception la plus profonde
+function Get-ErrorCode($Err) {
+    $ex = $Err.Exception; while ($ex.InnerException) { $ex = $ex.InnerException }
+    return ('0x{0:X8}' -f $ex.HResult)
+}
+
 # Erreur rencontrée pendant une action : affichée clairement avec sa cause et sa réparation
 function Add-TaskError {
     param([string]$Title, [string]$Cause, [string]$Effect, [string]$Code, [string]$FixLabel, [string]$FixAction, [string]$Confirm, [string[]]$Steps, $Bug)
@@ -238,7 +244,10 @@ function Test-OtherAccountNow {
 }
 # Message clair quand winget manque ou ne peut pas être lancé
 function Add-WingetError([string]$What) {
-    if ($script:WingetBlocked -or (Test-OtherAccount)) {
+    if ($script:WingetUnreadable) {
+        Add-TaskError -Title "Impossible de lister les mises à jour des logiciels" -Cause "L'outil de Microsoft (winget) a répondu de façon inattendue : il est sans doute trop ancien sur ce PC." `
+            -Effect "$What impossible pour l'instant." -FixLabel "Mettre à jour l'outil (Microsoft Store)" -FixAction 'Open-WingetStore'
+    } elseif (Test-OtherAccount) {
         Add-TaskError -Title "Les logiciels ne peuvent pas être mis à jour depuis ce compte" `
             -Cause "AEROX a été ouvert avec le mot de passe d'un autre compte (administrateur). L'outil de Microsoft qui met les logiciels à jour (winget) n'est installé que pour le compte de la personne." `
             -Effect "$What impossible pour l'instant. Le reste du logiciel marche normalement." `
@@ -259,9 +268,36 @@ function Get-IgnoredApps { if ($AppInfo.IgnoredApps) { return @($AppInfo.Ignored
 function Get-AppUpdates([switch]$IncludeIgnored) {
     $wg = Get-Winget
     if (-not $wg) { return $null }
+    $script:WingetUnreadable = $false
     try { if ([Console]::BufferWidth -lt 300) { [Console]::BufferWidth = 400 } } catch {}
-    $null = Invoke-Native $wg (@('upgrade', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) ([System.Text.Encoding]::UTF8) -Quiet
-    return ,(ConvertFrom-WingetTable @($script:NativeOutput) -IncludeIgnored:$IncludeIgnored)
+    $args1 = @('upgrade', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)
+    $ec = Invoke-Native $wg $args1 ([System.Text.Encoding]::UTF8) -Quiet
+    $lines = @($script:NativeOutput)
+    if (-not (Test-WingetAnswered $lines)) {
+        # Réponse non reconnue (souvent : catalogue de winget pas encore chargé sur ce compte) : on le met à jour et on réessaie une fois
+        Log "   … Mise à jour du catalogue de logiciels (winget), puis nouvel essai"
+        $null = Invoke-Native $wg @('source', 'update') ([System.Text.Encoding]::UTF8) -Quiet
+        $ec = Invoke-Native $wg $args1 ([System.Text.Encoding]::UTF8) -Quiet
+        $lines = @($script:NativeOutput)
+    }
+    if (-not (Test-WingetAnswered $lines)) {
+        $script:WingetUnreadable = $true
+        $tail = (@($lines | Where-Object { "$_".Trim() -and "$_" -notmatch '^[\s\-\\|/█▒░]+$' } | Select-Object -Last 4) -join ' | ')
+        $ver = ''; try { $ver = ((& $wg --version) | Out-String).Trim() } catch {}
+        Write-Bug -Context 'Mises à jour des logiciels : réponse de winget non reconnue' -ErrorRecord ("winget $ver, code $ec : $tail") -Type 'bug'
+        Log ("   ⚠ winget ($ver) a répondu quelque chose d'inattendu : {0}" -f $(if ($tail) { $tail } else { '(rien)' }))
+        return $null
+    }
+    if (Test-OtherAccount) { Log "   (AEROX tourne avec un autre compte que la session ouverte : les logiciels installés seulement pour la session de la personne ne sont pas visibles d'ici)" }
+    return ,(ConvertFrom-WingetTable $lines -IncludeIgnored:$IncludeIgnored)
+}
+# winget a-t-il donné une vraie réponse ? (un tableau, ou un message « rien à mettre à jour », en français ou en anglais)
+function Test-WingetAnswered([string[]]$Lines) {
+    foreach ($l in $Lines) {
+        if ($l -match '(?i)\sid\s' -and $l -match '(?i)version') { return $true }
+        if ($l -match "(?i)aucun(e)? (mise à (jour|niveau)|package|paquet|application)|no (available )?upgrade|no installed package|no applicable (update|upgrade)") { return $true }
+    }
+    return $false
 }
 function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
     $list = New-Object System.Collections.ArrayList
@@ -276,7 +312,7 @@ function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
     for (; $i -lt $Lines.Count; $i++) {
         $l = $Lines[$i]
         if (-not $l.Trim()) { break }
-        if ($l -match '^-{5,}' -or $l -match '(?i)upgrades? available|mises? à (jour|niveau)|package\(s\)|packages? (have|ont)|^\d+ ') { break }
+        if ($l -match '^-{5,}' -or $l -match '(?i)upgrades? available|mises? à (jour|niveau)|package\(s\)|packages? (have|ont)|^\d+ (mises?|upgrades?|packages?|paquets?|applications?) ') { break }
         $cell = { param($k) $a = $cols[$k]; if ($a -ge $l.Length) { return '' }; $b = if ($k + 1 -lt $cols.Count) { [math]::Min($cols[$k + 1], $l.Length) } else { $l.Length }; return $l.Substring($a, $b - $a).Trim() }
         $o = [ordered]@{ Name = (& $cell 0); Id = (& $cell 1); Version = (& $cell 2); Available = (& $cell 3) }
         if (-not $o.Id) { continue }
@@ -725,7 +761,12 @@ function Test-Updates {
         } elseif ($still.Count -eq 0) { Add-Ok "Windows à jour (dernière mise à jour il y a $age jours)" }
     }
     $apps = Get-AppUpdates
-    if ($null -eq $apps -and ($script:WingetBlocked -or (Test-OtherAccount))) {
+    if ($null -eq $apps -and $script:WingetUnreadable) {
+        Add-Issue -Id 'wingetread' -Sev 'warn' -Title "Impossible de lister les mises à jour des logiciels" -Detail "L'outil de Microsoft (winget) a répondu de façon inattendue" `
+            -Cause "Le « Programme d'installation d'application » de Microsoft est sans doute trop ancien sur ce PC." -Effect "Les logiciels pas à jour ne peuvent pas être détectés automatiquement." `
+            -FixLabel "Mettre à jour l'outil (Microsoft Store)" -FixAction 'Open-WingetStore' -OpenOnly `
+            -Steps @("Clique sur le bouton : le Microsoft Store s'ouvre sur « Programme d'installation d'application ».", "Clique sur « Mettre à jour » (ou « Installer »), puis relance le diagnostic.")
+    } elseif ($null -eq $apps -and (Test-OtherAccount)) {
         Add-Ok "Logiciels : non vérifiés depuis ce compte (ouvre AEROX depuis la session administrateur pour les vérifier)"
     } elseif ($null -eq $apps) {
         Add-Issue -Id 'winget' -Sev 'warn' -Title "L'outil de mise à jour des logiciels est absent" -Detail 'winget introuvable' `
@@ -948,7 +989,7 @@ function Get-GpuDrivers {
 function Test-Drivers {
     foreach ($o in @(Get-GpuDrivers)) {
         if ($o.Status -eq 'none') {
-            Add-Issue -Id 'gpunone' -Sev 'crit' -Title "Aucun pilote de carte graphique installé" -Detail $o.Name `
+            Add-Issue -Id ('gpunone-' + ($o.Name -replace '[^A-Za-z0-9]', '')) -Sev 'crit' -Title "Aucun pilote de carte graphique installé" -Detail $o.Name `
                 -Cause "Windows utilise un pilote d'affichage de secours, sans accélération graphique." -Effect "Jeux et vidéos saccadent ou ne se lancent pas, résolution parfois limitée." `
                 -FixLabel "Vérifier les pilotes" -UiFix 'drivers' -Steps @("Installe le pilote depuis le site du fabricant : NVIDIA App, AMD Adrenalin ou Intel Driver & Support Assistant.")
             continue
@@ -959,7 +1000,7 @@ function Test-Drivers {
             $rel = if ($o.Latest.Date) { " (sortie le " + (Format-Date $o.Latest.Date) + ")" } else { '' }
             $late = if ($o.Latest.Date) { [int]((Get-Date) - $o.Latest.Date).TotalDays } else { 0 }
             if ($o.Status -eq 'old' -and ($late -ge 21 -or ($o.AgeDays -ge 120))) {
-                Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Pilote NVIDIA pas à jour : {0} installé, {1} disponible" -f $o.Version, $o.Latest.Version) -Detail ("{0}{1}" -f $o.Name, $rel) `
+                Add-Issue -Id ('gpu-' + ($o.Name -replace '[^A-Za-z0-9]', '')) -Sev 'warn' -Title ("Pilote NVIDIA pas à jour : {0} installé, {1} disponible" -f $o.Version, $o.Latest.Version) -Detail ("{0}{1}" -f $o.Name, $rel) `
                     -Cause "NVIDIA sort régulièrement des pilotes qui corrigent des plantages et améliorent les performances des jeux récents." -Effect "Crashs ou bugs graphiques possibles dans certains jeux, performances un peu plus faibles." `
                     -FixLabel "Télécharger le pilote officiel" -FixAction $fix -OpenOnly `
                     -Steps @("Clique sur le bouton : le pilote officiel se télécharge depuis nvidia.com.", "Lance le fichier téléchargé et choisis l'installation « Express ».", "Ou, plus simple : installe la « NVIDIA App » qui fait les mises à jour toute seule.", "Redémarre le PC à la fin.")
@@ -968,7 +1009,7 @@ function Test-Drivers {
         }
         if ($o.Status -eq 'old' -and $o.Date) {
             $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
-            Add-Issue -Id 'gpu' -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
+            Add-Issue -Id ('gpu-' + ($o.Name -replace '[^A-Za-z0-9]', '')) -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
                 -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
                 -FixLabel $(if ($fix) { "Télécharger le pilote officiel" } else { "Vérifier les pilotes" }) -FixAction $fix -UiFix $(if ($fix) { '' } else { 'drivers' }) -OpenOnly:([bool]$fix) -Steps $steps
         } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
@@ -1755,11 +1796,7 @@ function Open-WingetStore {
 function Update-Apps {
     Step "Recherche des mises à jour de logiciels (winget)"
     $apps = Get-AppUpdates
-    if ($null -eq $apps) {
-        Add-TaskError -Title "L'outil de mise à jour des logiciels (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
-            -Effect "Les logiciels ne peuvent pas être mis à jour automatiquement." -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
-        return
-    }
+    if ($null -eq $apps) { Add-WingetError "La mise à jour des logiciels est"; return }
     $ign = @(Get-IgnoredApps).Count
     if ($ign) { Log "   ($ign logiciel(s) ignoré(s) à ta demande : ils ne seront pas touchés)" }
     if ($apps.Count -eq 0) { Log "✅ Tous tes logiciels sont à jour."; return }
@@ -1815,7 +1852,7 @@ function Update-Windows {
         $session.ClientApplicationID = 'AEROX PC Care'
         $result = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
     } catch {
-        $code = '0x{0:X8}' -f $_.Exception.HResult
+        $code = (Get-ErrorCode $_)
         $wi = Get-WuErrorInfo $code
         Add-TaskError -Title "Impossible de rechercher les mises à jour Windows" -Code $code -Cause $wi.Cause -Effect "Aucune mise à jour ne peut être installée pour l'instant." `
             -FixLabel "Débloquer Windows Update et réessayer" -FixAction 'Reset-WindowsUpdate; Update-Windows'
@@ -1839,7 +1876,7 @@ function Update-Windows {
         $inst = $session.CreateUpdateInstaller(); $inst.Updates = $toInstall
         $res = $inst.Install()
     } catch {
-        $code = '0x{0:X8}' -f $_.Exception.HResult
+        $code = (Get-ErrorCode $_)
         $wi = Get-WuErrorInfo $code
         Add-TaskError -Title "Le téléchargement ou l'installation des mises à jour a échoué" -Code $code -Cause $wi.Cause -Effect "Les mises à jour ne sont pas installées." `
             -FixLabel "Débloquer et réessayer" -FixAction $wi.Fix
@@ -1897,7 +1934,7 @@ function Get-DriverReport {
         $rep.Wu = $wu.ToArray()
         Log ("     {0} pilote(s) proposé(s)" -f $rep.Wu.Count)
     } catch {
-        $rep.WuError = ('0x{0:X8}' -f $_.Exception.HResult)
+        $rep.WuError = (Get-ErrorCode $_)
         Log ("     ⚠ Windows Update n'a pas répondu ({0})" -f $rep.WuError)
     }
     $sync.DriverScan = $rep
@@ -1925,7 +1962,7 @@ function Install-DriverUpdates([string[]]$Ids) {
         $inst = $session.CreateUpdateInstaller(); $inst.Updates = $coll
         $r = $inst.Install()
     } catch {
-        $code = '0x{0:X8}' -f $_.Exception.HResult
+        $code = (Get-ErrorCode $_)
         $wi = Get-WuErrorInfo $code
         Add-TaskError -Title "L'installation des pilotes a échoué" -Code $code -Cause $wi.Cause -Effect "Les pilotes ne sont pas installés. Ton PC reste comme avant." `
             -FixLabel "Débloquer Windows Update" -FixAction 'Reset-WindowsUpdate' -Confirm "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite."

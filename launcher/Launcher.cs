@@ -27,6 +27,7 @@ static class Program {
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
     // Une seule fenêtre du logiciel à la fois : si elle est déjà ouverte, on la ramène au premier plan
     static bool AlreadyRunning() {
@@ -58,6 +59,7 @@ static class Program {
     static int Main(string[] args) {
         if (args.Length >= 3 && args[0] == "--capteurs") return Sensors.Run(args[1], args[2]);
         AeroxSplash splash = null;
+        try { SetProcessDPIAware(); } catch { }
         try {
             if (AlreadyRunning()) return 0;
             if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) {
@@ -266,29 +268,42 @@ public class AeroxSplash {
     volatile int target = 3;
     volatile string stepText = "Démarrage en cours…";
     double shown = 0;
-    const int BarW = 270;
+    const int BarW = 300;
 
     public void Show(string icoPath) {
         Thread t = new Thread(delegate() {
             try {
                 f = new Form();
                 f.Text = "AEROX PC Care"; f.FormBorderStyle = FormBorderStyle.None; f.StartPosition = FormStartPosition.CenterScreen;
-                f.Size = new System.Drawing.Size(400, 140); f.BackColor = System.Drawing.Color.FromArgb(20, 23, 32); f.ShowInTaskbar = true;
+                f.BackColor = System.Drawing.Color.FromArgb(20, 23, 32); f.ShowInTaskbar = true;
+                f.AutoScaleMode = AutoScaleMode.None;
                 try { f.Icon = new System.Drawing.Icon(icoPath); } catch { }
-                PictureBox pb = new PictureBox(); pb.Size = new System.Drawing.Size(56, 56); pb.Location = new System.Drawing.Point(24, 32); pb.SizeMode = PictureBoxSizeMode.Zoom;
+                // Tout est calculé selon la mise à l'échelle de l'écran (100 %, 125 %, 150 %…) et centré dans le cadre
+                float k = 1f;
+                try { using (System.Drawing.Graphics g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) { k = g.DpiX / 96f; } } catch { }
+                if (k < 1f) k = 1f;
+                Func<int, int> S = delegate(int v) { return (int)Math.Round(v * k); };
+                int W = S(420), H = S(196);
+                f.ClientSize = new System.Drawing.Size(W, H);
+                // Fin liseré autour du cadre
+                f.Paint += delegate(object o, PaintEventArgs e) {
+                    try { using (System.Drawing.Pen pen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(44, 50, 68))) e.Graphics.DrawRectangle(pen, 0, 0, f.ClientSize.Width - 1, f.ClientSize.Height - 1); } catch { }
+                };
+                PictureBox pb = new PictureBox(); pb.Size = new System.Drawing.Size(S(44), S(44)); pb.Location = new System.Drawing.Point((W - S(44)) / 2, S(22)); pb.SizeMode = PictureBoxSizeMode.Zoom;
                 try { pb.Image = new System.Drawing.Icon(icoPath, 64, 64).ToBitmap(); } catch { }
-                Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 15f, System.Drawing.FontStyle.Bold);
-                t1.Location = new System.Drawing.Point(96, 30); t1.AutoSize = true;
-                Label t2 = new Label(); t2.Text = stepText; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 10f);
-                t2.Location = new System.Drawing.Point(98, 64); t2.AutoSize = false; t2.Size = new System.Drawing.Size(BarW, 20);
+                Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 14f, System.Drawing.FontStyle.Bold);
+                t1.AutoSize = false; t1.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; t1.Location = new System.Drawing.Point(0, S(72)); t1.Size = new System.Drawing.Size(W, S(30));
+                Label t2 = new Label(); t2.Text = stepText; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 9.5f);
+                t2.AutoSize = false; t2.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; t2.Location = new System.Drawing.Point(0, S(104)); t2.Size = new System.Drawing.Size(W, S(22));
                 // Barre violette (couleur de l'appli) qui se remplit selon l'avancement réel du démarrage
-                Panel track = new Panel(); track.Location = new System.Drawing.Point(98, 94); track.Size = new System.Drawing.Size(BarW, 6);
+                int BarPx = S(BarW);
+                Panel track = new Panel(); track.Size = new System.Drawing.Size(BarPx, Math.Max(4, S(6))); track.Location = new System.Drawing.Point((W - BarPx) / 2, S(138));
                 track.BackColor = System.Drawing.Color.FromArgb(37, 42, 58);
-                Panel fill = new Panel(); fill.Location = new System.Drawing.Point(0, 0); fill.Size = new System.Drawing.Size(0, 6);
+                Panel fill = new Panel(); fill.Location = new System.Drawing.Point(0, 0); fill.Size = new System.Drawing.Size(0, track.Height);
                 fill.BackColor = System.Drawing.Color.FromArgb(124, 92, 255);
                 track.Controls.Add(fill);
                 Label pct = new Label(); pct.ForeColor = System.Drawing.Color.FromArgb(185, 168, 255); pct.Font = new System.Drawing.Font("Segoe UI", 8.5f, System.Drawing.FontStyle.Bold);
-                pct.Location = new System.Drawing.Point(98 + BarW - 40, 104); pct.Size = new System.Drawing.Size(40, 16); pct.TextAlign = System.Drawing.ContentAlignment.MiddleRight; pct.Text = "0 %";
+                pct.AutoSize = false; pct.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; pct.Location = new System.Drawing.Point(0, S(152)); pct.Size = new System.Drawing.Size(W, S(20)); pct.Text = "0 %";
                 f.Controls.Add(pb); f.Controls.Add(t1); f.Controls.Add(t2); f.Controls.Add(track); f.Controls.Add(pct);
 
                 System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer(); anim.Interval = 15;
@@ -300,7 +315,7 @@ public class AeroxSplash {
                         if (shown < goal) shown += Math.Max(0.6, (goal - shown) * 0.12);
                         else if (shown < cap) shown += 0.04;
                         if (shown > 100) shown = 100;
-                        int w = (int)Math.Round(BarW * shown / 100.0);
+                        int w = (int)Math.Round(BarPx * shown / 100.0);
                         if (fill.Width != w) fill.Width = w;
                         string p = ((int)shown).ToString() + " %";
                         if (pct.Text != p) pct.Text = p;
