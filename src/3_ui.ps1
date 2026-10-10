@@ -546,7 +546,7 @@ function Build-HomePage {
         Add-Child $t (New-Text "Le diagnostic prend une minute environ et ne modifie rien." 13 '#8B93A7')
         Add-Child $dp $t
     } else {
-        $s = Get-Score; $lv = Get-Level $s; $open = Get-OpenIssues
+        $s = Get-Score; $lv = Get-Level $s; $open = @(Get-OpenIssues)
         $b = New-Button "Voir le diagnostic" $(if ($open.Count) { 'PrimaryBtn' } else { 'ActionBtn' }) @{ Kind = 'go'; Def = @{ Go = 'diag' } } $false
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
         $ring = New-Ring $s 64; $ring.Margin = Th 0 0 18 0; [System.Windows.Controls.DockPanel]::SetDock($ring, 'Left'); Add-Child $dp $ring
@@ -601,7 +601,7 @@ function Build-DiagPage {
         $c.Child = $st; Add-Child $sp $c
         return $sp
     }
-    $s = Get-Score; $lv = Get-Level $s; $open = Get-OpenIssues
+    $s = Get-Score; $lv = Get-Level $s; $open = @(Get-OpenIssues)
     $crit = @($open | Where-Object { $_.Sev -eq 'crit' }).Count; $warn = $open.Count - $crit
     $auto = @($open | Where-Object { $_.FixLabel -and -not $_.UiFix -and -not $_.OpenOnly }).Count; $fixed = $script:Diag.Issues.Count - $open.Count
     $sum = New-CardBorder; $sum.Padding = Th 22 18 22 18

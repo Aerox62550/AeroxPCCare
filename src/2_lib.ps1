@@ -1145,7 +1145,12 @@ function Test-ConnectionStability {
     # 2. Pilote Wi-Fi ancien
     if ($a.Wifi -and $a.DriverDate) {
         $age = [int]((Get-Date) - $a.DriverDate).TotalDays
-        if ($age -ge 730) {
+        # Cartes Intel d'ancienne génération : Intel ne sort plus que la branche « legacy » (19.51 pour 3165/3168/7265, 18.33 pour 3160/7260).
+        # Avec cette branche installée, c'est la dernière version possible : pas d'alerte, même si sa date est ancienne.
+        $legacy = ($a.Desc -match '(?i)wireless-ac (3165|3168|7265)' -and "$($a.DriverVersion)" -match '^19\.51\.') -or
+                  ($a.Desc -match '(?i)wireless(-ac|-n)? (3160|7260)' -and "$($a.DriverVersion)" -match '^18\.33\.')
+        if ($legacy) { Add-Ok ("Pilote Wi-Fi : dernière version proposée par Intel pour cette carte ({0})" -f $a.DriverVersion) }
+        elseif ($age -ge 730) {
             $intel = ($a.Desc -match '(?i)intel|killer')
             $url = 'https://www.intel.fr/content/www/fr/fr/support/detect.html'
             Add-Issue -Id 'wifidrv' -Sev 'warn' -Title ("Le pilote Wi-Fi date de {0}" -f (Format-Date $a.DriverDate 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $a.Desc, $a.DriverVersion) `

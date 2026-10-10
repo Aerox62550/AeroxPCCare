@@ -2,7 +2,10 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt sur la branche (prochain patch)
+## Prêt sur la branche (prochain patch, 1.3.1)
+
+- Correctif : avec un seul problème restant, le diagnostic affichait « 15 problème(s) », « -14 corrigé(s) » (le problème unique était compté comme ses 15 champs).
+- Wi-Fi Intel d'ancienne génération (3165/3168/7265 en 19.51.x, 3160/7260 en 18.33.x) : plus d'alerte « pilote ancien » quand c'est déjà la dernière version qu'Intel propose.
 
 - Écran de chargement : centrage vertical calculé avec la hauteur réelle des textes (selon la police et l'échelle de l'écran), le bloc entier est au milieu du cadre.
 
