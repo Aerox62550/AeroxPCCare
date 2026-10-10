@@ -244,7 +244,10 @@ function Test-OtherAccountNow {
 }
 # Message clair quand winget manque ou ne peut pas être lancé
 function Add-WingetError([string]$What) {
-    if (Test-OtherAccount) {
+    if ($script:WingetUnreadable) {
+        Add-TaskError -Title "Impossible de lister les mises à jour des logiciels" -Cause "L'outil de Microsoft (winget) a répondu de façon inattendue : il est sans doute trop ancien sur ce PC." `
+            -Effect "$What impossible pour l'instant." -FixLabel "Mettre à jour l'outil (Microsoft Store)" -FixAction 'Open-WingetStore'
+    } elseif (Test-OtherAccount) {
         Add-TaskError -Title "Les logiciels ne peuvent pas être mis à jour depuis ce compte" `
             -Cause "AEROX a été ouvert avec le mot de passe d'un autre compte (administrateur). L'outil de Microsoft qui met les logiciels à jour (winget) n'est installé que pour le compte de la personne." `
             -Effect "$What impossible pour l'instant. Le reste du logiciel marche normalement." `
@@ -265,9 +268,36 @@ function Get-IgnoredApps { if ($AppInfo.IgnoredApps) { return @($AppInfo.Ignored
 function Get-AppUpdates([switch]$IncludeIgnored) {
     $wg = Get-Winget
     if (-not $wg) { return $null }
+    $script:WingetUnreadable = $false
     try { if ([Console]::BufferWidth -lt 300) { [Console]::BufferWidth = 400 } } catch {}
-    $null = Invoke-Native $wg (@('upgrade', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) ([System.Text.Encoding]::UTF8) -Quiet
-    return ,(ConvertFrom-WingetTable @($script:NativeOutput) -IncludeIgnored:$IncludeIgnored)
+    $args1 = @('upgrade', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)
+    $ec = Invoke-Native $wg $args1 ([System.Text.Encoding]::UTF8) -Quiet
+    $lines = @($script:NativeOutput)
+    if (-not (Test-WingetAnswered $lines)) {
+        # Réponse non reconnue (souvent : catalogue de winget pas encore chargé sur ce compte) : on le met à jour et on réessaie une fois
+        Log "   … Mise à jour du catalogue de logiciels (winget), puis nouvel essai"
+        $null = Invoke-Native $wg @('source', 'update') ([System.Text.Encoding]::UTF8) -Quiet
+        $ec = Invoke-Native $wg $args1 ([System.Text.Encoding]::UTF8) -Quiet
+        $lines = @($script:NativeOutput)
+    }
+    if (-not (Test-WingetAnswered $lines)) {
+        $script:WingetUnreadable = $true
+        $tail = (@($lines | Where-Object { "$_".Trim() -and "$_" -notmatch '^[\s\-\\|/█▒░]+$' } | Select-Object -Last 4) -join ' | ')
+        $ver = ''; try { $ver = ((& $wg --version) | Out-String).Trim() } catch {}
+        Write-Bug -Context 'Mises à jour des logiciels : réponse de winget non reconnue' -ErrorRecord ("winget $ver, code $ec : $tail") -Type 'bug'
+        Log ("   ⚠ winget ($ver) a répondu quelque chose d'inattendu : {0}" -f $(if ($tail) { $tail } else { '(rien)' }))
+        return $null
+    }
+    if (Test-OtherAccount) { Log "   (AEROX tourne avec un autre compte que la session ouverte : les logiciels installés seulement pour la session de la personne ne sont pas visibles d'ici)" }
+    return ,(ConvertFrom-WingetTable $lines -IncludeIgnored:$IncludeIgnored)
+}
+# winget a-t-il donné une vraie réponse ? (un tableau, ou un message « rien à mettre à jour », en français ou en anglais)
+function Test-WingetAnswered([string[]]$Lines) {
+    foreach ($l in $Lines) {
+        if ($l -match '(?i)\sid\s' -and $l -match '(?i)version') { return $true }
+        if ($l -match "(?i)aucun(e)? (mise à (jour|niveau)|package|paquet|application)|no (available )?upgrade|no installed package|no applicable (update|upgrade)") { return $true }
+    }
+    return $false
 }
 function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
     $list = New-Object System.Collections.ArrayList
@@ -282,7 +312,7 @@ function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
     for (; $i -lt $Lines.Count; $i++) {
         $l = $Lines[$i]
         if (-not $l.Trim()) { break }
-        if ($l -match '^-{5,}' -or $l -match '(?i)upgrades? available|mises? à (jour|niveau)|package\(s\)|packages? (have|ont)|^\d+ ') { break }
+        if ($l -match '^-{5,}' -or $l -match '(?i)upgrades? available|mises? à (jour|niveau)|package\(s\)|packages? (have|ont)|^\d+ (mises?|upgrades?|packages?|paquets?|applications?) ') { break }
         $cell = { param($k) $a = $cols[$k]; if ($a -ge $l.Length) { return '' }; $b = if ($k + 1 -lt $cols.Count) { [math]::Min($cols[$k + 1], $l.Length) } else { $l.Length }; return $l.Substring($a, $b - $a).Trim() }
         $o = [ordered]@{ Name = (& $cell 0); Id = (& $cell 1); Version = (& $cell 2); Available = (& $cell 3) }
         if (-not $o.Id) { continue }
@@ -731,7 +761,12 @@ function Test-Updates {
         } elseif ($still.Count -eq 0) { Add-Ok "Windows à jour (dernière mise à jour il y a $age jours)" }
     }
     $apps = Get-AppUpdates
-    if ($null -eq $apps -and (Test-OtherAccount)) {
+    if ($null -eq $apps -and $script:WingetUnreadable) {
+        Add-Issue -Id 'wingetread' -Sev 'warn' -Title "Impossible de lister les mises à jour des logiciels" -Detail "L'outil de Microsoft (winget) a répondu de façon inattendue" `
+            -Cause "Le « Programme d'installation d'application » de Microsoft est sans doute trop ancien sur ce PC." -Effect "Les logiciels pas à jour ne peuvent pas être détectés automatiquement." `
+            -FixLabel "Mettre à jour l'outil (Microsoft Store)" -FixAction 'Open-WingetStore' -OpenOnly `
+            -Steps @("Clique sur le bouton : le Microsoft Store s'ouvre sur « Programme d'installation d'application ».", "Clique sur « Mettre à jour » (ou « Installer »), puis relance le diagnostic.")
+    } elseif ($null -eq $apps -and (Test-OtherAccount)) {
         Add-Ok "Logiciels : non vérifiés depuis ce compte (ouvre AEROX depuis la session administrateur pour les vérifier)"
     } elseif ($null -eq $apps) {
         Add-Issue -Id 'winget' -Sev 'warn' -Title "L'outil de mise à jour des logiciels est absent" -Detail 'winget introuvable' `
@@ -1761,11 +1796,7 @@ function Open-WingetStore {
 function Update-Apps {
     Step "Recherche des mises à jour de logiciels (winget)"
     $apps = Get-AppUpdates
-    if ($null -eq $apps) {
-        Add-TaskError -Title "L'outil de mise à jour des logiciels (winget) est absent" -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." `
-            -Effect "Les logiciels ne peuvent pas être mis à jour automatiquement." -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore'
-        return
-    }
+    if ($null -eq $apps) { Add-WingetError "La mise à jour des logiciels est"; return }
     $ign = @(Get-IgnoredApps).Count
     if ($ign) { Log "   ($ign logiciel(s) ignoré(s) à ta demande : ils ne seront pas touchés)" }
     if ($apps.Count -eq 0) { Log "✅ Tous tes logiciels sont à jour."; return }
