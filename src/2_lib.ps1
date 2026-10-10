@@ -39,6 +39,32 @@ function Open-UrlAsSessionUser([string]$Url) {
     finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
 }
 
+# Lance un programme dans la session de la personne devant l'écran (sans droits admin), quand AEROX tourne
+# avec le mot de passe d'un autre compte : sinon le programme s'ouvrirait dans le compte administrateur.
+function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
+    $tn = 'AEROX PC Care - lancer pour la session'
+    try {
+        $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        if (-not $user -or -not $Exe) { return $false }
+        if ($Arguments) { $a = New-ScheduledTaskAction -Execute $Exe -Argument $Arguments } else { $a = New-ScheduledTaskAction -Execute $Exe }
+        $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+        Register-ScheduledTask -TaskName $tn -Action $a -Principal $p -Settings $st -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $tn -ErrorAction Stop
+        Start-Sleep -Milliseconds 1500
+        return $true
+    } catch { return $false }
+    finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
+}
+
+# Ouvre une page des Paramètres (ms-settings:), le Store ou une appli Windows. Avec le mot de passe d'un autre
+# compte, elle s'ouvre chez la personne devant l'écran (sinon : dans le compte admin, invisible ou en erreur).
+function Open-WinUri {
+    [CmdletBinding()] param([string]$Uri)
+    if (Test-OtherAccount) { if (Start-AsSessionUser (Join-Path $env:SystemRoot 'explorer.exe') $Uri) { return } }
+    Start-Process $Uri
+}
+
 # Ouvre une page web sur n'importe quel PC. Start-Process seul échoue (« fichier introuvable ») quand le logiciel
 # tourne sous un autre compte que la personne devant le PC (compte standard + mot de passe d'un compte ADMIN) :
 # ce compte-là n'a souvent aucun navigateur par défaut. On essaie alors les navigateurs installés, puis l'Explorateur,
@@ -804,7 +830,7 @@ function Repair-Printing {
     $printers = @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)onenote|pdf|xps|fax|send to' })
     if (-not $printers.Count) {
         Add-TaskError -Title "Aucune imprimante installée sur ce PC" -Cause "Windows ne connaît aucune imprimante (hors imprimantes virtuelles PDF/XPS)." -Effect "Impossible d'imprimer tant qu'elle n'est pas ajoutée." `
-            -FixLabel "Ajouter une imprimante" -FixAction "Start-Process 'ms-settings:printers'" -Steps @("Allume l'imprimante et vérifie qu'elle est branchée (USB) ou sur le même Wi-Fi que le PC.", "Paramètres > Bluetooth et appareils > Imprimantes et scanners > « Ajouter un appareil ».", "Si elle n'apparaît pas, installe le logiciel du fabricant (HP Smart, Canon, Epson…) depuis son site officiel.")
+            -FixLabel "Ajouter une imprimante" -FixAction "Open-WinUri 'ms-settings:printers'" -Steps @("Allume l'imprimante et vérifie qu'elle est branchée (USB) ou sur le même Wi-Fi que le PC.", "Paramètres > Bluetooth et appareils > Imprimantes et scanners > « Ajouter un appareil ».", "Si elle n'apparaît pas, installe le logiciel du fabricant (HP Smart, Canon, Epson…) depuis son site officiel.")
         return
     }
     $jobs = 0; try { $jobs = @(Get-CimInstance Win32_PrintJob -ErrorAction SilentlyContinue).Count } catch {}
@@ -850,7 +876,7 @@ function Repair-Sound {
     $info = [AeroxAudio]::Info($false)
     if (-not $info) {
         Add-TaskError -Title "Aucun haut-parleur ni casque actif" -Cause "Windows ne trouve pas de sortie son en marche." -Effect "Aucun son ne peut sortir du PC." `
-            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le casque ou les enceintes (prise verte ou USB), allume-les.", "Sur un écran HDMI, le son passe souvent par l'écran : vérifie son volume.", "Paramètres > Son : choisis le bon appareil dans « Choisir où lire le son ».", "Sinon : Mises à jour > Pilotes (drivers) pour installer le pilote audio.")
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Open-WinUri 'ms-settings:sound'" -Steps @("Branche le casque ou les enceintes (prise verte ou USB), allume-les.", "Sur un écran HDMI, le son passe souvent par l'écran : vérifie son volume.", "Paramètres > Son : choisis le bon appareil dans « Choisir où lire le son ».", "Sinon : Mises à jour > Pilotes (drivers) pour installer le pilote audio.")
         return
     }
     $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
@@ -871,7 +897,7 @@ function Repair-Microphone {
     $info = [AeroxAudio]::Info($true)
     if (-not $info) {
         Add-TaskError -Title "Aucun micro actif" -Cause "Windows ne trouve pas de micro en marche." -Effect "Discord, Teams, les jeux… ne t'entendent pas." `
-            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le micro ou le casque (prise rose ou USB). Sur un casque, vérifie le bouton « mute » du câble.", "Paramètres > Son > Entrée : choisis le bon micro.", "Dans Discord/Teams, choisis aussi ce micro dans leurs propres réglages audio.")
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Open-WinUri 'ms-settings:sound'" -Steps @("Branche le micro ou le casque (prise rose ou USB). Sur un casque, vérifie le bouton « mute » du câble.", "Paramètres > Son > Entrée : choisis le bon micro.", "Dans Discord/Teams, choisis aussi ce micro dans leurs propres réglages audio.")
         return
     }
     $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
@@ -899,7 +925,7 @@ function Repair-Webcam {
             -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" -Steps @("Débranche/rebranche la webcam (USB) ou redémarre le PC.", "Onglet Mises à jour > « Pilotes (drivers) » : installe le pilote que Windows propose.")
         return
     }
-    try { Start-Process 'microsoft.windows.camera:' -ErrorAction Stop; Log "   ✔ L'application Caméra de Windows s'ouvre pour tester." } catch {}
+    try { Open-WinUri 'microsoft.windows.camera:' -ErrorAction Stop; Log "   ✔ L'application Caméra de Windows s'ouvre pour tester." } catch {}
     Log "✅ Si l'image reste noire : ferme les autres logiciels qui utilisent la caméra (Teams, Discord, navigateur…), et vérifie le cache ou la touche caméra sur un portable."
 }
 
@@ -981,22 +1007,7 @@ function Get-BrowserExe($Def, [string]$ProfileRoot) {
 # Ouvre une page interne du navigateur (chrome://extensions…) chez la personne devant l'écran
 function Open-BrowserPage([string]$Exe, [string]$Page) {
     if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { Log "⚠ Navigateur introuvable : ouvre-le toi-même et tape $Page dans la barre d'adresse."; return }
-    if (Test-OtherAccount) {
-        $tn = 'AEROX PC Care - ouvrir le navigateur'
-        try {
-            $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
-            if ($user) {
-                $a = New-ScheduledTaskAction -Execute $Exe -Argument $Page
-                $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-                $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
-                Register-ScheduledTask -TaskName $tn -Action $a -Principal $p -Settings $st -Force -ErrorAction Stop | Out-Null
-                Start-ScheduledTask -TaskName $tn -ErrorAction Stop
-                Start-Sleep -Milliseconds 1500
-                return
-            }
-        } catch {}
-        finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
-    }
+    if (Test-OtherAccount) { if (Start-AsSessionUser $Exe $Page) { return } }
     try { Start-Process -FilePath $Exe -ArgumentList $Page -ErrorAction Stop } catch { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
 }
 
@@ -1353,7 +1364,7 @@ function Set-CpuMaxState([int]$Percent) {
     if ((Get-CpuMaxState) -eq $Percent) {
         Log "   ✔ Le processeur peut de nouveau monter à $Percent % de sa puissance (sur secteur)."
         if ($null -ne $prev -and $prev -ne $Percent) { Add-Change -Title "Puissance maximale du processeur : $Percent %" -Detail "Avant : $prev %" -Undo ("Set-CpuMaxState {0}" -f [int]$prev) }
-    } else { Add-TaskError -Title "Impossible de changer la puissance maximale du processeur" -Cause "Windows a refusé le réglage (mode d'alimentation verrouillé par l'entreprise ou le fabricant)." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'ms-settings:powersleep'" }
+    } else { Add-TaskError -Title "Impossible de changer la puissance maximale du processeur" -Cause "Windows a refusé le réglage (mode d'alimentation verrouillé par l'entreprise ou le fabricant)." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Open-WinUri 'ms-settings:powersleep'" }
 }
 function Enable-AutoPagefile {
     Step "Réactivation de la mémoire virtuelle (gérée par Windows)"
@@ -1633,7 +1644,7 @@ function Test-SystemState {
         else {
             Add-Issue -Id 'activation' -Sev 'warn' -Title "Windows n'est pas activé" -Detail "Licence non valide ou non trouvée" `
                 -Cause "Windows ne trouve pas de licence valide pour ce PC (changement de matériel, réinstallation ou clé non valide)." `
-                -Effect "Certaines options de personnalisation sont bloquées et un message s'affiche en permanence." -FixLabel "Ouvrir l'activation" -FixAction "Start-Process 'ms-settings:activation'" -OpenOnly `
+                -Effect "Certaines options de personnalisation sont bloquées et un message s'affiche en permanence." -FixLabel "Ouvrir l'activation" -FixAction "Open-WinUri 'ms-settings:activation'" -OpenOnly `
                 -Steps @("Ouvre Paramètres > Système > Activation.", "Clique sur « Résolution des problèmes » si tu avais une licence avant.", "Sinon, une licence s'achète sur le Microsoft Store.")
         }
     } catch {}
@@ -1884,7 +1895,7 @@ function Set-FastDns([int]$Index) {
         $undo = "Restore-Dns {0} {1}" -f (ConvertTo-PsLiteral "$($a.InterfaceGuid)"), (ConvertTo-PsLiteral $static)
         Add-Change -Title ("DNS de « {0} » : Cloudflare (1.1.1.1)" -f $a.Name) -Detail $(if ($static) { "Avant : $static" } else { "Avant : DNS automatiques de la box / du fournisseur" }) -Undo $undo
     } catch {
-        Add-TaskError -Title "Impossible de changer les DNS" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres réseau" -FixAction "Start-Process 'ms-settings:network-status'"
+        Add-TaskError -Title "Impossible de changer les DNS" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres réseau" -FixAction "Open-WinUri 'ms-settings:network-status'"
     }
 }
 function Restore-Dns([string]$Guid, [string]$Servers) {
@@ -1927,7 +1938,7 @@ function Set-DisplayHz([string]$Device, [int]$Hz) {
     Step ("Réglage de l'écran à {0} Hz" -f $Hz)
     $r = [AeroxDisplay]::SetFrequency($Device, $Hz, $true)
     if ($r -eq 0) { Log ("   ✔ Écran réglé à {0} Hz." -f $Hz) }
-    else { Add-TaskError -Title "Impossible de régler l'écran à $Hz Hz" -Code "$r" -Cause "Windows ou le pilote de la carte graphique refuse ce réglage." -FixLabel "Ouvrir les paramètres d'affichage" -FixAction "Start-Process 'ms-settings:display-advanced'" }
+    else { Add-TaskError -Title "Impossible de régler l'écran à $Hz Hz" -Code "$r" -Cause "Windows ou le pilote de la carte graphique refuse ce réglage." -FixLabel "Ouvrir les paramètres d'affichage" -FixAction "Open-WinUri 'ms-settings:display-advanced'" }
 }
 
 # ---------------------------------------------------------------- Pilotes graphiques (version installée et dernière version)
@@ -2039,7 +2050,7 @@ function Test-Security {
         if ($thirdAv.Count -gt 1) {
             Add-Issue -Id 'multiav' -Sev 'warn' -Title "Plusieurs antivirus sont installés" -Detail ($thirdAv -join ', ') `
                 -Cause "Plusieurs antivirus surveillent les mêmes fichiers en même temps." -Effect "Ils ralentissent le PC et peuvent se bloquer entre eux." `
-                -FixLabel "Ouvrir les applications" -FixAction "Start-Process 'ms-settings:appsfeatures'" -OpenOnly -Steps @("Garde-en un seul (Windows Defender suffit largement).", "Désinstalle les autres dans Paramètres > Applications.")
+                -FixLabel "Ouvrir les applications" -FixAction "Open-WinUri 'ms-settings:appsfeatures'" -OpenOnly -Steps @("Garde-en un seul (Windows Defender suffit largement).", "Désinstalle les autres dans Paramètres > Applications.")
         }
     } catch {}
     try {
@@ -2360,7 +2371,7 @@ function Enable-StorageSense {
     Set-ItemProperty -Path $key -Name '04' -Value 1 -Type DWord
     Log "   ✔ Windows supprimera maintenant tout seul les fichiers temporaires régulièrement."
     Add-Change -Title "Nettoyage automatique de Windows activé (Assistant stockage)" -Undo 'Disable-StorageSense'
-    Start-Process 'ms-settings:storagesense'
+    Open-WinUri 'ms-settings:storagesense'
 }
 
 # ---------------------------------------------------------------- LOGICIELS INSTALLÉS (conseils de désinstallation)
@@ -2817,7 +2828,7 @@ function Install-PawnIO {
 # ---------------------------------------------------------------- MISES À JOUR
 function Open-WingetStore {
     Log "   → J'ouvre le Microsoft Store : installe ou mets à jour « Programme d'installation d'application », puis relance AEROX PC Care."
-    Start-Process 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1'
+    Open-WinUri 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1'
 }
 
 function Update-Apps {
@@ -3011,7 +3022,7 @@ function Install-DriverUpdates([string[]]$Ids) {
     if ($r.RebootRequired) { Log "⚠ Un redémarrage est nécessaire pour terminer l'installation."; $sync.NeedReboot = $true }
 }
 
-function Open-WindowsUpdate { Start-Process 'ms-settings:windowsupdate'; Log "   ✔ Windows Update ouvert" }
+function Open-WindowsUpdate { Open-WinUri 'ms-settings:windowsupdate'; Log "   ✔ Windows Update ouvert" }
 
 # ---------------------------------------------------------------- SÉCURITÉ (réparations)
 function Enable-RealtimeProtection {
@@ -3211,7 +3222,7 @@ function Set-HighPerformance {
     else {
         Log "   • Ce mode n'existe pas sur ce PC (normal sur beaucoup de portables récents)."
         Log "   → J'ouvre les réglages : dans « Mode d'alimentation », choisis « Meilleures performances »."
-        Start-Process 'ms-settings:powersleep'
+        Open-WinUri 'ms-settings:powersleep'
     }
     if (Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue) { Log "   ⚠ C'est un portable : ce mode vide la batterie plus vite. Idéal quand tu es branché." }
 }
@@ -3226,7 +3237,7 @@ function Open-AppsSettings {
     Step "Logiciels installés"
     Log "   → Désinstalle ce que tu n'utilises plus : barres d'outils, « optimiseurs » douteux, antivirus en double, jeux d'essai..."
     Log "   → Dans le doute (pilote, Microsoft Visual C++, .NET), n'y touche pas."
-    Start-Process 'ms-settings:appsfeatures'
+    Open-WinUri 'ms-settings:appsfeatures'
 }
 
 function Start-QuickOptimize {

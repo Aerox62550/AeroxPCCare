@@ -2,7 +2,11 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt sur la branche (1.5.1)
+## Prêt sur la branche (1.5.2)
+
+- Compte standard + mot de passe d'un compte ADMIN : Assistance rapide s'ouvre maintenant chez la personne devant l'écran (avant : « Création du répertoire de données impossible », elle s'ouvrait dans le compte admin). Pareil pour les pages des Paramètres, le Store, l'appli Caméra et les pages des navigateurs.
+
+## Publié en 1.5.1
 
 - Correctif : la page Système plantait en 1.5.0 (nouvelle fonction de la fenêtre des navigateurs qui portait le même nom qu'une fonction de la page Système).
 - Notifications : grandes enseignes, banques et sites français courants reconnus comme normaux (Castorama était proposé au blocage).
