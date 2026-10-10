@@ -146,7 +146,8 @@ Set-SplashStep 66 'Création de l''interface…'
       <Border Grid.Row="1" x:Name="BusyPanel" Background="#171A23" Padding="32,12" Visibility="Collapsed">
         <StackPanel>
           <DockPanel>
-            <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right" Foreground="#8B93A7" FontSize="12"/>
+            <Button x:Name="CancelBtn" DockPanel.Dock="Right" Content="Annuler" Style="{StaticResource TextBtn}" Margin="14,0,0,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right" Foreground="#8B93A7" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock x:Name="StatusText" Foreground="White" FontWeight="SemiBold" FontSize="13"/>
           </DockPanel>
           <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Maximum="100" Foreground="#7C5CFF" Background="#252A3A" BorderThickness="0"/>
@@ -181,7 +182,7 @@ Set-SplashStep 66 'Création de l''interface…'
 
 $window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 Set-SplashStep 78 'Création de l''interface…'
-foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
+foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','CancelBtn','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
                'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavPerf','NavMonitor','NavSystem','NavHelp') {
     Set-Variable -Name $n -Value $window.FindName($n) -Scope Script
 }
@@ -478,6 +479,7 @@ $PageDefs = [ordered]@{
     @{ T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
     @{ T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
  perf = @{ Title = "Performances"; Sub = "Pour un PC qui démarre plus vite et rame moins. Chaque réglage affiche son état actuel et peut être annulé."; Cards = @(
+    @{ T = "Pourquoi mon PC rame ?"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'slow'; UiBusy = $true; D = "Mesure pendant 20 secondes ce qui occupe le processeur, la mémoire et le disque, trouve les programmes gourmands et les réglages qui brident le PC, et te dit quoi faire. Encore mieux si tu la lances quand le PC rame." },
     @{ T = "Programmes au démarrage"; Badge = "Gros gain"; P = $true; B = "Choisir"; UI = 'startup'; StatusFn = { Get-StartupCardStatus }; D = "Choisis appli par appli ce qui se lance tout seul à l'allumage. Garde ce que tu utilises tout le temps (Discord, par exemple), décoche le reste." },
     @{ T = "Mode performances maximales"; B = "Activer"; A = "Set-HighPerformance"; StatusFn = { Get-PerfCardStatus }; D = "Le processeur ne se bride plus pour économiser l'énergie. Idéal pour jouer sur un PC fixe." },
     @{ T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." },
@@ -566,7 +568,7 @@ function Build-HomePage {
         $b.Child = $s2; Add-Child $tiles $b
     }
     Add-Child $sp $tiles
-    Add-Child $sp (New-ActionCard @{ T = "Diagnostic complet"; Badge = "Commence ici"; P = $true; B = "Lancer"; Go = 'diag'; D = "Vérifie 10 points (stockage, stabilité, mises à jour, pilotes, sécurité, réseau...) et t'affiche chaque problème avec sa cause et sa réparation." })
+    Add-Child $sp (New-ActionCard @{ T = "Diagnostic complet"; Badge = "Commence ici"; P = $true; B = "Lancer"; Go = 'diag'; D = "Vérifie ton PC point par point (stockage, performances, stabilité, mises à jour, pilotes, sécurité, réseau...) et t'affiche chaque problème avec sa cause et sa réparation." })
     $nCh = @(Get-Changes 300 | Where-Object { $_.Undo -and -not $_.Undone }).Count
     Add-Child $sp (New-ActionCard @{ T = "Historique des changements"; B = "Voir"; UI = 'history'; D = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX PC Care peuvent être annulés en un clic." } else { "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." }) })
     Add-Child $sp (New-ActionCard @{ T = "Optimisation rapide"; Badge = "Recommandé"; P = $true; B = "Optimiser"; A = "Start-QuickOptimize"
@@ -577,7 +579,7 @@ function Build-HomePage {
 
 function Build-DiagPage {
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Diagnostic" "Vérifie 10 points de ton PC. Pour chaque problème : ce qui se passe, pourquoi, et la réparation en un clic quand c'est possible."
+    Build-Header $sp "Diagnostic" "Vérifie ton PC point par point. Pour chaque problème : ce qui se passe, pourquoi, et la réparation en un clic quand c'est possible."
     if ($script:Scanning) {
         $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 2
         foreach ($k in $sync.ScanOrder) {
@@ -606,6 +608,7 @@ function Build-DiagPage {
     $dp = New-Object System.Windows.Controls.DockPanel
     $btns = New-Object System.Windows.Controls.StackPanel; $btns.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($btns, 'Right')
     if ($auto) { $b = New-Button "Tout réparer ($auto)" 'FixBtn' @{ Kind = 'fixall' }; $b.Margin = Th 0 0 0 8; Add-Child $btns $b }
+    $b = New-Button "Mon PC rame : analyser" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'slow' } }; $b.Margin = Th 0 0 0 8; Add-Child $btns $b
     Add-Child $btns (New-Button "Relancer" 'ActionBtn' @{ Kind = 'startdiag' })
     Add-Child $dp $btns
     $ring = New-Ring $s 96; $ring.Margin = Th 0 0 22 0; [System.Windows.Controls.DockPanel]::SetDock($ring, 'Left'); Add-Child $dp $ring
@@ -743,9 +746,45 @@ function Set-LogOpen([bool]$Open) {
 # ---------------------------------------------------------------- Exécution des tâches
 function Set-Busy([bool]$Busy, [string]$Label = '') {
     foreach ($b in $script:PageButtons) { $b.IsEnabled = -not $Busy }
-    if ($Busy) { $BusyPanel.Visibility = 'Visible'; $StatusText.Text = "En cours : $Label"; $Progress.IsIndeterminate = $true }
+    if ($Busy) { $BusyPanel.Visibility = 'Visible'; $StatusText.Text = "En cours : $Label"; $Progress.IsIndeterminate = $true; $CancelBtn.Content = 'Annuler'; $CancelBtn.IsEnabled = $true }
     else { $BusyPanel.Visibility = 'Collapsed' }
 }
+
+# ---------------------------------------------------------------- Annuler une tâche en cours
+# Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
+# Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Open-BatteryReport|Test-Internet|Test-Disk)\b'
+$script:SoftCancel = '^(Update-SelectedApps|Update-Apps)\b'
+function Stop-AeroxTask {
+    $job = $script:Job
+    if (-not $job) { return }
+    $act = "$($job.Action)".Trim()
+    $hard = $act -match $script:HardCancel
+    $soft = ($act -match $script:SoftCancel) -or $script:QueueRunning
+    if (-not $hard -and -not $soft) {
+        [System.Windows.MessageBox]::Show("« $($job.Label) » modifie Windows : l'arrêter au milieu pourrait laisser le PC dans un état bancal.`n`nLaisse-la se terminer, ça ne devrait plus être long.", $AppName, 'OK', 'Information') | Out-Null
+        return
+    }
+    $sync.Cancel = $true
+    $script:FixQueue.Clear()
+    $CancelBtn.IsEnabled = $false
+    if ($hard -and -not $script:QueueRunning) {
+        $CancelBtn.Content = 'Arrêt…'
+        try { [AeroxNative]::StopScan = $true } catch {}
+        try { [void]$job.PS.BeginStop($null, $null) } catch {}
+        # Outils en ligne de commande lancés par l'analyse (lecture seule) : arrêtés aussi
+        try {
+            foreach ($p in @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$PID" -ErrorAction SilentlyContinue)) {
+                if ("$($p.Name)" -match '(?i)^(winget|powercfg|ping|nslookup|tracert|pathping)\.exe$') { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+            }
+        } catch {}
+        Write-UiLog "⏹ Arrêt demandé…"
+    } else {
+        $CancelBtn.Content = 'Arrêt après l''étape en cours…'
+        Write-UiLog "⏹ Arrêt demandé : l'étape en cours se termine proprement, la suite est annulée."
+    }
+}
+$CancelBtn.Add_Click({ Stop-AeroxTask })
 
 function Start-AeroxTask([string]$Action, [string]$Label, [string]$OnDone = '') {
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est déjà en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return $false }
@@ -759,6 +798,7 @@ function Start-AeroxTask([string]$Action, [string]$Label, [string]$OnDone = '') 
     $rs.SessionStateProxy.SetVariable('sync', $sync)
     $rs.SessionStateProxy.SetVariable('AppInfo', $AppInfo)
     $ps = [powershell]::Create(); $ps.Runspace = $rs; [void]$ps.AddScript($code)
+    $sync.Cancel = $false
     $script:Job = @{ PS = $ps; RS = $rs; Handle = $ps.BeginInvoke(); Label = $Label; Action = $Action; Start = (Get-Date); OnDone = $OnDone }
     Set-Busy $true $Label
     return $true
@@ -773,15 +813,29 @@ function Start-Background([string]$Code) {
 
 function Complete-Job {
     $job = $script:Job
-    try { [void]$job.PS.EndInvoke($job.Handle) } catch { Write-UiLog ("❌ " + $_.Exception.Message); Write-Bug -Context "Tâche $($job.Label)" -ErrorRecord $_ }
+    $cancelled = [bool]$sync.Cancel
+    try { [void]$job.PS.EndInvoke($job.Handle) } catch { if (-not $cancelled) { Write-UiLog ("❌ " + $_.Exception.Message); Write-Bug -Context "Tâche $($job.Label)" -ErrorRecord $_ } }
     Flush-Queue
     $errs = @($sync.Errors.ToArray())
     $sync.Errors.Clear()
     $dur = '{0:mm\:ss}' -f ((Get-Date) - $job.Start)
     try { $job.PS.Dispose(); $job.RS.Close(); $job.RS.Dispose() } catch {}
     $script:Job = $null
-    Write-UiLog $(if ($errs.Count) { "⚠ Terminé avec $($errs.Count) problème(s) : $($job.Label) (durée $dur)" } else { "✅ Terminé : $($job.Label) (durée $dur)" })
+    $hardStop = $cancelled -and ("$($job.Action)".Trim() -match $script:HardCancel)
+    if ($hardStop) { $errs = @() }
+    Write-UiLog $(if ($cancelled) { "⏹ Arrêté à ta demande : $($job.Label) (durée $dur)" } elseif ($errs.Count) { "⚠ Terminé avec $($errs.Count) problème(s) : $($job.Label) (durée $dur)" } else { "✅ Terminé : $($job.Label) (durée $dur)" })
+    $sync.Cancel = $false
     Set-Busy $false
+    if ($cancelled) {
+        $script:FixQueue.Clear()
+        if ($script:FixingIssue) { $script:FixingIssue.Status = 'open'; $script:FixingIssue = $null }
+        foreach ($e in @($script:PendingErrors.ToArray())) { $errs += $e }
+        $script:PendingErrors.Clear(); $script:QueueRunning = $false
+        if ($job.Action -eq 'Invoke-Diagnostic') { $script:Scanning = $false }
+        Update-HomeStats; Update-DiagBadge; Refresh-Page
+        if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
+        return
+    }
 
     if ($job.Action -eq 'Invoke-Diagnostic') {
         $script:Scanning = $false
@@ -816,6 +870,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
+    elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
     elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { Complete-SelfUpdate; return }
@@ -922,10 +977,11 @@ function Invoke-UiCommand($T) {
                     'selfupdate' { Start-SelfUpdate }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
+                    'slow' { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
                     'appupdates' { Start-AppUpdatesList $null }
                     'deepclean' { Start-CleanAnalysis $null }
                     'uninstall' { Start-UninstallList $null }
-                    'space' { [void](Start-AeroxTask 'Get-SpaceUsage' 'Analyse de l''espace disque' 'spacedialog') }
+                    'space' { Start-SpaceScan }
                     'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
@@ -2170,7 +2226,13 @@ function Show-SpaceDialog {
     $script:SpaceSizes = @{}; $script:SpaceKids = @{}
     $root = "$($scan.Drive)\"
     $top = New-Object System.Collections.ArrayList; $files = New-Object System.Collections.ArrayList
+    $big = New-Object System.Collections.ArrayList
     foreach ($l in $scan.Lines) {
+        if ($l.StartsWith('B|')) {
+            $q = $l.Split('|', 4)
+            if ($q.Count -eq 4) { try { [void]$big.Add(@{ Size = [double]$q[1]; Date = ([datetime]::new([int64]$q[2], 'Utc')).ToLocalTime(); Path = $q[3] }) } catch {} }
+            continue
+        }
         $p = $l.Split('|', 3)
         if ($p.Count -lt 3) { continue }
         $size = [double]$p[1]; $path = $p[2]
@@ -2187,26 +2249,160 @@ function Show-SpaceDialog {
     $used = $scan.Size - $scan.Free
     $p = New-Text ("{0} utilisés sur {1} — {2} libres. Clique sur ▸ pour voir le détail d'un dossier, double-clic pour l'ouvrir. Supprime ou déplace tes fichiers toi-même : AEROX ne touche jamais à tes fichiers perso." -f (Format-Size $used), (Format-Size $scan.Size), (Format-Size $scan.Free)) 13 '#A9B0C2'
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $body = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 540; $sv.Content = $body
+    Add-Child $sp $sv
+    Add-SpaceAdvice $body $scan $big
+    $h = New-Text "TOUS LES DOSSIERS, DU PLUS GROS AU PLUS PETIT" 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 14 0 8; Add-Child $body $h
     $tv = New-Object System.Windows.Controls.TreeView
-    $tv.Background = Brush '#0E1016'; $tv.BorderBrush = Brush '#232838'; $tv.Foreground = Brush '#E6E9F2'; $tv.Padding = Th 6 6 6 6; $tv.Height = 470
+    $tv.Background = Brush '#0E1016'; $tv.BorderBrush = Brush '#232838'; $tv.Foreground = Brush '#E6E9F2'; $tv.Padding = Th 6 6 6 6; $tv.Height = 380
     $items = @($top | ForEach-Object { @{ P = $_; S = $script:SpaceSizes[$_]; F = $false } }) + @($files | ForEach-Object { @{ P = $_; S = $script:SpaceSizes[$_]; F = $true } })
     $items = @($items | Sort-Object { -$_.S })
     $mx = if ($items.Count) { $items[0].S } else { 1 }
     foreach ($i in $items) { if ($i.S -ge 1MB) { [void]$tv.Items.Add((New-SpaceItem $i.P $i.S $mx $i.F)) } }
-    Add-Child $sp $tv
+    Add-Child $body $tv
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 12 0 0
     $bClean = New-DlgButton 'Nettoyage approfondi' 'ActionBtn'; $bClean.Margin = Th 0 0 8 0
     $bApps = New-DlgButton 'Désinstaller des logiciels' 'ActionBtn'; $bApps.Margin = Th 0 0 8 0
+    $bOther = New-DlgButton 'Analyser un autre disque' 'TextBtn'; $bOther.Margin = Th 0 0 8 0
     $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'
+    if (@(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue).Count -gt 1) { Add-Child $row $bOther }
     Add-Child $row $bApps; Add-Child $row $bClean; Add-Child $row $bClose
     Add-Child $sp $row
     $script:SpaceWin = $w; $script:SpaceNext = $null
     $bClose.Add_Click({ $script:SpaceWin.Close() })
-    $bApps.Add_Click({ Start-Process 'ms-settings:appsfeatures' })
+    $bApps.Add_Click({ $script:SpaceNext = 'apps'; $script:SpaceWin.Close() })
+    $bOther.Add_Click({ $script:SpaceNext = 'other'; $script:SpaceWin.Close() })
     $bClean.Add_Click({ $script:SpaceNext = 'clean'; $script:SpaceWin.Close() })
     $w.Content = $sp
     [void]$w.ShowDialog()
-    if ($script:SpaceNext -eq 'clean') { Start-CleanAnalysis $null }
+    switch ($script:SpaceNext) {
+        'clean'   { Start-CleanAnalysis $null }
+        'apps'    { Start-UninstallList $null }
+        'other'   { Start-SpaceScan }
+        'recycle' { if (Confirm-Box "Vider définitivement la corbeille ? Les fichiers dedans ne pourront plus être récupérés.") { [void](Start-AeroxTask 'Clear-RecycleBinAll' 'Vidage de la corbeille') } }
+        'oldinst' { Remove-OldInstallers }
+    }
+}
+
+# Choix du disque à analyser (s'il y en a plusieurs)
+function Start-SpaceScan {
+    $drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction SilentlyContinue | Where-Object { $_.Size } | Sort-Object DeviceID)
+    if ($drives.Count -le 1) { [void](Start-AeroxTask 'Get-SpaceUsage' 'Analyse de l''espace disque' 'spacedialog'); return }
+    $w = New-Dialog "$AppName : quel disque analyser ?" 520
+    $script:DriveWin = $w; $script:DrivePick = $null
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Quel disque analyser ?" 18 '#FFFFFF' 'Bold')
+    $t = New-Text "L'analyse détaille tous les dossiers du disque choisi (1 à 3 minutes)." 13 '#A9B0C2'; $t.Margin = Th 0 6 0 12; Add-Child $sp $t
+    foreach ($d in $drives) {
+        $pct = [math]::Round(100 * [double]$d.FreeSpace / [double]$d.Size)
+        $lbl = "{0}  {1}" -f $d.DeviceID, $(if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $env:SystemDrive) { 'Windows' } else { 'Disque local' })
+        $b = New-Object System.Windows.Controls.Button; $b.Style = $window.FindResource('ActionBtn'); $b.HorizontalContentAlignment = 'Stretch'; $b.Margin = Th 0 0 0 8; $b.Tag = "$($d.DeviceID)"
+        $dp = New-Object System.Windows.Controls.DockPanel; $dp.LastChildFill = $true
+        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) 12.5 $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#A9B0C2' }); [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
+        Add-Child $dp (New-Text $lbl 14 '#FFFFFF' 'SemiBold')
+        $b.Content = $dp
+        $b.Add_Click({ $script:DrivePick = [string]$this.Tag; $script:DriveWin.Close() })
+        Add-Child $sp $b
+    }
+    $c = New-DlgButton 'Annuler' 'TextBtn'; $c.HorizontalAlignment = 'Right'; $c.Margin = Th 0 6 0 0; $c.Add_Click({ $script:DriveWin.Close() }); Add-Child $sp $c
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    if ($script:DrivePick -match '^[A-Za-z]:$') { [void](Start-AeroxTask ("Get-SpaceUsage '{0}'" -f $script:DrivePick) ("Analyse de l'espace sur " + $script:DrivePick) 'spacedialog') }
+}
+
+# Pistes concrètes pour libérer de la place, triées par taille, avec l'action qui va avec
+function Add-SpaceAdvice($Body, $Scan, $Big) {
+    $root = "$($Scan.Drive)\"
+    $tips = New-Object System.Collections.ArrayList
+    $sz = { param($p) if ($script:SpaceSizes.ContainsKey($p)) { [double]$script:SpaceSizes[$p] } else { 0.0 } }
+    $rb = & $sz ($root + '$Recycle.Bin')
+    if ($rb -ge 100MB) { [void]$tips.Add(@{ S = $rb; T = "Corbeille"; D = "Des fichiers supprimés qui prennent encore de la place. Vérifie qu'il n'y a rien dedans dont tu as besoin."; B = 'Vider la corbeille'; A = 'recycle' }) }
+    $wo = & $sz ($root + 'Windows.old')
+    if ($wo -ge 1GB) { [void]$tips.Add(@{ S = $wo; T = "Ancienne installation de Windows (Windows.old)"; D = "Gardée après une grosse mise à jour pour pouvoir revenir en arrière. Si tout marche bien depuis, elle ne sert plus."; B = 'Nettoyage approfondi'; A = 'clean' }) }
+    $hb = & $sz ($root + 'hiberfil.sys')
+    if ($hb -ge 1GB) { [void]$tips.Add(@{ S = $hb; T = "Fichier de veille prolongée (hiberfil.sys)"; D = "Sert seulement si tu utilises la « veille prolongée ». Sur un PC fixe, on peut le supprimer (option du nettoyage approfondi)."; B = 'Nettoyage approfondi'; A = 'clean' }) }
+    $old = @($Scan.OldInstallers | Where-Object { $_ })
+    if ($old.Count) {
+        $tot = [double](($old | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+        if ($tot -ge 50MB) {
+            $names = (@($old | Select-Object -First 3 | ForEach-Object { [IO.Path]::GetFileName($_.Path) }) -join ', ') + $(if ($old.Count -gt 3) { " et $($old.Count - 3) autre(s)" } else { '' })
+            [void]$tips.Add(@{ S = $tot; T = "$($old.Count) vieux installateur(s) et archive(s) dans les Téléchargements"; D = "Fichiers d'installation déjà utilisés depuis plus d'un mois : $names. Ils iront dans la corbeille (récupérables)."; B = 'Mettre à la corbeille'; A = 'oldinst' })
+        }
+    }
+    foreach ($prof in @($script:SpaceSizes.Keys | Where-Object { $_ -match '^[A-Za-z]:\\Users\\[^\\]+\\(Downloads|Videos)$' })) {
+        $v = & $sz $prof
+        if ($v -ge 2GB) {
+            $isDl = $prof -match 'Downloads$'
+            [void]$tips.Add(@{ S = $v; T = $(if ($isDl) { "Téléchargements de « $(Split-Path (Split-Path $prof -Parent) -Leaf) »" } else { "Vidéos de « $(Split-Path (Split-Path $prof -Parent) -Leaf) »" }); D = $(if ($isDl) { "Souvent plein de fichiers récupérés une fois et oubliés. À trier toi-même." } else { "Des vidéos à garder sur un disque externe ou un autre disque si besoin." }); B = 'Ouvrir le dossier'; A = 'open'; P = $prof })
+        }
+    }
+    $games = @($script:SpaceSizes.Keys | Where-Object { $_ -match '(?i)\\steamapps\\common\\[^\\]+$' } | Sort-Object { - $script:SpaceSizes[$_] } | Select-Object -First 6)
+    if ($games.Count) {
+        $gt = [double](($games | ForEach-Object { $script:SpaceSizes[$_] } | Measure-Object -Sum).Sum)
+        $gl = ($games | ForEach-Object { "{0} ({1})" -f (Split-Path $_ -Leaf), (Format-Size $script:SpaceSizes[$_]) }) -join ' · '
+        if ($gt -ge 5GB) { [void]$tips.Add(@{ S = $gt; T = "Jeux Steam les plus gros"; D = "$gl. Désinstalle depuis Steam ceux auxquels tu ne joues plus (tes sauvegardes restent sur Steam)."; B = 'Ouvrir Steam'; A = 'url'; P = 'steam://open/games' }) }
+    }
+    $skip = '(?i)\\(windows|program files( \(x86\))?|programdata|\$recycle\.bin|system volume information|steamapps|epic games|riot games)\\|\\appdata\\local\\(packages|docker)|(pagefile|hiberfil|swapfile)\.sys$|\.vhdx?$'
+    $files = @($Big | Where-Object { $_ -and $_.Path -notmatch $skip } | Select-Object -First 6)
+    if ($files.Count) {
+        $ft = [double](($files | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+        if ($ft -ge 1GB) { [void]$tips.Add(@{ S = $ft; T = "Tes plus gros fichiers"; Files = $files; D = "Vidéos, images disque, sauvegardes… À garder, déplacer ou supprimer : c'est toi qui décides." }) }
+    }
+    [void]$tips.Add(@{ S = 0; T = "Fichiers inutiles de Windows et des logiciels"; D = "Temporaires, caches des navigateurs, anciennes mises à jour, rapports de plantage : le nettoyage approfondi te montre la taille de chaque catégorie avant de supprimer."; B = 'Nettoyage approfondi'; A = 'clean' })
+    [void]$tips.Add(@{ S = 0; T = "Logiciels installés"; D = "La liste de tes logiciels du plus gros au plus petit, avec ceux qui ne servent à rien repérés pour toi."; B = 'Voir les logiciels'; A = 'apps' })
+
+    $h = New-Text "CE QUE TU PEUX FAIRE POUR LIBÉRER DE LA PLACE" 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
+    foreach ($t in @($tips | Sort-Object { - $_.S })) {
+        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 12 10; $card.Margin = Th 0 0 0 6
+        $dp = New-Object System.Windows.Controls.DockPanel
+        if ($t.B) {
+            $b = New-DlgButton $t.B 'ActionBtn'; $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0; $b.Tag = $t
+            $b.Add_Click({
+                $x = $this.Tag
+                switch ($x.A) {
+                    'open' { Start-Process explorer.exe ('"{0}"' -f $x.P) }
+                    'url'  { [void](Open-Url $x.P) }
+                    default { $script:SpaceNext = $x.A; $script:SpaceWin.Close() }
+                }
+            })
+            [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+        }
+        $cs = New-Object System.Windows.Controls.StackPanel
+        $hd = New-Object System.Windows.Controls.WrapPanel
+        Add-Child $hd (New-Text $t.T 14 '#FFFFFF' 'SemiBold')
+        if ($t.S -gt 0) { Add-Child $hd (New-Pill (Format-Size $t.S) '#B9A8FF' '#2A2350') }
+        Add-Child $cs $hd
+        $d = New-Text $t.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
+        foreach ($f in @($t.Files | Where-Object { $_ })) {
+            $fr = New-Object System.Windows.Controls.DockPanel; $fr.Margin = Th 0 4 0 0
+            $fb = New-DlgButton 'Afficher' 'TextBtn'; $fb.Tag = $f.Path; [System.Windows.Controls.DockPanel]::SetDock($fb, 'Right')
+            $fb.Add_Click({ Start-Process explorer.exe ('/select,"{0}"' -f [string]$this.Tag) })
+            Add-Child $fr $fb
+            Add-Child $fr (New-Text ("{0}  ·  {1}  ·  {2}" -f (Format-Size $f.Size), [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) 12.5 '#E6E9F2')
+            $ft = New-Object System.Windows.Controls.StackPanel; Add-Child $ft $fr
+            $fp = New-Text ([IO.Path]::GetDirectoryName($f.Path)) 11 '#5D6478'; Add-Child $ft $fp
+            Add-Child $cs $ft
+        }
+        Add-Child $dp $cs
+        $card.Child = $dp; Add-Child $Body $card
+    }
+}
+
+# Vieux installateurs des Téléchargements : à la corbeille (récupérables), après confirmation
+function Remove-OldInstallers {
+    $old = @($sync.SpaceScan.OldInstallers | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) })
+    if (-not $old.Count) { return }
+    $tot = [double](($old | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+    $list = (@($old | Select-Object -First 12 | ForEach-Object { "•  " + [IO.Path]::GetFileName($_.Path) + "  (" + (Format-Size $_.Size) + ")" }) -join "`n") + $(if ($old.Count -gt 12) { "`n… et $($old.Count - 12) autre(s)" } else { '' })
+    if (-not (Confirm-Box ("Mettre ces {0} fichier(s) à la corbeille ({1}) ?`n`n{2}`n`nIls restent récupérables dans la corbeille tant que tu ne la vides pas." -f $old.Count, (Format-Size $tot), $list))) { return }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $ok = 0; $freed = 0.0
+    foreach ($f in $old) {
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'OnlyErrorDialogs', 'SendToRecycleBin'); $ok++; $freed += $f.Size } catch {}
+    }
+    Write-UiLog ("🗑 {0} vieux installateur(s) mis à la corbeille ({1}). Vide la corbeille pour récupérer la place." -f $ok, (Format-Size $freed))
+    if ($ok) { Add-Change -Kind 'info' -Title ("{0} vieux installateur(s) mis à la corbeille ({1})" -f $ok, (Format-Size $freed)) -Detail "Récupérables depuis la corbeille tant qu'elle n'est pas vidée." }
 }
 
 function Start-CleanAnalysis($Issue) {
@@ -2322,6 +2518,103 @@ function Show-DriverDialog($Issue) {
     $action = "Install-DriverUpdates -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id }))"
     [void](Start-AeroxTask $action ("Installation de {0} pilote(s)" -f $sel.Count))
     Refresh-Page
+}
+
+# ---------------------------------------------------------------- Fenêtre : pourquoi mon PC rame
+function New-Meter([string]$Label, [double]$Pct, [string]$Sub) {
+    $col = if ($Pct -ge 85) { '#FF6B6B' } elseif ($Pct -ge 60) { '#FFB547' } else { '#4ADE80' }
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 0
+    $sp = New-Object System.Windows.Controls.StackPanel
+    Add-Child $sp (New-Text $Label 12 '#8B93A7' 'SemiBold')
+    Add-Child $sp (New-Text ("{0} %" -f [math]::Round($Pct)) 24 $col 'Bold')
+    $tr = New-Object System.Windows.Controls.Border; $tr.Height = 6; $tr.CornerRadius = Corner 3; $tr.Background = Brush '#252A3A'; $tr.Margin = Th 0 4 0 4
+    $g = New-Object System.Windows.Controls.Grid
+    $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength([math]::Max(0.01, [math]::Min(100.0, $Pct)), [System.Windows.GridUnitType]::Star)
+    $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = New-Object System.Windows.GridLength([math]::Max(0.01, 100.0 - [math]::Min(100.0, $Pct)), [System.Windows.GridUnitType]::Star)
+    $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
+    $fl = New-Object System.Windows.Controls.Border; $fl.CornerRadius = Corner 3; $fl.Background = Brush $col; Add-Child $g $fl
+    $tr.Child = $g; Add-Child $sp $tr
+    if ($Sub) { Add-Child $sp (New-Text $Sub 11.5 '#6B7389') }
+    $b.Child = $sp
+    return $b
+}
+function Show-SlowDialog {
+    $r = $sync.SlowReport
+    if (-not $r) { return }
+    $w = New-Dialog "$AppName : pourquoi mon PC rame" 820
+    $script:SlowWin = $w; $script:SlowNext = $null
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Pourquoi mon PC rame ?" 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Mesure faite pendant 20 secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $body = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 500; $sv.Content = $body
+    Add-Child $sp $sv
+    $mg = New-Object System.Windows.Controls.Grid
+    for ($k = 0; $k -lt 3; $k++) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star); $mg.ColumnDefinitions.Add($cd) }
+    $m1 = New-Meter 'PROCESSEUR' $r.Cpu ("pointe à {0} %" -f $r.CpuMax); [System.Windows.Controls.Grid]::SetColumn($m1, 0); Add-Child $mg $m1
+    $m2 = New-Meter 'MÉMOIRE (RAM)' $r.Ram ("sur {0}" -f (Format-Size $r.RamTotal)); [System.Windows.Controls.Grid]::SetColumn($m2, 1); Add-Child $mg $m2
+    $m3 = New-Meter 'DISQUE' $r.Disk $(if ($r.Hdd) { 'disque dur classique (HDD)' } else { "activité moyenne" }); $m3.Margin = Th 0 0 0 0; [System.Windows.Controls.Grid]::SetColumn($m3, 2); Add-Child $mg $m3
+    Add-Child $body $mg
+
+    $fs = @($r.Findings | Where-Object { $_ })
+    $h = New-Text $(if ($fs.Count) { "CE QUI RALENTIT TON PC ($($fs.Count))" } else { 'RÉSULTAT' }) 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 16 0 8; Add-Child $body $h
+    if (-not $fs.Count) {
+        $t = New-Text "Rien d'anormal pendant la mesure : processeur, mémoire et disque respirent. Si le PC rame à un moment précis, relance l'analyse à ce moment-là." 13 '#4ADE80'; $t.Margin = Th 2 0 0 6; Add-Child $body $t
+    }
+    foreach ($x in $fs) {
+        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 14 12; $card.Margin = Th 0 0 0 8
+        $card.BorderThickness = Th 3 0 0 0; $card.BorderBrush = Brush $(if ($x.Sev -eq 'bad') { '#FF6B6B' } else { '#FFB547' })
+        $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text $x.Title 14 '#FFFFFF' 'SemiBold')
+        if ($x.Text) { $t = New-Text $x.Text 12.5 '#C3CAD9'; $t.Margin = Th 0 3 0 0; Add-Child $cs $t }
+        if ($x.Advice) { $t = New-Text ("→ " + $x.Advice) 12.5 '#A9B0C2'; $t.Margin = Th 0 5 0 0; Add-Child $cs $t }
+        $lbl = switch ($x.Action) { 'taskmgr' { 'Ouvrir le Gestionnaire des tâches' } 'startup' { 'Choisir les programmes au démarrage' } 'balanced' { 'Passer en mode Équilibré' } 'cpumax' { 'Remettre à 100 %' } default { '' } }
+        if ($lbl) { $b = New-DlgButton $lbl 'ActionBtn'; $b.Tag = $x.Action; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 0; $b.Add_Click({ $script:SlowNext = [string]$this.Tag; $script:SlowWin.Close() }); Add-Child $cs $b }
+        $card.Child = $cs; Add-Child $body $card
+    }
+
+    $top = @($r.Top | Where-Object { $_ })
+    if ($top.Count) {
+        $h = New-Text "CE QUI CONSOMME LE PLUS (MOYENNE SUR 20 S)" 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+        $tb = New-Object System.Windows.Controls.Border; $tb.Background = Brush '#13161E'; $tb.CornerRadius = Corner 10; $tb.Padding = Th 14 6 14 8
+        $tg = New-Object System.Windows.Controls.Grid
+        foreach ($wd in 5, 1, 1.3, 1.3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength($wd, [System.Windows.GridUnitType]::Star); $tg.ColumnDefinitions.Add($cd) }
+        $row = 0
+        $addRow = {
+            param($cells, $color, $weight)
+            $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $tg.RowDefinitions.Add($rd)
+            for ($c = 0; $c -lt 4; $c++) {
+                $t = New-Text $cells[$c] 12.5 $color $weight; $t.Margin = Th 0 3 8 3
+                if ($c -gt 0) { $t.TextAlignment = 'Right' }
+                [System.Windows.Controls.Grid]::SetRow($t, $script:SlowRow); [System.Windows.Controls.Grid]::SetColumn($t, $c); Add-Child $tg $t
+            }
+            $script:SlowRow++
+        }
+        $script:SlowRow = 0
+        & $addRow @('Programme', 'Processeur', 'Mémoire', 'Disque') '#6B7389' 'SemiBold'
+        foreach ($x in $top) {
+            $nm = if ($x.Label -and $x.Label -ne $x.Name) { "$($x.Label)  ($($x.Name))" } else { $x.Name }
+            & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $(if ($x.Io -ge 1KB) { (Format-Size $x.Io) + '/s' } else { '—' })) '#E6E9F2' 'Normal'
+        }
+        $tb.Child = $tg; Add-Child $body $tb
+    }
+
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bAgain = New-DlgButton 'Refaire la mesure' 'ActionBtn'; $bAgain.Margin = Th 0 0 8 0
+    $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'
+    Add-Child $bar $bAgain; Add-Child $bar $bClose; Add-Child $sp $bar
+    $bAgain.Add_Click({ $script:SlowNext = 'again'; $script:SlowWin.Close() })
+    $bClose.Add_Click({ $script:SlowWin.Close() })
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    switch ($script:SlowNext) {
+        'again'    { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
+        'taskmgr'  { Start-Process taskmgr.exe }
+        'startup'  { Show-StartupDialog $null }
+        'balanced' { [void](Start-AeroxTask 'Set-BalancedPower' 'Mode Équilibré') }
+        'cpumax'   { if (Confirm-Box "Le processeur pourra de nouveau utiliser 100 % de sa puissance sur secteur.`n`nAnnulable dans l'historique des changements.") { [void](Start-AeroxTask 'Set-CpuMaxState 100' 'Puissance du processeur') } }
+    }
 }
 
 function Start-AppUpdatesList($Issue) {

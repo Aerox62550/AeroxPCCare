@@ -353,7 +353,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns'
+    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -648,6 +648,205 @@ function Test-Battery {
                 -Steps @("Onglet « Mon PC » > Batterie : tu y trouves sa référence et sa capacité pour commander la bonne batterie de remplacement.", "Cherche une batterie avec le modèle exact du PC (ou la référence de la batterie) chez le fabricant ou un vendeur sérieux.", "En attendant : laisse le PC branché quand tu peux et évite de le laisser se vider complètement.")
         }
     }
+}
+
+# =====================================================================
+#  LENTEURS : ce qui fait vraiment ramer le PC (mesure en direct + causes de fond)
+# =====================================================================
+# Noms parlants des programmes de Windows qui reviennent souvent dans « ce qui consomme »
+$script:KnownProcs = @{
+    'msmpeng' = @('Antivirus Microsoft Defender', 'transient'); 'mpdefendercoreservice' = @('Antivirus Microsoft Defender', 'transient'); 'nissrv' = @('Antivirus Microsoft Defender', 'transient')
+    'searchindexer' = @('Indexation de la recherche Windows', 'transient'); 'searchprotocolhost' = @('Indexation de la recherche Windows', 'transient'); 'searchfilterhost' = @('Indexation de la recherche Windows', 'transient')
+    'tiworker' = @('Installation de mises à jour Windows', 'transient'); 'trustedinstaller' = @('Installation de mises à jour Windows', 'transient'); 'mousocoreworker' = @('Windows Update', 'transient')
+    'wuaueng' = @('Windows Update', 'transient'); 'usocoreworker' = @('Windows Update', 'transient'); 'compattelrunner' = @('Télémétrie de Windows (vérification de compatibilité)', 'transient')
+    'system' = @('Windows (noyau et pilotes)', 'system'); 'memory compression' = @('Compression de la mémoire (la RAM déborde)', 'system'); 'registry' = @('Windows (registre)', 'system')
+    'dwm' = @('Affichage de Windows', 'system'); 'explorer' = @('Explorateur Windows (bureau, barre des tâches)', 'system'); 'svchost' = @('Services de Windows', 'system')
+    'csrss' = @('Windows', 'system'); 'lsass' = @('Windows (sécurité)', 'system'); 'audiodg' = @('Son de Windows', 'system'); 'sysmain' = @('Préchargement de Windows (SysMain)', 'transient')
+    'onedrive' = @('OneDrive (synchronisation)', 'app'); 'chrome' = @('Google Chrome', 'app'); 'msedge' = @('Microsoft Edge', 'app'); 'firefox' = @('Firefox', 'app'); 'opera' = @('Opera', 'app'); 'brave' = @('Brave', 'app')
+    'discord' = @('Discord', 'app'); 'steam' = @('Steam', 'app'); 'steamwebhelper' = @('Steam (fenêtre)', 'app'); 'epicgameslauncher' = @('Epic Games Launcher', 'app'); 'teams' = @('Microsoft Teams', 'app'); 'ms-teams' = @('Microsoft Teams', 'app')
+}
+function Get-ProcFriendly([string]$Name, [int]$ProcId) {
+    $k = $Name.ToLower()
+    if ($script:KnownProcs.ContainsKey($k)) { return @{ Label = $script:KnownProcs[$k][0]; Kind = $script:KnownProcs[$k][1] } }
+    $lbl = $Name
+    try { $p = Get-Process -Id $ProcId -ErrorAction Stop; $d = "$($p.Description)".Trim(); if (-not $d) { $d = "$($p.Product)".Trim() }; if ($d -and $d.Length -le 60) { $lbl = $d } } catch {}
+    return @{ Label = $lbl; Kind = 'app' }
+}
+# Mémoire : type (DDR3/4/5), barrettes et emplacements libres, pour un conseil d'ajout précis
+function Get-RamLayout {
+    $r = @{ Type = ''; Modules = 0; Slots = 0; ModuleSize = 0.0 }
+    try {
+        $mods = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop)
+        $r.Modules = $mods.Count
+        if ($mods.Count) { $r.ModuleSize = [double]($mods | Measure-Object Capacity -Maximum).Maximum }
+        $t = @($mods | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
+        $r.Type = switch ($t) { 24 { 'DDR3' } 26 { 'DDR4' } 34 { 'DDR5' } 30 { 'LPDDR4' } 35 { 'LPDDR5' } default { '' } }
+        $arr = @(Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction Stop | Where-Object { $_.Use -eq 3 })
+        $r.Slots = [int](($arr | Measure-Object MemoryDevices -Sum).Sum)
+    } catch {}
+    return $r
+}
+# Réglage « état maximal du processeur » (sur secteur) du mode d'alimentation actif : 100 = normal
+function Get-CpuMaxState {
+    try {
+        $o = (& powercfg.exe /query SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX 2>$null) | Out-String
+        $m = [regex]::Matches($o, '0x([0-9a-fA-F]{8})')
+        if ($m.Count -ge 2) { return [Convert]::ToInt32($m[$m.Count - 2].Groups[1].Value, 16) }
+    } catch {}
+    return $null
+}
+function Set-CpuMaxState([int]$Percent) {
+    Step "Réglage de la puissance maximale du processeur"
+    $prev = Get-CpuMaxState
+    $null = & powercfg.exe /setacvalueindex SCHEME_CURRENT SUB_PROCESSOR PROCTHROTTLEMAX $Percent 2>&1
+    $null = & powercfg.exe /setactive SCHEME_CURRENT 2>&1
+    if ((Get-CpuMaxState) -eq $Percent) {
+        Log "   ✔ Le processeur peut de nouveau monter à $Percent % de sa puissance (sur secteur)."
+        if ($null -ne $prev -and $prev -ne $Percent) { Add-Change -Title "Puissance maximale du processeur : $Percent %" -Detail "Avant : $prev %" -Undo ("Set-CpuMaxState {0}" -f [int]$prev) }
+    } else { Add-TaskError -Title "Impossible de changer la puissance maximale du processeur" -Cause "Windows a refusé le réglage (mode d'alimentation verrouillé par l'entreprise ou le fabricant)." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'ms-settings:powersleep'" }
+}
+function Enable-AutoPagefile {
+    Step "Réactivation de la mémoire virtuelle (gérée par Windows)"
+    try {
+        Set-CimInstance -Query 'SELECT * FROM Win32_ComputerSystem' -Property @{ AutomaticManagedPagefile = $true } -ErrorAction Stop
+        Log "   ✔ Mémoire virtuelle gérée automatiquement par Windows. Redémarre le PC pour l'appliquer."
+        Add-Change -Kind 'info' -Title "Mémoire virtuelle remise en automatique (réglage d'origine de Windows)"
+        Request-Reboot
+    } catch { Add-TaskError -Title "Impossible de réactiver la mémoire virtuelle" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres système avancés" -FixAction "Start-Process SystemPropertiesPerformance.exe" }
+}
+
+# Mesure en direct pendant ~20 s : processeur, mémoire, disque, et les programmes qui consomment le plus
+function Get-SlowReport {
+    Step "Analyse des lenteurs : mesure pendant 20 secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
+    $sync.SlowReport = $null
+    $cores = [math]::Max(1, [Environment]::ProcessorCount)
+    $me = $PID
+    $acc = @{}; $cpuTot = New-Object System.Collections.ArrayList; $diskBusy = New-Object System.Collections.ArrayList; $diskQ = New-Object System.Collections.ArrayList
+    $null = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue   # 1re lecture : amorce les compteurs
+    $null = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue
+    $n = 7
+    for ($i = 0; $i -lt $n; $i++) {
+        if ($sync.Cancel) { return }
+        Start-Sleep -Seconds 3
+        $sync.Progress = [math]::Round(100 * ($i + 1) / $n)
+        foreach ($x in @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue)) {
+            $nm = "$($x.Name)" -replace '#\d+$', ''
+            if ($nm -in '_Total', 'Idle' -or [int]$x.IDProcess -eq $me -or $nm -match '(?i)^(wmiprvse|aeroxpccare)$') { continue }
+            if (-not $acc.ContainsKey($nm)) { $acc[$nm] = @{ Name = $nm; Cpu = 0.0; Io = 0.0; Mem = 0.0; Pid = [int]$x.IDProcess; Seen = 0 } }
+            $e = $acc[$nm]; $e.Cpu += [double]$x.PercentProcessorTime / $cores; $e.Io += [double]$x.IODataBytesPersec; $e.Seen++
+        }
+        # Mémoire : instantané par programme (somme de ses processus)
+        if ($i -eq $n - 1) {
+            foreach ($g in @(Get-Process -ErrorAction SilentlyContinue | Group-Object ProcessName)) {
+                if ($acc.ContainsKey($g.Name)) { $acc[$g.Name].Mem = [double](($g.Group | Measure-Object WorkingSet64 -Sum).Sum) }
+                elseif ($g.Name -notmatch '(?i)^(idle|aeroxpccare)$') { $acc[$g.Name] = @{ Name = $g.Name; Cpu = 0.0; Io = 0.0; Mem = [double](($g.Group | Measure-Object WorkingSet64 -Sum).Sum); Pid = [int]$g.Group[0].Id; Seen = $n } }
+            }
+        }
+        $t = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction SilentlyContinue
+        if ($t) { [void]$cpuTot.Add([double]$t.PercentProcessorTime) }
+        $d = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction SilentlyContinue
+        if ($d) { [void]$diskBusy.Add([math]::Max(0, 100 - [double]$d.PercentIdleTime)); [void]$diskQ.Add([double]$d.CurrentDiskQueueLength) }
+    }
+    $avg = { param($l) if ($l.Count) { [math]::Round(($l | Measure-Object -Average).Average) } else { 0 } }
+    $os = Get-CimInstance Win32_OperatingSystem
+    $ramTot = [double]$os.TotalVisibleMemorySize * 1KB
+    $ramPct = [math]::Round(100 * (1 - [double]$os.FreePhysicalMemory / [double]$os.TotalVisibleMemorySize))
+    $rep = @{ Cpu = (& $avg $cpuTot); CpuMax = $(if ($cpuTot.Count) { [math]::Round(($cpuTot | Measure-Object -Maximum).Maximum) } else { 0 }); Ram = $ramPct; RamTotal = $ramTot
+              Disk = (& $avg $diskBusy); Queue = $(if ($diskQ.Count) { [math]::Round(($diskQ | Measure-Object -Average).Average, 1) } else { 0 }); Hdd = $false; Top = @(); Findings = @() }
+    # Disque de Windows : SSD ou disque dur classique ?
+    try { $dn = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop).DiskNumber; $pd = Get-PhysicalDisk | Where-Object { "$($_.DeviceId)" -eq "$dn" } | Select-Object -First 1; $rep.Hdd = ("$($pd.MediaType)" -eq 'HDD') } catch {}
+    # Classement des programmes
+    $list = foreach ($e in $acc.Values) {
+        $seen = [math]::Max(1, $e.Seen)
+        $f = Get-ProcFriendly $e.Name $e.Pid
+        @{ Name = $e.Name; Label = $f.Label; Kind = $f.Kind; Cpu = [math]::Round($e.Cpu / $seen, 1); Io = $e.Io / $seen; Mem = $e.Mem }
+    }
+    $list = @($list)
+    $byCpu = @($list | Sort-Object { - $_.Cpu } | Select-Object -First 5)
+    $byMem = @($list | Sort-Object { - $_.Mem } | Select-Object -First 5)
+    $byIo  = @($list | Sort-Object { - $_.Io } | Select-Object -First 5)
+    $top = New-Object System.Collections.ArrayList
+    foreach ($x in @($byCpu + $byMem + $byIo)) { if (-not ($top | Where-Object { $_.Name -eq $x.Name })) { [void]$top.Add($x) } }
+    $rep.Top = @($top | Sort-Object { - ($_.Cpu * 4 + $_.Mem / 100MB + $_.Io / 2MB) } | Select-Object -First 8)
+    $startup = @(); try { $startup = @(Get-StartupEntries | Where-Object { $_.Enabled } | ForEach-Object { "$($_.Name)".ToLower() }) } catch {}
+    $f = New-Object System.Collections.ArrayList
+    $advice = {
+        param($x)
+        if ($x.Kind -eq 'transient') { return "Tâche de Windows temporaire : laisse-la finir (souvent quelques minutes après l'allumage ou une mise à jour)." }
+        if ($x.Kind -eq 'system') { return "Composant de Windows : s'il reste haut longtemps, redémarre le PC et lance le diagnostic." }
+        $st = $startup | Where-Object { $_ -like "*$($x.Name.ToLower())*" -or $x.Label.ToLower() -like "*$_*" } | Select-Object -First 1
+        if ($st) { return "Il se lance au démarrage : retire-le du démarrage si tu ne t'en sers pas tout le temps (onglet Performances)." }
+        return "Ferme-le si tu ne t'en sers pas en ce moment."
+    }
+    $hogs = @($byCpu | Where-Object { $_.Cpu -ge 20 })
+    if ($rep.Cpu -ge 75 -or $hogs.Count) {
+        $txt = ($hogs | ForEach-Object { "{0} : {1} %" -f $_.Label, [math]::Round($_.Cpu) }) -join ' · '
+        if (-not $txt) { $txt = ($byCpu | Select-Object -First 3 | ForEach-Object { "{0} : {1} %" -f $_.Label, [math]::Round($_.Cpu) }) -join ' · ' }
+        [void]$f.Add(@{ Sev = $(if ($rep.Cpu -ge 75) { 'bad' } else { 'warn' }); Title = $(if ($rep.Cpu -ge 75) { "Le processeur tourne presque à fond ($($rep.Cpu) % en moyenne)" } else { "Un programme occupe beaucoup le processeur" }); Text = $txt; Advice = (& $advice $(@($hogs + $byCpu)[0])); Action = 'taskmgr' })
+    }
+    if ($rep.Ram -ge 85) {
+        $lay = Get-RamLayout
+        $txt = ($byMem | Select-Object -First 3 | ForEach-Object { "{0} : {1}" -f $_.Label, (Format-Size $_.Mem) }) -join ' · '
+        $up = ''
+        if ($ramTot -lt 15GB) {
+            $free = $lay.Slots - $lay.Modules
+            $up = "Avec {0} de mémoire, le PC sature vite." -f (Format-Size $ramTot)
+            if ($free -gt 0 -and $lay.Type) { $up += " Il reste $free emplacement(s) libre(s) : ajouter une barrette $($lay.Type) de $(Format-Size $lay.ModuleSize) (pareille à celle en place) est la meilleure amélioration." }
+            elseif ($lay.Type) { $up += " Tous les emplacements sont pris : il faudrait remplacer les barrettes par des plus grosses ($($lay.Type))." }
+        }
+        [void]$f.Add(@{ Sev = 'bad'; Title = "La mémoire (RAM) est saturée : $($rep.Ram) %"; Text = $txt; Advice = $(if ($up) { $up } else { "Ferme les programmes et onglets de navigateur inutiles, et retire du démarrage ce qui ne sert pas." }); Action = 'startup' })
+    }
+    if ($rep.Disk -ge 70) {
+        $txt = ($byIo | Select-Object -First 3 | Where-Object { $_.Io -gt 100KB } | ForEach-Object { "{0} : {1}/s" -f $_.Label, (Format-Size $_.Io) }) -join ' · '
+        [void]$f.Add(@{ Sev = 'bad'; Title = "Le disque est saturé ($($rep.Disk) % d'activité)"; Text = $txt; Advice = $(if ($rep.Hdd) { "Windows est sur un disque dur classique : c'est la cause n°1 des lenteurs. Un SSD (à partir d'environ 40 €) rend le PC plusieurs fois plus réactif." } else { "Souvent une analyse antivirus, une mise à jour ou une synchronisation (OneDrive…) : ça passe en quelques minutes." }); Action = '' })
+    } elseif ($rep.Hdd) {
+        [void]$f.Add(@{ Sev = 'warn'; Title = "Windows est installé sur un disque dur classique (HDD)"; Text = "Un disque dur mécanique est 5 à 10 fois plus lent qu'un SSD."; Advice = "C'est la meilleure amélioration possible pour ce PC : passer à un SSD (à partir d'environ 40 €). Un réparateur peut copier Windows dessus sans rien perdre."; Action = '' })
+    }
+    # Causes de fond (réglages)
+    try {
+        $pw = Get-PowerStatus
+        if ($pw.Guid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a' -or $pw.Name -match "(?i)économi|saver") { [void]$f.Add(@{ Sev = 'warn'; Title = "Le PC est en mode « Économie d'énergie »"; Text = "Mode actuel : $($pw.Name)"; Advice = "Ce mode bride le processeur en permanence."; Action = 'balanced' }) }
+        $mx = Get-CpuMaxState
+        if ($null -ne $mx -and $mx -lt 100) { [void]$f.Add(@{ Sev = 'warn'; Title = "Le processeur est bridé à $mx % de sa puissance"; Text = "Réglage du mode d'alimentation (souvent modifié par un logiciel « d'optimisation »)."; Advice = "Le remettre à 100 % rend toute sa puissance au processeur."; Action = 'cpumax' }) }
+    } catch {}
+    $up = (Get-Date) - $os.LastBootUpTime
+    if ($up.TotalDays -ge 7) { [void]$f.Add(@{ Sev = 'warn'; Title = "Le PC n'a pas redémarré depuis $([int]$up.TotalDays) jours"; Text = "« Arrêter » ne remet pas Windows à zéro (démarrage rapide) : seul « Redémarrer » le fait."; Advice = "Un redémarrage libère la mémoire et termine les mises à jour en attente."; Action = '' }) }
+    try { $nst = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count; if ($nst -ge 10) { [void]$f.Add(@{ Sev = 'warn'; Title = "$nst programmes se lancent au démarrage"; Text = "Ils ralentissent l'allumage et restent en fond toute la journée."; Advice = "Garde seulement ce que tu utilises tout le temps."; Action = 'startup' }) } } catch {}
+    $rep.Findings = $f.ToArray()
+    $sync.SlowReport = $rep
+    Log ("   ✔ Mesure terminée : processeur {0} %, mémoire {1} %, disque {2} % · {3} piste(s) trouvée(s)." -f $rep.Cpu, $rep.Ram, $rep.Disk, $f.Count)
+}
+
+# Diagnostic : causes de fond des lenteurs (réglages), sans mesure longue
+function Test-Performance {
+    $laptop = $false
+    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    $found = $false
+    $pw = Get-PowerStatus
+    if (-not $laptop -and ($pw.Guid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a' -or $pw.Name -match "(?i)économi|saver")) {
+        Add-Issue -Id 'powersaver' -Sev 'warn' -Title "Le PC est en mode « Économie d'énergie »" -Detail "Mode actuel : $($pw.Name)" `
+            -Cause "Ce mode bride le processeur en permanence pour consommer moins : sur un PC fixe, ça n'a aucun intérêt." -Effect "Tout est plus lent : démarrage, logiciels, jeux." `
+            -FixLabel "Passer en mode Équilibré" -FixAction 'Set-BalancedPower'
+        $found = $true
+    }
+    $mx = Get-CpuMaxState
+    if ($null -ne $mx -and $mx -lt 100) {
+        Add-Issue -Id 'cpumax' -Sev 'warn' -Title "Le processeur est bridé à $mx % de sa puissance" -Detail "Réglage « état maximal du processeur » du mode d'alimentation" `
+            -Cause "Ce réglage a été baissé (souvent par un logiciel « d'optimisation » ou pour limiter la chauffe)." -Effect "Le processeur ne peut jamais donner toute sa puissance : le PC rame dès qu'il travaille." `
+            -FixLabel "Remettre à 100 %" -FixAction 'Set-CpuMaxState 100' -Confirm "Le processeur pourra de nouveau utiliser 100 % de sa puissance sur secteur.`n`nAnnulable dans l'historique des changements."
+        $found = $true
+    }
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem
+        $pf = @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue)
+        if (-not $cs.AutomaticManagedPagefile -and $pf.Count -eq 0 -and [double]$cs.TotalPhysicalMemory -lt 17GB) {
+            Add-Issue -Id 'pagefile' -Sev 'warn' -Title "La mémoire virtuelle de Windows est désactivée" -Detail ("{0} de RAM" -f (Format-Size ([double]$cs.TotalPhysicalMemory))) `
+                -Cause "Le fichier d'échange a été désactivé (souvent par une astuce « d'optimisation » trouvée sur Internet)." -Effect "Quand la RAM est pleine, les logiciels plantent ou se ferment au lieu de ralentir un peu." `
+                -FixLabel "Remettre en automatique" -FixAction 'Enable-AutoPagefile' -Confirm "Windows gérera de nouveau la mémoire virtuelle lui-même (réglage d'origine). Un redémarrage sera nécessaire."
+            $found = $true
+        }
+    } catch {}
+    if (-not $found) { Add-Ok "Réglages de performance : rien ne bride le PC" }
 }
 
 # ---------------------------------------------------------------- Infos d'erreurs connues
@@ -1351,12 +1550,14 @@ function Invoke-Diagnostic {
                           'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
     $sens = $sync.Sens
     if ($sens -and ($sens['cpu.temp'] -or $sens['gpu.temp'])) { $checks['Températures'] = 'Test-Temperatures' }
+    $checks['Performances'] = 'Test-Performance'
     if (@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue).Count) { $checks['Batterie'] = 'Test-Battery' }
     $sync.Scan.Clear()
     foreach ($k in $checks.Keys) { $sync.Scan[$k] = 'wait' }
     $sync.ScanOrder = @($checks.Keys)
     $sync.ScanVer++
     foreach ($k in $checks.Keys) {
+        if ($sync.Cancel) { return }
         $script:CurrentCat = $k
         $sync.Scan[$k] = 'run'; $sync.ScanVer++
         $before = $script:Issues.Count
@@ -1818,9 +2019,21 @@ function Get-SpaceUsage([string]$Drive = $env:SystemDrive) {
     Step "Analyse de l'espace sur $Drive (1 à 3 minutes selon le disque)"
     $sync.SpaceScan = $null
     $lines = [AeroxNative]::ScanSizes("$Drive\", 4)
+    if ($sync.Cancel) { return }
     $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$Drive'"
-    $sync.SpaceScan = @{ Lines = $lines; Drive = $Drive; Size = [double]$d.Size; Free = [double]$d.FreeSpace }
-    Log ("   ✔ Analyse terminée : {0} dossiers mesurés." -f $lines.Count)
+    # Vieux installateurs et archives dans les Téléchargements (plus de 30 jours) : souvent des Go oubliés
+    $old = New-Object System.Collections.ArrayList
+    try {
+        foreach ($prof in @(Get-UserProfiles)) {
+            $dl = Join-Path $prof 'Downloads'
+            if (-not $dl.StartsWith($Drive, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            foreach ($f in @(Get-ChildItem -LiteralPath $dl -File -Force -ErrorAction SilentlyContinue)) {
+                if ($f.Extension -match '(?i)^\.(exe|msi|iso|img|zip|rar|7z)$' -and $f.LastWriteTime -lt (Get-Date).AddDays(-30)) { [void]$old.Add(@{ Path = $f.FullName; Size = [double]$f.Length; Date = $f.LastWriteTime }) }
+            }
+        }
+    } catch {}
+    $sync.SpaceScan = @{ Lines = $lines; Drive = $Drive; Size = [double]$d.Size; Free = [double]$d.FreeSpace; OldInstallers = @($old | Sort-Object { - $_.Size }) }
+    Log ("   ✔ Analyse terminée : {0} dossiers mesurés." -f @($lines | Where-Object { $_ -notmatch '^[FB]\|' }).Count)
 }
 
 # ---------------------------------------------------------------- ÉTATS (affichés sur les cartes)
@@ -1951,6 +2164,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names) {
     $extra = Get-WingetExtraArgs $wg
     $failed = @(); $ok = 0; $n = 0
     for ($k = 0; $k -lt $Ids.Count; $k++) {
+        if ($sync.Cancel) { Log ("⏹ Arrêt demandé : {0} logiciel(s) restant(s) pas mis à jour." -f ($Ids.Count - $k)); break }
         $id = $Ids[$k]; $name = if ($Names -and $k -lt $Names.Count -and $Names[$k]) { $Names[$k] } else { $id }
         $n++
         Step ("Mise à jour {0}/{1} : {2}" -f $n, $Ids.Count, $name)
