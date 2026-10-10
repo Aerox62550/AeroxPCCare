@@ -651,6 +651,29 @@ function Test-Battery {
 }
 
 # =====================================================================
+#  BILAN AVANT / APRÈS : mesures simples et vérifiables de l'état du PC
+# =====================================================================
+# Temps du dernier démarrage complet mesuré par Windows lui-même (journal « Diagnostics-Performance », événement 100)
+function Get-LastBootTime {
+    try {
+        $e = Get-WinEvent -LogName 'Microsoft-Windows-Diagnostics-Performance/Operational' -FilterXPath '*[System[EventID=100]]' -MaxEvents 1 -ErrorAction Stop
+        $x = [xml]$e.ToXml()
+        $ms = ($x.Event.EventData.Data | Where-Object { $_.Name -eq 'BootTime' } | Select-Object -First 1).'#text'
+        if ($ms -and [int64]$ms -gt 0 -and [int64]$ms -lt 1800000) { return @{ Sec = [math]::Round([double]$ms / 1000); Date = $e.TimeCreated } }
+    } catch {}
+    return $null
+}
+function Get-PcSnapshot {
+    $s = @{ Date = (Get-Date).ToString('s') }
+    try { $b = Get-LastBootTime; if ($b) { $s.BootSec = $b.Sec; $s.BootDate = $b.Date.ToString('s') } } catch {}
+    try { $s.Startup = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count } catch {}
+    try { $os = Get-CimInstance Win32_OperatingSystem; $s.RamUsed = [double]($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) * 1KB } catch {}
+    try { $s.Procs = @(Get-Process -ErrorAction SilentlyContinue).Count } catch {}
+    try { $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"; $s.Free = [double]$d.FreeSpace } catch {}
+    return $s
+}
+
+# =====================================================================
 #  LENTEURS : ce qui fait vraiment ramer le PC (mesure en direct + causes de fond)
 # =====================================================================
 # Noms parlants des programmes de Windows qui reviennent souvent dans « ce qui consomme »
@@ -1581,6 +1604,7 @@ function Invoke-Diagnostic {
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
     $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
+    try { $sync.Diag.Snap = Get-PcSnapshot } catch {}
     if ($script:IgnoredList.Count) { Log ("   ({0} alerte(s) ignorée(s) à ta demande)" -f $script:IgnoredList.Count) }
     Step "Résultat"
     Log ("{0} problème(s) dont {1} critique(s), {2} point(s) OK" -f $script:Issues.Count, $crit, $script:OkList.Count)

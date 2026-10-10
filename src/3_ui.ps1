@@ -352,6 +352,79 @@ function New-ActionCard($Def) {
     return $card
 }
 
+# ---------------------------------------------------------------- Bilan avant / après (bilan.json dans le dossier des journaux)
+$script:BilanFile = Join-Path $LogDir 'bilan.json'
+function Read-Bilan { try { if (Test-Path -LiteralPath $script:BilanFile) { return ConvertTo-Hash (Get-Content -LiteralPath $script:BilanFile -Raw -Encoding UTF8 | ConvertFrom-Json) } } catch {}; return $null }
+function Save-Bilan($b) { try { $b | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $script:BilanFile -Encoding UTF8 } catch {} }
+# Le tout premier diagnostic devient « Avant » ; chaque diagnostic suivant met à jour « Maintenant »
+function Update-Bilan {
+    $snap = $script:Diag.Snap
+    if (-not $snap) { return }
+    $snap.Score = Get-Score
+    $snap.Open = @(Get-OpenIssues).Count
+    $b = Read-Bilan
+    if (-not ($b -is [hashtable]) -or -not ($b.Before -is [hashtable])) { $b = @{ Before = $snap; After = $null } }
+    else { $b.After = $snap }
+    Save-Bilan $b
+}
+function Reset-Bilan {
+    if (-not (Confirm-Box "Repartir de zéro ?`n`nLe prochain diagnostic servira de nouveau point de départ « Avant ».")) { return }
+    try { Remove-Item -LiteralPath $script:BilanFile -Force -ErrorAction Stop } catch {}
+    Write-UiLog "Bilan remis à zéro : le prochain diagnostic sera le nouveau point de départ."
+    Refresh-Page
+}
+function Add-BilanCard($sp) {
+    $b = Read-Bilan
+    if (-not ($b -is [hashtable]) -or -not ($b.Before -is [hashtable])) { return }
+    $a = $b.Before; $n = $b.After
+    Add-Child $sp (New-Section 'Avant / après AEROX')
+    $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+    $since = ''; try { $since = Format-Date ([datetime]$a.Date) } catch {}
+    if (-not ($n -is [hashtable])) {
+        $t = New-Text ("Point de départ enregistré le {0}. Fais tes réglages (démarrage, nettoyage, désinstallations, mises à jour…), redémarre le PC, puis relance le diagnostic : tu verras ici la différence, chiffres à l'appui." -f $since) 13 '#A9B0C2'
+        Add-Child $cs $t; $c.Child = $cs; Add-Child $sp $c; return
+    }
+    $g = New-Object System.Windows.Controls.Grid
+    foreach ($wd in 3, 1.4, 1.4, 1.6) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength($wd, [System.Windows.GridUnitType]::Star); $g.ColumnDefinitions.Add($cd) }
+    $script:BilanRow = 0
+    $row = {
+        param($cells, $colors, $weight)
+        $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $g.RowDefinitions.Add($rd)
+        for ($k = 0; $k -lt 4; $k++) {
+            $t = New-Text $cells[$k] 13 $colors[$k] $weight; $t.Margin = Th 0 4 8 4
+            if ($k -gt 0) { $t.TextAlignment = 'Right' }
+            [System.Windows.Controls.Grid]::SetRow($t, $script:BilanRow); [System.Windows.Controls.Grid]::SetColumn($t, $k); Add-Child $g $t
+        }
+        $script:BilanRow++
+    }
+    & $row @('', ("Avant ({0})" -f $since), 'Maintenant', 'Différence') @('#6B7389', '#6B7389', '#6B7389', '#6B7389') 'SemiBold'
+    # Une ligne par mesure : valeur avant, maintenant, et écart coloré (vert = mieux)
+    $line = {
+        param($label, $va, $vn, [bool]$lowerBetter, $fmt)
+        if ($null -eq $va -or $null -eq $vn) { return }
+        $d = [double]$vn - [double]$va
+        $better = if ($lowerBetter) { $d -lt 0 } else { $d -gt 0 }
+        $col = if ([math]::Abs($d) -lt 1e-9) { '#8B93A7' } elseif ($better) { '#4ADE80' } else { '#FFB547' }
+        $ds = if ([math]::Abs($d) -lt 1e-9) { '=' } else { $(if ($d -gt 0) { '+' } else { '−' }) + (& $fmt ([math]::Abs($d))) }
+        & $row @($label, (& $fmt ([double]$va)), (& $fmt ([double]$vn)), $ds) @('#C3CAD9', '#A9B0C2', '#FFFFFF', $col) 'Normal'
+    }
+    $num = { param($v) "{0:N0}" -f $v }
+    $sec = { param($v) $v = [int][math]::Round($v); if ($v -ge 60) { "{0} min {1:D2} s" -f [math]::Floor($v / 60), ($v % 60) } else { "$v s" } }
+    $size = { param($v) Format-Size $v }
+    & $line 'Note du diagnostic' $a.Score $n.Score $false $num
+    & $line 'Problèmes à régler' $a.Open $n.Open $true $num
+    & $line 'Temps de démarrage de Windows' $a.BootSec $n.BootSec $true $sec
+    & $line 'Programmes lancés au démarrage' $a.Startup $n.Startup $true $num
+    & $line 'Programmes en fond' $a.Procs $n.Procs $true $num
+    & $line 'Mémoire utilisée' $a.RamUsed $n.RamUsed $true $size
+    & $line "Espace libre sur $env:SystemDrive" $a.Free $n.Free $false $size
+    Add-Child $cs $g
+    $note = "Temps de démarrage : mesuré par Windows au dernier démarrage complet. Après tes réglages, redémarre le PC (« Redémarrer », pas « Arrêter ») puis relance le diagnostic pour le voir changer. Mémoire et programmes en fond varient selon ce qui est ouvert au moment de la mesure."
+    $t = New-Text $note 11.5 '#6B7389'; $t.Margin = Th 0 8 0 4; Add-Child $cs $t
+    $rb = New-Button 'Repartir de zéro' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'bilan-reset' } } $false; $rb.HorizontalAlignment = 'Left'; Add-Child $cs $rb
+    $c.Child = $cs; Add-Child $sp $c
+}
+
 function Get-Score { if (-not $script:Diag) { return $null }; $s = 100; foreach ($i in $script:Diag.Issues) { if ($i.Status -ne 'done') { $s -= $(if ($i.Sev -eq 'crit') { 12 } else { 5 }) } }; return [math]::Max(0, $s) }
 function Get-Level([int]$S) { if ($S -ge 85) { return @{ Text = 'Bonne forme'; Color = '#4ADE80' } } elseif ($S -ge 60) { return @{ Text = 'Correct, à surveiller'; Color = '#FFB547' } } else { return @{ Text = 'À améliorer'; Color = '#FF6B6B' } } }
 function Get-OpenIssues { if (-not $script:Diag) { return @() }; return @($script:Diag.Issues | Where-Object { $_.Status -ne 'done' }) }
@@ -625,6 +698,7 @@ function Build-DiagPage {
     $d = New-Text ("Analyse du {0}" -f $script:Diag.Date.ToString('dd/MM/yyyy à HH:mm')) 11 '#5D6478'; $d.Margin = Th 0 8 0 0; Add-Child $t $d
     Add-Child $dp $t
     $sum.Child = $dp; Add-Child $sp $sum
+    Add-BilanCard $sp
 
     $todo = @($open | Sort-Object @{ Expression = { if ($_.Sev -eq 'crit') { 0 } else { 1 } } })
     $done = @($script:Diag.Issues | Where-Object { $_.Status -eq 'done' })
@@ -848,7 +922,7 @@ function Complete-Job {
 
     if ($job.Action -eq 'Invoke-Diagnostic') {
         $script:Scanning = $false
-        if ($sync.Diag) { $script:Diag = $sync.Diag; $script:OpenSteps = @{} }
+        if ($sync.Diag) { $script:Diag = $sync.Diag; $script:OpenSteps = @{}; Update-Bilan }
     }
     if ($script:FixingIssue) {
         if ($script:FixingIssue.OpenOnly) {
@@ -980,6 +1054,7 @@ function Invoke-UiCommand($T) {
                     'speedtest' { Show-SpeedTestDialog }
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
+                    'bilan-reset' { Reset-Bilan }
                     'battery-report' { [void](Start-AeroxTask 'Open-BatteryReport' 'Rapport de la batterie') }
                     'bios-reboot' { Restart-ToBios }
                     'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
