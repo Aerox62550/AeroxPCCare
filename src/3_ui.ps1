@@ -233,6 +233,7 @@ $script:Settings = @{
     StartupKept = @()
     SpeedHistory = @()
     BetaChannel = $false
+    PostOptimize = $false
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
 }
 function ConvertTo-Hash($o) {
@@ -245,7 +246,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -553,6 +554,7 @@ $PageDefs = [ordered]@{
     @{ T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
  perf = @{ Title = "Performances"; Sub = "Pour un PC qui démarre plus vite et rame moins. Chaque réglage affiche son état actuel et peut être annulé."; Cards = @(
     @{ T = "Pourquoi mon PC rame ?"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'slow'; UiBusy = $true; D = "Mesure pendant 20 secondes ce qui occupe le processeur, la mémoire et le disque, trouve les programmes gourmands et les réglages qui brident le PC, et te dit quoi faire. Encore mieux si tu la lances quand le PC rame." },
+    @{ T = "Programmes cachés en fond"; Badge = "Gros gain"; B = "Voir"; UI = 'bgitems'; UiBusy = $true; D = "Tâches planifiées et services qui tournent tout seuls sans apparaître au démarrage : statistiques des fabricants, outils de mise à jour inutiles, logiciels « d'optimisation »… AEROX t'explique chacun, tu choisis ce que tu coupes (annulable)." },
     @{ T = "Programmes au démarrage"; Badge = "Gros gain"; P = $true; B = "Choisir"; UI = 'startup'; StatusFn = { Get-StartupCardStatus }; D = "Choisis appli par appli ce qui se lance tout seul à l'allumage. Garde ce que tu utilises tout le temps (Discord, par exemple), décoche le reste." },
     @{ T = "Mode performances maximales"; B = "Activer"; A = "Set-HighPerformance"; StatusFn = { Get-PerfCardStatus }; D = "Le processeur ne se bride plus pour économiser l'énergie. Idéal pour jouer sur un PC fixe." },
     @{ T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." },
@@ -641,6 +643,7 @@ function Build-HomePage {
         $b.Child = $s2; Add-Child $tiles $b
     }
     Add-Child $sp $tiles
+    Add-Child $sp (New-ActionCard @{ T = "Optimisation complète"; Badge = "Le plus efficace"; P = $true; B = "Commencer"; UI = 'optimize'; UiBusy = $true; D = "Le grand ménage guidé, étape par étape : point de restauration, diagnostic, programmes au démarrage, programmes cachés en fond, logiciels inutiles, nettoyage approfondi et mises à jour. Tu choisis à chaque étape, puis le bilan avant / après te montre la différence." })
     Add-Child $sp (New-ActionCard @{ T = "Diagnostic complet"; Badge = "Commence ici"; P = $true; B = "Lancer"; Go = 'diag'; D = "Vérifie ton PC point par point (stockage, performances, stabilité, mises à jour, pilotes, sécurité, réseau...) et t'affiche chaque problème avec sa cause et sa réparation." })
     $nCh = @(Get-Changes 300 | Where-Object { $_.Undo -and -not $_.Undone }).Count
     Add-Child $sp (New-ActionCard @{ T = "Historique des changements"; B = "Voir"; UI = 'history'; D = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX PC Care peuvent être annulés en un clic." } else { "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." }) })
@@ -827,7 +830,7 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # ---------------------------------------------------------------- Annuler une tâche en cours
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
-$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Open-BatteryReport|Test-Internet|Test-Disk)\b'
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Open-BatteryReport|Test-Internet|Test-Disk)\b'
 $script:SoftCancel = '^(Update-SelectedApps|Update-Apps)\b'
 function Stop-AeroxTask {
     $job = $script:Job
@@ -836,6 +839,12 @@ function Stop-AeroxTask {
     $hard = $act -match $script:HardCancel
     $soft = ($act -match $script:SoftCancel) -or $script:QueueRunning
     if (-not $hard -and -not $soft) {
+        if ($script:Wiz) {
+            $script:Wiz = $null
+            [System.Windows.MessageBox]::Show("« $($job.Label) » modifie Windows : elle va se terminer normalement (l'arrêter au milieu pourrait laisser le PC dans un état bancal).`n`nL'optimisation complète s'arrêtera juste après.", $AppName, 'OK', 'Information') | Out-Null
+            Write-UiLog "⏹ L'optimisation complète s'arrêtera après l'étape en cours."
+            return
+        }
         [System.Windows.MessageBox]::Show("« $($job.Label) » modifie Windows : l'arrêter au milieu pourrait laisser le PC dans un état bancal.`n`nLaisse-la se terminer, ça ne devrait plus être long.", $AppName, 'OK', 'Information') | Out-Null
         return
     }
@@ -910,6 +919,7 @@ function Complete-Job {
         foreach ($e in @($script:PendingErrors.ToArray())) { $errs += $e }
         $script:PendingErrors.Clear(); $script:QueueRunning = $false
         if ($job.Action -eq 'Invoke-Diagnostic') { $script:Scanning = $false }
+        if ($script:Wiz) { $script:Wiz = $null; Write-UiLog "⏹ Optimisation complète arrêtée à ta demande. Tu peux la relancer quand tu veux depuis l'accueil." }
         Update-HomeStats; Update-DiagBadge; Refresh-Page
         if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
         if ($sync.NeedReboot) {
@@ -954,14 +964,59 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
+    elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
     elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { Complete-SelfUpdate; return }
-    if ($sync.NeedReboot -and -not $script:Job) {
+    if ($sync.NeedReboot -and -not $script:Job -and -not $script:Wiz) {
         $sync.NeedReboot = $false
         $r = [System.Windows.MessageBox]::Show("Un redémarrage est nécessaire pour terminer.`n`nEnregistre ton travail en cours, puis clique sur « Oui » pour redémarrer maintenant.", $AppName, 'YesNo', 'Question')
         if ($r -eq 'Yes') { Restart-Computer -Force }
     }
+    if ($script:Wiz -and -not $script:Job) { Step-Wizard }
+}
+
+# ---------------------------------------------------------------- Optimisation complète : parcours guidé
+# Chaque étape réutilise l'outil existant (tu choisis dans sa fenêtre ; fermer la fenêtre = passer l'étape).
+# Le parcours avance tout seul à la fin de chaque tâche (Complete-Job appelle Step-Wizard).
+$script:Wiz = $null
+$script:WizSteps = @(
+    @{ T = "Point de restauration (sécurité)"; Run = { [void](Start-AeroxTask 'New-RestorePoint' 'Point de restauration') } },
+    @{ T = "Diagnostic complet"; Run = { Start-Diagnostic } },
+    @{ T = "Programmes au démarrage"; Run = { Show-StartupDialog $null } },
+    @{ T = "Programmes cachés en fond"; Run = { Start-BgList $null } },
+    @{ T = "Logiciels inutiles"; Run = { Start-UninstallList $null } },
+    @{ T = "Nettoyage approfondi"; Run = { Start-CleanAnalysis $null } },
+    @{ T = "Mises à jour des logiciels"; Run = { Start-AppUpdatesList $null } }
+)
+function Start-Optimize {
+    if ($script:Job -or $script:Wiz) { [System.Windows.MessageBox]::Show("Une opération est déjà en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
+    $steps = (@(for ($i = 0; $i -lt $script:WizSteps.Count; $i++) { "  {0}. {1}" -f ($i + 1), $script:WizSteps[$i].T }) -join "`n")
+    $msg = "Optimisation complète : AEROX enchaîne les étapes une par une.`n`n$steps`n`nTu gardes la main : à chaque étape, tu vois ce qui est proposé et tu choisis. Ferme une fenêtre pour passer l'étape, ou clique sur « Annuler » en bas pour tout arrêter.`n`nCompte 10 à 30 minutes selon le PC. À la fin, un redémarrage, puis le bilan avant / après.`n`nCommencer ?"
+    if ([System.Windows.MessageBox]::Show($msg, $AppName, 'YesNo', 'Question') -ne 'Yes') { return }
+    $script:Wiz = @{ Index = 0 }
+    Write-UiLog ''
+    Write-UiLog "════════ Optimisation complète ════════"
+    Step-Wizard
+}
+function Step-Wizard {
+    while ($script:Wiz -and -not $script:Job) {
+        $i = [int]$script:Wiz.Index
+        if ($i -ge $script:WizSteps.Count) { Complete-Wizard; return }
+        $script:Wiz.Index = $i + 1
+        $st = $script:WizSteps[$i]
+        Write-UiLog ("▶ Optimisation, étape {0}/{1} : {2}" -f ($i + 1), $script:WizSteps.Count, $st.T)
+        try { & $st.Run } catch { Write-Bug -Context "Optimisation / $($st.T)" -ErrorRecord $_; Write-UiLog ("   ⚠ Étape passée : " + $_.Exception.Message) }
+    }
+}
+function Complete-Wizard {
+    $script:Wiz = $null
+    $sync.NeedReboot = $false
+    $script:Settings.PostOptimize = $true; Save-Settings
+    Write-UiLog "✅ Optimisation complète terminée."
+    Refresh-Page
+    $r = [System.Windows.MessageBox]::Show("Optimisation terminée !`n`nRedémarre maintenant pour que tout s'applique (programmes au démarrage et en fond, mises à jour).`n`nAu prochain lancement d'AEROX PC Care, le diagnostic se relancera tout seul et tu verras le bilan avant / après.`n`nEnregistre ton travail en cours, puis clique sur « Oui » pour redémarrer maintenant.", $AppName, 'YesNo', 'Question')
+    if ($r -eq 'Yes') { Restart-Computer -Force }
 }
 
 function Start-NextQueued {
@@ -1001,6 +1056,7 @@ function Invoke-UiCommand($T) {
                 if ($i.UiFix -eq 'clean') { Start-CleanAnalysis $i; return }
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
                 if ($i.UiFix -eq 'drivers') { Start-DriverCheck $i; return }
+                if ($i.UiFix -eq 'bgitems') { Start-BgList $i; return }
                 if ($i.Confirm -and -not (Confirm-Box $i.Confirm)) { return }
                 $i.Status = 'fixing'; $script:FixingIssue = $i
                 if (-not (Start-AeroxTask $i.FixAction $i.FixLabel)) { $i.Status = 'open'; $script:FixingIssue = $null }
@@ -1062,6 +1118,8 @@ function Invoke-UiCommand($T) {
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
                     'slow' { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
+                    'bgitems' { Start-BgList $null }
+                    'optimize' { Start-Optimize }
                     'appupdates' { Start-AppUpdatesList $null }
                     'deepclean' { Start-CleanAnalysis $null }
                     'uninstall' { Start-UninstallList $null }
@@ -2702,6 +2760,66 @@ function Show-SlowDialog {
     }
 }
 
+# ---------------------------------------------------------------- Fenêtre : programmes cachés en fond
+function Start-BgList($Issue) {
+    $script:BgIssue = $Issue
+    [void](Start-AeroxTask 'Get-BgItems' 'Programmes cachés en fond' 'bgdialog')
+}
+function Show-BgDialog($Issue) {
+    $items = @($sync.BgItems | Where-Object { $_ })
+    $w = New-Dialog "$AppName : programmes cachés en fond" 760
+    $script:BgWin = $w; $script:BgChoice = $null; $script:BgRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Programmes cachés en fond" 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Ils se lancent tout seuls (tâches planifiées et services) sans apparaître dans les programmes au démarrage. Ceux qui ne servent à rien sont déjà cochés. Un service coupé passe en « manuel » : il redémarre si un logiciel en a vraiment besoin. Tout est annulable dans l'historique." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $list
+    Add-Child $sp $sv
+    if (-not $items.Count) { $t = New-Text "Rien à signaler : aucune tâche ni aucun service en dehors de Windows ne tourne en fond." 13 '#4ADE80'; Add-Child $list $t }
+    foreach ($grp in @(@('off', 'INUTILES EN FOND (RECOMMANDÉ DE COUPER)', '#FFB547'), @('unknown', 'NON RECONNUS (GARDE-LES SI TU NE SAIS PAS)', '#8B93A7'), @('keep', 'À GARDER', '#4ADE80'))) {
+        $sel = @($items | Where-Object { $_.Verdict -eq $grp[0] } | Sort-Object { if ($_.Label) { $_.Label } else { $_.Name } })
+        if (-not $sel.Count) { continue }
+        $h = New-Text ("{0} · {1}" -f $grp[1], $sel.Count) 11.5 $grp[2] 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
+        foreach ($x in $sel) {
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            $title = if ($x.Label) { $x.Label } elseif ($x.Display) { $x.Display } else { $x.Name }
+            Add-Child $txt (New-Text $title 13.5 '#FFFFFF' 'SemiBold')
+            $meta = @($(if ($x.Kind -eq 'task') { 'Tâche planifiée' } else { 'Service' + $(if ($x.Running) { ' (en marche)' } else { '' }) }), $(if ($x.Display -and $x.Display -ne $title) { $x.Display } else { $x.Name }), $x.Company) | Where-Object { $_ }
+            Add-Child $txt (New-Text ($meta -join '  ·  ') 11.5 '#6B7389')
+            Add-Child $txt (New-Text $x.Why 12 '#A9B0C2')
+            if ($x.Verdict -eq 'keep') {
+                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+                $row.Child = $txt; Add-Child $list $row
+            } else {
+                $r = New-CheckRow ($x.Verdict -eq 'off') $txt $null
+                $r.Check.Add_Click({ & $script:CountBg })
+                Add-Child $list $r.Row
+                [void]$script:BgRows.Add(@{ Item = $x; Check = $r.Check })
+            }
+        }
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bCancel = New-DlgButton 'Fermer' 'TextBtn'; $bCancel.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Couper' 'PrimaryBtn'; $script:BgApply = $bApply
+    Add-Child $bar $bCancel; Add-Child $bar $bApply; Add-Child $sp $bar
+    $script:CountBg = {
+        $n = @($script:BgRows | Where-Object { $_.Check.IsChecked }).Count
+        $script:BgApply.Content = $(if ($n) { "Couper la sélection ($n)" } else { 'Couper la sélection' }); $script:BgApply.IsEnabled = ($n -gt 0)
+    }
+    $bCancel.Add_Click({ $script:BgWin.Close() })
+    $bApply.Add_Click({ $script:BgChoice = @($script:BgRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:BgWin.Close() })
+    & $script:CountBg
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    $sel = @($script:BgChoice | Where-Object { $_ })
+    if (-not $sel.Count) { return }
+    if (-not (Confirm-Box ("Couper {0} programme(s) caché(s) en fond ?`n`nL'effet est complet au prochain redémarrage. Tu peux tout annuler dans l'historique des changements." -f $sel.Count))) { return }
+    $ids = @($sel | ForEach-Object { "{0}|{1}|{2}|{3}" -f $_.Kind, $_.Path, $_.Name, ($(if ($_.Label) { $_.Label } elseif ($_.Display) { $_.Display } else { $_.Name }) -replace '\|', '/') })
+    if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
+    if (-not (Start-AeroxTask ("Disable-BgItems -Items " + (ConvertTo-PsList $ids)) ("Coupure de {0} programme(s) en fond" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
+}
+
 function Start-AppUpdatesList($Issue) {
     $script:AppsIssue = $Issue
     [void](Start-AeroxTask 'Get-AppUpdatesForUi' 'Recherche des mises à jour' 'appdialog')
@@ -3246,6 +3364,11 @@ $window.Add_ContentRendered({
     if ($script:OvStarted) { return }
     $script:OvStarted = $true
     if ($script:Settings.Overlay.Visible) { try { Show-Overlay $true } catch { Write-Bug -Context 'Overlay au démarrage' -ErrorRecord $_ } }
+    if ($script:Settings.PostOptimize) {
+        $script:Settings.PostOptimize = $false; Save-Settings
+        Write-UiLog "Bilan après l'optimisation complète : diagnostic en cours…"
+        Start-Diagnostic
+    }
 })
 Update-HomeStats
 $NavHome.IsChecked = $true
