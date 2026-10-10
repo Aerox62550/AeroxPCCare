@@ -733,7 +733,7 @@ function Get-SlowReport {
             $nm = "$($x.Name)" -replace '#\d+$', ''
             if ($nm -in '_Total', 'Idle' -or [int]$x.IDProcess -eq $me -or $nm -match '(?i)^(wmiprvse|aeroxpccare)$') { continue }
             if (-not $acc.ContainsKey($nm)) { $acc[$nm] = @{ Name = $nm; Cpu = 0.0; Io = 0.0; Mem = 0.0; Pid = [int]$x.IDProcess; Seen = 0 } }
-            $e = $acc[$nm]; $e.Cpu += [double]$x.PercentProcessorTime / $cores; $e.Io += [double]$x.IODataBytesPersec; $e.Seen++
+            $e = $acc[$nm]; $e.Cpu += [double]$x.PercentProcessorTime / $cores; $e.Io += [double]$x.IODataBytesPersec
         }
         # Mémoire : instantané par programme (somme de ses processus)
         if ($i -eq $n - 1) {
@@ -744,8 +744,12 @@ function Get-SlowReport {
         }
         $t = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction SilentlyContinue
         if ($t) { [void]$cpuTot.Add([double]$t.PercentProcessorTime) }
-        $d = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -Filter "Name='_Total'" -ErrorAction SilentlyContinue
-        if ($d) { [void]$diskBusy.Add([math]::Max(0, 100 - [double]$d.PercentIdleTime)); [void]$diskQ.Add([double]$d.CurrentDiskQueueLength) }
+        # Disque le plus occupé (pas la moyenne de tous : un disque dur saturé + un SSD au repos donnerait 50 %)
+        $dk = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
+        if ($dk.Count) {
+            [void]$diskBusy.Add([math]::Max(0, 100 - [double](($dk | Measure-Object PercentIdleTime -Minimum).Minimum)))
+            [void]$diskQ.Add([double](($dk | Measure-Object CurrentDiskQueueLength -Maximum).Maximum))
+        }
     }
     $avg = { param($l) if ($l.Count) { [math]::Round(($l | Measure-Object -Average).Average) } else { 0 } }
     $os = Get-CimInstance Win32_OperatingSystem
@@ -756,10 +760,10 @@ function Get-SlowReport {
     # Disque de Windows : SSD ou disque dur classique ?
     try { $dn = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop).DiskNumber; $pd = Get-PhysicalDisk | Where-Object { "$($_.DeviceId)" -eq "$dn" } | Select-Object -First 1; $rep.Hdd = ("$($pd.MediaType)" -eq 'HDD') } catch {}
     # Classement des programmes
+    # Moyenne sur la durée de la mesure (tous les processus d'un même programme additionnés : Chrome, Discord…)
     $list = foreach ($e in $acc.Values) {
-        $seen = [math]::Max(1, $e.Seen)
         $f = Get-ProcFriendly $e.Name $e.Pid
-        @{ Name = $e.Name; Label = $f.Label; Kind = $f.Kind; Cpu = [math]::Round($e.Cpu / $seen, 1); Io = $e.Io / $seen; Mem = $e.Mem }
+        @{ Name = $e.Name; Label = $f.Label; Kind = $f.Kind; Cpu = [math]::Round($e.Cpu / $n, 1); Io = $e.Io / $n; Mem = $e.Mem }
     }
     $list = @($list)
     $byCpu = @($list | Sort-Object { - $_.Cpu } | Select-Object -First 5)

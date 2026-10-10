@@ -828,12 +828,21 @@ function Complete-Job {
     Set-Busy $false
     if ($cancelled) {
         $script:FixQueue.Clear()
-        if ($script:FixingIssue) { $script:FixingIssue.Status = 'open'; $script:FixingIssue = $null }
+        if ($script:FixingIssue) {
+            # Arrêt « doux » : l'étape en cours est allée au bout, on garde son vrai résultat
+            $script:FixingIssue.Status = $(if ($hardStop -or $errs.Count -or $script:FixingIssue.OpenOnly) { 'open' } else { 'done' })
+            $script:FixingIssue = $null
+        }
         foreach ($e in @($script:PendingErrors.ToArray())) { $errs += $e }
         $script:PendingErrors.Clear(); $script:QueueRunning = $false
         if ($job.Action -eq 'Invoke-Diagnostic') { $script:Scanning = $false }
         Update-HomeStats; Update-DiagBadge; Refresh-Page
         if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
+        if ($sync.NeedReboot) {
+            $sync.NeedReboot = $false
+            $r = [System.Windows.MessageBox]::Show("Un redémarrage est nécessaire pour terminer.`n`nEnregistre ton travail en cours, puis clique sur « Oui » pour redémarrer maintenant.", $AppName, 'YesNo', 'Question')
+            if ($r -eq 'Yes') { Restart-Computer -Force }
+        }
         return
     }
 
@@ -2250,7 +2259,7 @@ function Show-SpaceDialog {
     $p = New-Text ("{0} utilisés sur {1} — {2} libres. Clique sur ▸ pour voir le détail d'un dossier, double-clic pour l'ouvrir. Supprime ou déplace tes fichiers toi-même : AEROX ne touche jamais à tes fichiers perso." -f (Format-Size $used), (Format-Size $scan.Size), (Format-Size $scan.Free)) 13 '#A9B0C2'
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $body = New-Object System.Windows.Controls.StackPanel
-    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 540; $sv.Content = $body
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $body
     Add-Child $sp $sv
     Add-SpaceAdvice $body $scan $big
     $h = New-Text "TOUS LES DOSSIERS, DU PLUS GROS AU PLUS PETIT" 11.5 '#6B7389' 'Bold'; $h.Margin = Th 2 14 0 8; Add-Child $body $h
@@ -2399,7 +2408,8 @@ function Remove-OldInstallers {
     Add-Type -AssemblyName Microsoft.VisualBasic
     $ok = 0; $freed = 0.0
     foreach ($f in $old) {
-        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'OnlyErrorDialogs', 'SendToRecycleBin'); $ok++; $freed += $f.Size } catch {}
+        # AllDialogs : si un fichier est trop gros pour la corbeille, Windows demande avant de le supprimer définitivement
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'AllDialogs', 'SendToRecycleBin'); if (-not (Test-Path -LiteralPath $f.Path)) { $ok++; $freed += $f.Size } } catch {}
     }
     Write-UiLog ("🗑 {0} vieux installateur(s) mis à la corbeille ({1}). Vide la corbeille pour récupérer la place." -f $ok, (Format-Size $freed))
     if ($ok) { Add-Change -Kind 'info' -Title ("{0} vieux installateur(s) mis à la corbeille ({1})" -f $ok, (Format-Size $freed)) -Detail "Récupérables depuis la corbeille tant qu'elle n'est pas vidée." }
@@ -2592,7 +2602,7 @@ function Show-SlowDialog {
             $script:SlowRow++
         }
         $script:SlowRow = 0
-        & $addRow @('Programme', 'Processeur', 'Mémoire', 'Disque') '#6B7389' 'SemiBold'
+        & $addRow @('Programme', 'Processeur', 'Mémoire', 'Lect./écrit.') '#6B7389' 'SemiBold'
         foreach ($x in $top) {
             $nm = if ($x.Label -and $x.Label -ne $x.Name) { "$($x.Label)  ($($x.Name))" } else { $x.Name }
             & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $(if ($x.Io -ge 1KB) { (Format-Size $x.Io) + '/s' } else { '—' })) '#E6E9F2' 'Normal'
