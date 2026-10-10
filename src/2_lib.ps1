@@ -46,14 +46,28 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
     try {
         $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
         if (-not $user -or -not $Exe) { return $false }
-        if ($Arguments) { $a = New-ScheduledTaskAction -Execute $Exe -Argument $Arguments } else { $a = New-ScheduledTaskAction -Execute $Exe }
+        $explorer = Join-Path $env:SystemRoot 'explorer.exe'
+        if ([IO.Path]::GetFileName($Exe) -ieq 'explorer.exe') {
+            # L'Explorateur passe la main au bureau de la personne et se ferme aussitôt
+            if ($Arguments) { $a = New-ScheduledTaskAction -Execute $explorer -Argument $Arguments } else { $a = New-ScheduledTaskAction -Execute $explorer }
+        } else {
+            # Un programme lancé directement par la tâche serait fermé avec elle : on passe par un raccourci
+            # ouvert par l'Explorateur, le programme devient alors un programme normal du bureau de la personne
+            $dir = Join-Path $env:ProgramData 'AeroxPCCare'
+            New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+            $lnk = Join-Path $dir 'lancer.lnk'
+            $ws = New-Object -ComObject WScript.Shell
+            $sc = $ws.CreateShortcut($lnk); $sc.TargetPath = $Exe; $sc.Arguments = $Arguments; $sc.WorkingDirectory = (Split-Path $Exe -Parent); $sc.Save()
+            $a = New-ScheduledTaskAction -Execute $explorer -Argument ('"{0}"' -f $lnk)
+        }
         $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
         $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
         Register-ScheduledTask -TaskName $tn -Action $a -Principal $p -Settings $st -Force -ErrorAction Stop | Out-Null
         Start-ScheduledTask -TaskName $tn -ErrorAction Stop
         Start-Sleep -Milliseconds 1500
+        try { $script:LastSessionTask = "{0} / 0x{1:X}" -f (Get-ScheduledTask -TaskName $tn).State, [int](Get-ScheduledTaskInfo -TaskName $tn).LastTaskResult } catch {}
         return $true
-    } catch { return $false }
+    } catch { $script:LastSessionTask = "échec : $($_.Exception.Message)"; return $false }
     finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
 }
 

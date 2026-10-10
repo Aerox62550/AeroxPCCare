@@ -1708,37 +1708,57 @@ function Build-HelpReport {
 }
 
 function Open-QuickAssist {
+    $qa = Join-Path $env:SystemRoot 'System32\quickassist.exe'
     # Logiciel ouvert avec le mot de passe d'un autre compte (ADMIN) : Assistance rapide doit s'ouvrir chez la personne
     # devant l'écran. Ouverte dans le compte admin, elle ne peut pas créer ses fichiers (« Création du répertoire de données impossible »).
-    $other = Test-OtherAccount
+    if (Test-OtherAccount) { Open-QuickAssistForSession $qa; return }
     try {
         $pkg = Get-AppxPackage -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $pkg -and $other) { $pkg = Get-AppxPackage -AllUsers -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction SilentlyContinue | Select-Object -First 1 }
         if ($pkg) {
             $appId = 'App'
             try { $appId = @((Get-AppxPackageManifest $pkg).Package.Applications.Application)[0].Id } catch {}
-            $target = "shell:AppsFolder\{0}!{1}" -f $pkg.PackageFamilyName, $appId
-            if ($other) {
-                if (Start-AsSessionUser (Join-Path $env:SystemRoot 'explorer.exe') $target) { Write-UiLog "Assistance rapide ouverte."; return }
-            } else {
-                Start-Process explorer.exe $target
-                Write-UiLog "Assistance rapide ouverte."
-                return
-            }
+            Start-Process explorer.exe ("shell:AppsFolder\{0}!{1}" -f $pkg.PackageFamilyName, $appId)
+            Write-UiLog "Assistance rapide ouverte."
+            return
         }
     } catch {}
-    $qa = Join-Path $env:SystemRoot 'System32\quickassist.exe'
-    if (Test-Path -LiteralPath $qa) {
-        if ($other -and (Start-AsSessionUser $qa)) { Write-UiLog "Assistance rapide ouverte."; return }
-        if (-not $other) { Start-Process $qa; Write-UiLog "Assistance rapide ouverte."; return }
-    }
-    if ($other) {
-        [System.Windows.MessageBox]::Show("AEROX tourne avec le mot de passe d'un autre compte : il ne peut pas ouvrir Assistance rapide à ta place.`n`nOuvre-la toi-même : menu Démarrer, tape « Assistance rapide », puis Entrée.", $AppName, 'OK', 'Information') | Out-Null
-        return
-    }
+    if (Test-Path -LiteralPath $qa) { Start-Process $qa; Write-UiLog "Assistance rapide ouverte."; return }
     if (Confirm-Box "Assistance rapide n'est pas encore installée sur ce PC.`n`nC'est l'outil gratuit de Microsoft pour l'aide à distance. L'installer depuis le Microsoft Store ?") {
         Open-WinUri 'ms-windows-store://pdp/?ProductId=9P7BP5VNWKX5'
     }
+}
+# Compte standard + mot de passe ADMIN : lancée dans la session de la personne, puis on VÉRIFIE qu'elle s'est ouverte
+function Open-QuickAssistForSession([string]$Qa) {
+    $user = ''; try { $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)" } catch {}
+    $upkg = $null
+    if ($user) { try { $upkg = Get-AppxPackage -User $user -Name 'MicrosoftCorporationII.QuickAssist' -ErrorAction Stop | Select-Object -First 1 } catch {} }
+    $before = @(Get-Process -Name quickassist -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+    $how = 'aucun'
+    $window.Cursor = [System.Windows.Input.Cursors]::Wait
+    try {
+        if ($upkg) {
+            $appId = 'App'
+            try { $appId = @((Get-AppxPackageManifest $upkg).Package.Applications.Application)[0].Id } catch {}
+            $how = 'store'
+            [void](Start-AsSessionUser (Join-Path $env:SystemRoot 'explorer.exe') ("shell:AppsFolder\{0}!{1}" -f $upkg.PackageFamilyName, $appId))
+        } elseif (Test-Path -LiteralPath $Qa) {
+            $how = 'system32'
+            [void](Start-AsSessionUser $Qa)
+        }
+        $ok = $false
+        if ($how -ne 'aucun') {
+            for ($i = 0; $i -lt 12 -and -not $ok; $i++) {
+                if (@(Get-Process -Name quickassist -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id }).Count) { $ok = $true } else { Start-Sleep -Milliseconds 500 }
+            }
+        }
+    } finally { $window.Cursor = $null }
+    if ($ok) { Write-UiLog "Assistance rapide ouverte."; return }
+    Write-Bug -Context 'Assistance rapide (compte ADMIN séparé)' -ErrorRecord ("ne s'est pas ouverte : session={0}, appli Store pour ce compte={1}, essai={2}, tâche={3}" -f $user, [bool]$upkg, $how, $script:LastSessionTask)
+    if (-not $upkg -and -not (Test-Path -LiteralPath $Qa)) {
+        if (Confirm-Box "Assistance rapide n'est pas installée pour ce compte.`n`nC'est l'outil gratuit de Microsoft pour l'aide à distance. Ouvrir le Microsoft Store pour l'installer ?") { Open-WinUri 'ms-windows-store://pdp/?ProductId=9P7BP5VNWKX5' }
+        return
+    }
+    [System.Windows.MessageBox]::Show("Assistance rapide n'a pas pu s'ouvrir toute seule (AEROX tourne avec le mot de passe d'un autre compte).`n`nOuvre-la toi-même : menu Démarrer, tape « Assistance rapide », puis Entrée.$(if (-not $upkg) { "`n`nSi elle n'apparaît pas, installe-la depuis le Microsoft Store (recherche « Assistance rapide »)." })", $AppName, 'OK', 'Information') | Out-Null
 }
 
 function Show-RemoteHelpDialog {
