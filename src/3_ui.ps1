@@ -916,6 +916,7 @@ function Invoke-UiCommand($T) {
                     'speedtest' { Show-SpeedTestDialog }
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
                     'bios-site' { Open-BiosSupport }
+                    'battery-report' { [void](Start-AeroxTask 'Open-BatteryReport' 'Rapport de la batterie') }
                     'bios-reboot' { Restart-ToBios }
                     'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
                     'selfupdate' { Start-SelfUpdate }
@@ -1145,7 +1146,7 @@ function New-InfoRow([string]$Label, [string]$Value, [string]$Pill = '', [string
 
 function Build-SystemPage {
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Mon PC" "Carte mère, version du BIOS et sécurité du démarrage (TPM, Secure Boot). Juste des infos : rien n'est modifié ici. Pratique avant d'installer Windows 11, un jeu avec anti-triche (Valorant, Battlefield, Call of Duty...) ou un nouveau processeur."
+    Build-Header $sp "Mon PC" "Carte mère, version du BIOS, sécurité du démarrage (TPM, Secure Boot) et santé de la batterie sur les portables. Juste des infos : rien n'est modifié ici. Pratique avant d'installer Windows 11, un jeu avec anti-triche (Valorant, Battlefield, Call of Duty...) ou un nouveau processeur."
     $i = $sync.SysInfo
     if (-not $i) {
         if (-not $script:SysWaiting) { $script:SysWaiting = $true; Start-Background 'Get-SystemInfo' }
@@ -1263,6 +1264,38 @@ function Build-SystemPage {
     }
     Add-Child $cs (New-InfoRow 'Mémoire' ("{0}{1}{2}" -f (Format-Size $i.Ram), $(if ($i.RamModules) { "  ·  $($i.RamModules) barrette(s)" } else { '' }), $(if ($i.RamSpeed) { "  ·  $($i.RamSpeed) MHz" } else { '' })))
     $c.Child = $cs; Add-Child $sp $c
+
+    # ---- Batterie (portables)
+    $bats = @($i.Batteries | Where-Object { $_ })
+    if ($bats.Count) {
+        Add-Child $sp (New-Section 'Batterie')
+        $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+        $k = 0
+        foreach ($bt in $bats) {
+            $k++
+            $nm = (@($bt.Maker, $bt.Name) | Where-Object { $_ }) -join ' '
+            if ($nm) { Add-Child $cs (New-InfoRow $(if ($bats.Count -gt 1) { "Batterie $k" } else { 'Batterie' }) $nm) }
+            if ($null -ne $bt.Health) {
+                $hp = [math]::Min($bt.Health, 100)
+                $pill = if ($bt.Health -ge 80) { 'Bonne' } elseif ($bt.Health -ge 60) { 'Un peu usée' } else { 'Très usée' }
+                $pk = if ($bt.Health -ge 80) { 'ok' } elseif ($bt.Health -ge 60) { 'warn' } else { 'bad' }
+                $help = ("Capacité actuelle : {0:N1} Wh sur {1:N1} Wh à l'origine." -f ($bt.Full / 1000), ($bt.Design / 1000)) +
+                    $(if ($bt.Health -lt 60) { " L'autonomie est bien réduite : une batterie de remplacement redonnera au PC son autonomie d'origine." } elseif ($bt.Health -lt 80) { " Usure normale après quelques années d'utilisation." } else { '' })
+                Add-Child $cs (New-InfoRow 'Santé' ("{0} %" -f $hp) $pill $pk $help)
+            } else { Add-Child $cs (New-InfoRow 'Santé' 'Non mesurable sur ce PC' '' '' "Windows ne donne pas la capacité d'origine de cette batterie. Le rapport complet ci-dessous en dit parfois plus.") }
+            if ($bt.Cycles) { Add-Child $cs (New-InfoRow 'Cycles de charge' ("{0}" -f $bt.Cycles) '' '' "Un cycle = l'équivalent d'une recharge complète. Une batterie de portable est prévue en général pour 300 à 1000 cycles selon les modèles.") }
+            if ($null -ne $bt.Charge) {
+                $ch = "{0} %" -f $bt.Charge
+                if ($bt.State) { $ch += "  ·  $($bt.State)" }
+                if ($bt.RunMin -and $bt.State -eq 'sur batterie') { $ch += ("  ·  environ {0} h {1:D2} restantes" -f [math]::Floor($bt.RunMin / 60), ($bt.RunMin % 60)) }
+                Add-Child $cs (New-InfoRow 'Charge actuelle' $ch)
+            }
+            if ($bt.Chem) { Add-Child $cs (New-InfoRow 'Type' $bt.Chem) }
+        }
+        $b = New-Button "Rapport complet de Windows" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'battery-report' } }; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 4; Add-Child $cs $b
+        $t = New-Text "Historique de charge, capacité au fil des mois et autonomie estimée, par l'outil officiel de Windows." 12 '#6B7389'; $t.Margin = Th 0 2 0 4; Add-Child $cs $t
+        $c.Child = $cs; Add-Child $sp $c
+    }
 
     $b = New-Button "Actualiser" 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'sys-refresh' } } $false; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 6 0 0; Add-Child $sp $b
     return $sp

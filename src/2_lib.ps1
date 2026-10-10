@@ -521,6 +521,7 @@ function Get-SystemInfo {
         $i.OsVersion = try { (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction Stop).DisplayVersion } catch { '' }
         $i.Win11 = ($i.OsBuild -ge 22000)
         try { $i.GpuDrivers = @(Get-GpuDrivers) } catch { $i.GpuDrivers = @() }
+        try { $i.Batteries = @(Get-BatteryInfo) } catch { $i.Batteries = @() }
     } catch { $i.Error = $_.Exception.Message }
     # Mode de démarrage : 1 = ancien (Legacy / CSM), 2 = UEFI
     try { $fw = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control' -Name PEFirmwareType -ErrorAction Stop).PEFirmwareType; $i.Uefi = ($fw -eq 2) } catch { $i.Uefi = $null }
@@ -543,6 +544,110 @@ function Get-SystemInfo {
         $i.DiskStyle = "$($d.PartitionStyle)"; $i.DiskSize = [double]$d.Size
     } catch {}
     $sync.SysInfo = $i
+}
+
+# ---------------------------------------------------------------- Batterie (PC portables)
+# Capacité d'origine et capacité actuelle (usure), cycles de charge, fabricant : données de Windows (WMI root\wmi),
+# complétées par le rapport officiel « powercfg /batteryreport » quand Windows ne donne pas tout par WMI.
+function ConvertFrom-BatteryChem($Code) {
+    $t = ''
+    try { if ($Code -is [string]) { $t = $Code } elseif ($Code) { $t = [Text.Encoding]::ASCII.GetString([BitConverter]::GetBytes([uint32]$Code)) } } catch {}
+    $t = ($t -replace '[^\w-]', '').Trim()
+    switch -Regex ($t) {
+        '(?i)^li.?ion|^lion|^li-i' { return 'Lithium-ion' }
+        '(?i)^lip|poly' { return 'Lithium-polymère' }
+        '(?i)nimh' { return 'Nickel-métal-hydrure' }
+        '(?i)^pbac|lead' { return 'Plomb' }
+        default { return $t }
+    }
+}
+function Get-BatteryInfo {
+    $w32 = @(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)
+    if (-not $w32.Count) { return }
+    $static = @(Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryStaticData -ErrorAction SilentlyContinue)
+    $full   = @(Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryFullChargedCapacity -ErrorAction SilentlyContinue)
+    $cyc    = @(Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryCycleCount -ErrorAction SilentlyContinue)
+    $st     = @(Get-CimInstance -Namespace 'root/wmi' -ClassName BatteryStatus -ErrorAction SilentlyContinue)
+    $list = New-Object System.Collections.ArrayList
+    $n = [math]::Max($w32.Count, $static.Count)
+    for ($k = 0; $k -lt $n; $k++) {
+        $s = if ($k -lt $static.Count) { $static[$k] } else { $null }
+        $inst = if ($s) { "$($s.InstanceName)" } else { '' }
+        $f = $full | Where-Object { "$($_.InstanceName)" -eq $inst } | Select-Object -First 1
+        $c = $cyc  | Where-Object { "$($_.InstanceName)" -eq $inst } | Select-Object -First 1
+        $x = $st   | Where-Object { "$($_.InstanceName)" -eq $inst } | Select-Object -First 1
+        $w = if ($k -lt $w32.Count) { $w32[$k] } else { $null }
+        $b = @{ Name = ''; Maker = ''; Chem = ''; Design = 0.0; Full = 0.0; Health = $null; Cycles = $null; Charge = $null; State = ''; RunMin = $null }
+        if ($s) { $b.Name = "$($s.DeviceName)".Trim(); $b.Maker = "$($s.ManufactureName)".Trim(); $b.Design = [double]$s.DesignedCapacity; $b.Chem = ConvertFrom-BatteryChem $s.Chemistry }
+        if ($f) { $b.Full = [double]$f.FullChargedCapacity }
+        if ($c -and [int]$c.CycleCount -gt 0) { $b.Cycles = [int]$c.CycleCount }
+        if ($w) {
+            if (-not $b.Name) { $b.Name = "$($w.Name)".Trim() }
+            if ($null -ne $w.EstimatedChargeRemaining) { $b.Charge = [int]$w.EstimatedChargeRemaining }
+            if ($w.EstimatedRunTime -and [int64]$w.EstimatedRunTime -lt 6000) { $b.RunMin = [int]$w.EstimatedRunTime }
+            if (-not $b.Chem) { $b.Chem = switch ([int]$w.Chemistry) { 6 { 'Lithium-ion' } 8 { 'Lithium-polymère' } 5 { 'Nickel-métal-hydrure' } default { '' } } }
+        }
+        if ($x) { $b.State = if ($x.Charging) { 'en charge' } elseif ($x.PowerOnline) { 'branché' } elseif ($x.Discharging) { 'sur batterie' } else { '' } }
+        elseif ($w) { $b.State = switch ([int]$w.BatteryStatus) { 1 { 'sur batterie' } 2 { 'branché' } 6 { 'en charge' } 7 { 'en charge' } 8 { 'en charge' } 9 { 'en charge' } default { '' } } }
+        [void]$list.Add($b)
+    }
+    # Compléments par le rapport officiel de Windows (capacités et cycles absents du WMI sur certains PC)
+    if (@($list | Where-Object { -not $_.Design -or -not $_.Full -or $null -eq $_.Cycles }).Count) {
+        try {
+            $xmlPath = Join-Path $env:TEMP ("aerox_batterie_{0}.xml" -f $PID)
+            $null = & powercfg.exe /batteryreport /xml /output $xmlPath 2>&1
+            if (Test-Path -LiteralPath $xmlPath) {
+                [xml]$doc = Get-Content -LiteralPath $xmlPath -Raw -Encoding UTF8
+                Remove-Item -LiteralPath $xmlPath -Force -ErrorAction SilentlyContinue
+                $rb = @($doc.GetElementsByTagName('Battery'))
+                for ($k = 0; $k -lt [math]::Min($rb.Count, $list.Count); $k++) {
+                    $r = $rb[$k]; $b = $list[$k]
+                    if (-not $b.Design -and $r.DesignCapacity) { $b.Design = [double]$r.DesignCapacity }
+                    if (-not $b.Full -and $r.FullChargeCapacity) { $b.Full = [double]$r.FullChargeCapacity }
+                    if ($null -eq $b.Cycles -and $r.CycleCount -and [int]$r.CycleCount -gt 0) { $b.Cycles = [int]$r.CycleCount }
+                    if (-not $b.Maker -and $r.Manufacturer) { $b.Maker = "$($r.Manufacturer)".Trim() }
+                    if (-not $b.Name -and $r.Id) { $b.Name = "$($r.Id)".Trim() }
+                    if (-not $b.Chem -and $r.Chemistry) { $b.Chem = ConvertFrom-BatteryChem "$($r.Chemistry)" }
+                }
+            }
+        } catch {}
+    }
+    foreach ($b in $list) { if ($b.Design -gt 0 -and $b.Full -gt 0) { $b.Health = [int][math]::Round(100.0 * $b.Full / $b.Design) } }
+    return $list.ToArray()
+}
+
+# Rapport complet de Windows (page HTML) : enregistré dans ProgramData pour pouvoir l'ouvrir dans la session de la personne
+function Open-BatteryReport {
+    Step "Rapport complet de la batterie (Windows)"
+    $dir = Join-Path $env:ProgramData 'AeroxPCCare'
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $out = Join-Path $dir 'rapport_batterie.html'
+    $null = & powercfg.exe /batteryreport /output $out 2>&1
+    if (-not (Test-Path -LiteralPath $out)) {
+        Add-TaskError -Title "Le rapport de batterie n'a pas pu être créé" -Cause "Windows n'a pas réussi à lire les informations de la batterie (pilote de batterie absent ou batterie retirée)."
+        return
+    }
+    if (Open-Url ([uri]$out).AbsoluteUri) { Log "   ✔ Rapport ouvert : historique de charge, capacité au fil du temps et autonomie estimée." }
+}
+
+function Test-Battery {
+    $bats = @(Get-BatteryInfo)
+    if (-not $bats.Count) { return }
+    $k = 0
+    foreach ($b in $bats) {
+        $k++
+        $label = if ($bats.Count -gt 1) { "Batterie $k" } else { 'Batterie' }
+        if ($null -eq $b.Health) { Add-Ok "$label : usure non mesurable sur ce PC"; continue }
+        $cap = "{0:N1} Wh sur {1:N1} Wh d'origine" -f ($b.Full / 1000), ($b.Design / 1000)
+        if ($b.Health -ge 80) { Add-Ok ("{0} en bonne santé ({1} %)" -f $label, [math]::Min($b.Health, 100)) }
+        elseif ($b.Health -ge 60) { Add-Ok ("{0} un peu usée ({1} %) : normal après quelques années" -f $label, $b.Health) }
+        else {
+            Add-Issue -Id "battery$k" -Sev 'warn' -Title ("{0} très usée : {1} % de sa capacité d'origine" -f $label, $b.Health) -Detail ($cap + $(if ($b.Cycles) { "  ·  $($b.Cycles) cycles de charge" } else { '' })) `
+                -Cause "Une batterie perd de la capacité avec le temps et les recharges : c'est de l'usure normale, pas une panne du PC." `
+                -Effect "Autonomie bien plus courte qu'à l'origine, et le PC peut s'éteindre d'un coup quand la batterie est faible." `
+                -Steps @("Onglet « Mon PC » > Batterie : tu y trouves sa référence et sa capacité pour commander la bonne batterie de remplacement.", "Cherche une batterie avec le modèle exact du PC (ou la référence de la batterie) chez le fabricant ou un vendeur sérieux.", "En attendant : laisse le PC branché quand tu peux et évite de le laisser se vider complètement.")
+        }
+    }
 }
 
 # ---------------------------------------------------------------- Infos d'erreurs connues
@@ -1210,6 +1315,7 @@ function Invoke-Diagnostic {
                           'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'; 'Santé du disque' = 'Test-DiskHealth' }
     $sens = $sync.Sens
     if ($sens -and ($sens['cpu.temp'] -or $sens['gpu.temp'])) { $checks['Températures'] = 'Test-Temperatures' }
+    if (@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue).Count) { $checks['Batterie'] = 'Test-Battery' }
     $sync.Scan.Clear()
     foreach ($k in $checks.Keys) { $sync.Scan[$k] = 'wait' }
     $sync.ScanOrder = @($checks.Keys)
