@@ -35,6 +35,21 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $LogDir = Join-Path $env:LOCALAPPDATA 'AeroxPCCare'
+# Version portable (clé USB) : un fichier « portable.txt » à côté du programme.
+# Réglages, journaux et historique restent sur la clé, dans un dossier par PC
+# (l'historique et les annulations d'un PC ne doivent jamais s'appliquer à un autre).
+$Portable = $false
+$PortRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($AeroxRoot) { $AeroxRoot } else { '' }
+if ($PortRoot -and (Test-Path -LiteralPath (Join-Path $PortRoot 'portable.txt'))) {
+    $pd = Join-Path (Join-Path $PortRoot 'donnees') ($env:COMPUTERNAME -replace '[^\w.-]', '_')
+    try {
+        New-Item -ItemType Directory -Force -Path $pd -ErrorAction Stop | Out-Null
+        $probe = Join-Path $pd '.ecriture'
+        [IO.File]::WriteAllText($probe, 'ok'); Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+        $LogDir = $pd
+    } catch {}   # clé protégée en écriture : on garde le dossier du PC
+    $Portable = $true
+}
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 # Filet de sécurité : si le logiciel plante, l'erreur est écrite dans plantage.txt et affichée
@@ -51,7 +66,7 @@ $LastReportFile = Join-Path $LogDir 'dernier_rapport.txt'
 $SettingsFile   = Join-Path $LogDir 'reglages.json'
 $OldSettings    = Join-Path $LogDir 'reglages.txt'
 
-$AppInfo = [hashtable]::Synchronized(@{ Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); Beta = $false; Launcher = $AeroxLauncher })
+$AppInfo = [hashtable]::Synchronized(@{ Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{

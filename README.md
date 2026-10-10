@@ -49,6 +49,10 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
    **Informations complémentaires** > **Exécuter quand même** (le logiciel n'est pas encore signé).
 3. Ouvre AEROX PC Care depuis le Bureau et clique sur **Lancer le diagnostic**.
 
+**Version portable (clé USB)** : pour dépanner plusieurs PC sans rien installer, télécharge
+**[AeroxPCCare_Portable.zip](https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Portable.zip)**,
+dézippe-le sur la clé et lance `AeroxPCCare.exe`. Réglages et historique restent sur la clé (un dossier par PC).
+
 ## Signaler un bug
 
 Dans le logiciel : bouton **Signaler un bug**. Ou directement ici : [onglet Issues](../../issues/new/choose).

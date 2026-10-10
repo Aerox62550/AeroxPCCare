@@ -77,6 +77,8 @@ jobs:
             Si Windows affiche « Windows a protégé votre ordinateur » : *Informations complémentaires* > *Exécuter quand même*.
 
             Déjà installé ? Rien à faire : le logiciel propose la mise à jour tout seul au démarrage.
+            🔌 **Version portable** (clé USB, pour dépanner plusieurs PC sans rien installer) : **`AeroxPCCare_Portable.zip`**, à dézipper sur la clé, puis lance `AeroxPCCare.exe`.
             ⚠️ « Source code » = le code du logiciel, pas le programme à installer.
           files: |
             build/AeroxPCCare_Setup.exe
+            build/AeroxPCCare_Portable.zip

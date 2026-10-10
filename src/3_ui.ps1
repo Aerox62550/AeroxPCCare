@@ -186,7 +186,7 @@ foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','Cance
                'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavPerf','NavMonitor','NavSystem','NavHelp') {
     Set-Variable -Name $n -Value $window.FindName($n) -Scope Script
 }
-$VersionText.Text = "Version $AppVersion"
+$VersionText.Text = "Version $AppVersion" + $(if ($Portable) { "  ·  portable" } else { '' })
 # Canal test (réservé au développeur) : 7 clics rapides sur le numéro de version
 $script:VerClicks = @()
 $VersionText.Add_MouseLeftButtonUp({
@@ -263,7 +263,7 @@ function Load-Settings {
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
 }
-function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if ($script:Settings.BetaChannel) { "  ·  canal test" } else { '' }) }
+function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if ($Portable) { "  ·  portable" } else { '' }) + $(if ($script:Settings.BetaChannel) { "  ·  canal test" } else { '' }) }
 function Save-Settings {
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
@@ -551,6 +551,7 @@ $PageDefs = [ordered]@{
     @{ T = "Webcam introuvable ou image noire"; Badge = "Dépannage rapide"; B = "Réparer"; A = "Repair-Webcam"; D = "Réautorise la caméra dans la confidentialité de Windows, réactive la webcam si elle est désactivée, vérifie son pilote et ouvre l'appli Caméra pour tester." },
     @{ T = "L'imprimante n'imprime plus"; Badge = "Dépannage rapide"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
     @{ T = "Bureau ou barre des tâches figés"; Badge = "Dépannage rapide"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
+    @{ T = "Pubs et fausses alertes de virus"; Badge = "Arnaques"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." },
     @{ T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
     @{ T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
     @{ T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
@@ -614,7 +615,7 @@ function Build-HomePage {
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $g $b
         $t = New-Object System.Windows.Controls.StackPanel
         Add-Child $t (New-Text ("Nouvelle version disponible : {0}{1}" -f $sync.UpdateInfo.Version, $(if ($sync.UpdateInfo.Test) { ' (version de test)' } else { '' })) 15 '#FFFFFF' 'SemiBold')
-        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier." }) 13 '#8B93A7')
+        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier" + $(if ($Portable) { " sur la clé (garde le dossier « donnees » : il contient tes réglages)." } else { '.' }) }) 13 '#8B93A7')
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
     }
     # Bannière santé
@@ -835,7 +836,7 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # ---------------------------------------------------------------- Annuler une tâche en cours
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
-$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Open-BatteryReport|Test-Internet|Test-Disk)\b'
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Open-BatteryReport|Test-Internet|Test-Disk)\b'
 $script:SoftCancel = '^(Update-SelectedApps|Update-Apps)\b'
 function Stop-AeroxTask {
     $job = $script:Job
@@ -971,6 +972,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
+    elseif ($job.OnDone -eq 'browserdialog' -and $null -ne $sync.BrowserReport) { Show-BrowserDialog $script:BrowserIssue; $script:BrowserIssue = $null }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
     elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { $script:Wiz = $null; Complete-SelfUpdate; return }
@@ -1068,6 +1070,7 @@ function Invoke-UiCommand($T) {
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
                 if ($i.UiFix -eq 'drivers') { Start-DriverCheck $i; return }
                 if ($i.UiFix -eq 'bgitems') { Start-BgList $i; return }
+                if ($i.UiFix -eq 'browser') { Start-BrowserCheck $i; return }
                 if ($i.Confirm -and -not (Confirm-Box $i.Confirm)) { return }
                 $i.Status = 'fixing'; $script:FixingIssue = $i
                 if (-not (Start-AeroxTask $i.FixAction $i.FixLabel)) { $i.Status = 'open'; $script:FixingIssue = $null }
@@ -1130,6 +1133,7 @@ function Invoke-UiCommand($T) {
                     'startup' { Show-StartupDialog $null }
                     'slow' { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
                     'bgitems' { Start-BgList $null }
+                    'browser' { Start-BrowserCheck $null }
                     'optimize' { Start-Optimize }
                     'appupdates' { Start-AppUpdatesList $null }
                     'deepclean' { Start-CleanAnalysis $null }
@@ -2831,6 +2835,100 @@ function Show-BgDialog($Issue) {
     if (-not (Start-AeroxTask ("Disable-BgItems -Items " + (ConvertTo-PsList $ids)) ("Coupure de {0} programme(s) en fond" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
 }
 
+# ---------------------------------------------------------------- Fenêtre : arnaques du navigateur
+function Start-BrowserCheck($Issue) {
+    $script:BrowserIssue = $Issue
+    [void](Start-AeroxTask 'Get-BrowserReport' 'Analyse des navigateurs' 'browserdialog')
+}
+function New-InfoRow($Content, $Right) {
+    $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+    $dp = New-Object System.Windows.Controls.DockPanel
+    if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); $Right.VerticalAlignment = 'Center'; Add-Child $dp $Right }
+    Add-Child $dp $Content; $row.Child = $dp
+    return $row
+}
+function Show-BrowserDialog($Issue) {
+    $items = @($sync.BrowserReport.Items | Where-Object { $_ })
+    $w = New-Dialog "$AppName : arnaques du navigateur" 780
+    $script:BrWin = $w; $script:BrChoice = $null; $script:BrRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Pubs et fausses alertes du navigateur" 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Les fausses alertes de virus en bas de l'écran viennent presque toujours d'un site qui a obtenu le droit d'envoyer des notifications (« clique sur Autoriser pour prouver que tu n'es pas un robot »). Ce qui est suspect est déjà coché. Le navigateur sera fermé le temps de la modification." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $list
+    Add-Child $sp $sv
+    if (-not $items.Count) { Add-Child $list (New-Text "Aucun navigateur Chrome, Edge, Brave ou Opera trouvé sur ce PC." 13 '#8B93A7') }
+    $groups = @(
+        @('notif', "NOTIFICATIONS AUTORISÉES (D'OÙ VIENNENT LES FAUSSES ALERTES)", "Aucun site ne peut t'envoyer de notifications. Rien à faire."),
+        @('pol', "RÉGLAGES IMPOSÉS AU NAVIGATEUR (« GÉRÉ PAR TON ORGANISATION »)", ''),
+        @('home', "PAGE D'ACCUEIL, DÉMARRAGE ET RECHERCHE", ''),
+        @('ext', 'EXTENSIONS INSTALLÉES', ''),
+        @('firefox', 'FIREFOX', ''))
+    $anyBrowser = @($items | Where-Object { $_.Type -ne 'firefox' }).Count -gt 0
+    foreach ($grp in $groups) {
+        $sel = @($items | Where-Object { $_.Type -eq $grp[0] } | Sort-Object @{ Expression = { -not $_.Bad } }, @{ Expression = { $_.Where } }, @{ Expression = { $_.Label } })
+        if (-not $sel.Count) {
+            if ($grp[2] -and $anyBrowser) { $h = New-Text $grp[1] 11.5 '#4ADE80' 'Bold'; $h.Margin = Th 2 10 0 4; Add-Child $list $h; $t = New-Text $grp[2] 12.5 '#8B93A7'; $t.Margin = Th 2 0 0 8; Add-Child $list $t }
+            continue
+        }
+        $nb = @($sel | Where-Object { $_.Bad }).Count
+        $h = New-Text ("{0} · {1}{2}" -f $grp[1], $sel.Count, $(if ($nb) { " (dont $nb suspect" + $(if ($nb -gt 1) { 's' } else { '' }) + ')' } else { '' })) 11.5 $(if ($nb) { '#FFB547' } else { '#4ADE80' }) 'Bold'
+        $h.Margin = Th 2 10 0 8; Add-Child $list $h
+        foreach ($x in $sel) {
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            Add-Child $txt (New-Text $x.Label 13.5 $(if ($x.Bad) { '#FFB547' } else { '#FFFFFF' }) 'SemiBold')
+            Add-Child $txt (New-Text ((@($x.Where, $x.Detail) | Where-Object { $_ }) -join '  ·  ') 11.5 '#8B93A7')
+            if ($x.Type -in 'notif', 'pol' -and -not $x.Locked) {
+                $r = New-CheckRow ([bool]$x.Check) $txt $null
+                $r.Check.Add_Click({ & $script:CountBr })
+                Add-Child $list $r.Row
+                [void]$script:BrRows.Add(@{ Item = $x; Check = $r.Check })
+            } else {
+                $btn = $null
+                if ($x.Exe -and $x.Page -and ($x.Bad -or $x.Type -in 'firefox', 'ext')) {
+                    $btn = New-DlgButton $(if ($x.Type -eq 'ext') { 'Gérer' } else { 'Ouvrir les réglages' }) 'TextBtn'
+                    $btn.Tag = @($x.Exe, $x.Page)
+                    $btn.Add_Click({ $t = $this.Tag; Open-BrowserPage $t[0] $t[1] })
+                }
+                if ($x.Locked) { Add-Child $txt (New-Text "PC d'entreprise ou d'école : ces réglages viennent sûrement de l'informaticien, AEROX n'y touche pas." 11.5 '#6B7389') }
+                Add-Child $list (New-InfoRow $txt $btn)
+            }
+        }
+        if ($grp[0] -eq 'ext') {
+            $t = New-Text "Retire toute extension que tu n'as pas installée toi-même ou que tu n'utilises pas : « Gérer », puis « Supprimer » dans le navigateur." 12 '#8B93A7'; $t.Margin = Th 2 2 0 8; Add-Child $list $t
+        }
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bCancel = New-DlgButton 'Fermer' 'TextBtn'; $bCancel.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Bloquer' 'PrimaryBtn'; $script:BrApply = $bApply
+    Add-Child $bar $bCancel; Add-Child $bar $bApply; Add-Child $sp $bar
+    $script:CountBr = {
+        $n = @($script:BrRows | Where-Object { $_.Check.IsChecked }).Count
+        $script:BrApply.Content = $(if ($n) { "Bloquer / retirer la sélection ($n)" } else { 'Bloquer / retirer la sélection' }); $script:BrApply.IsEnabled = ($n -gt 0)
+    }
+    $bCancel.Add_Click({ $script:BrWin.Close() })
+    $bApply.Add_Click({ $script:BrChoice = @($script:BrRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:BrWin.Close() })
+    & $script:CountBr
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    $sel = @($script:BrChoice | Where-Object { $_ })
+    if (-not $sel.Count) {
+        # Rien de suspect et rien à bloquer : le problème du diagnostic est réglé
+        if ($Issue -and -not @($items | Where-Object { $_.Bad -and -not $_.Locked }).Count) { $Issue.Status = 'done'; Update-DiagBadge; Refresh-Page }
+        return
+    }
+    $procs = @($sel | Where-Object { $_.Type -eq 'notif' } | ForEach-Object { $_.Proc } | Select-Object -Unique | Where-Object { $_ -and (Get-Process -Name $_ -ErrorAction SilentlyContinue) })
+    $names = @{ chrome = 'Google Chrome'; msedge = 'Microsoft Edge'; brave = 'Brave'; opera = 'Opera' }
+    $msg = "Bloquer / retirer {0} élément(s) ?" -f $sel.Count
+    if ($procs.Count) { $msg += "`n`n{0} va être fermé le temps de la modification. Tes onglets te seront proposés à la réouverture." -f (@($procs | ForEach-Object { $names[$_] }) -join ' et ') }
+    if (@($sel | Where-Object { $_.Type -eq 'pol' }).Count) { $msg += "`n`nLes réglages imposés retirés sont sauvegardés : annulable dans l'historique des changements." }
+    if (-not (Confirm-Box ($msg + "`n`nContinuer ?"))) { return }
+    $fix = @($sel | ForEach-Object { $_.Fix })
+    if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
+    if (-not (Start-AeroxTask ("Repair-BrowserItems -Items " + (ConvertTo-PsList $fix)) ("Nettoyage des navigateurs ({0})" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
+}
+
 function Start-AppUpdatesList($Issue) {
     $script:AppsIssue = $Issue
     [void](Start-AeroxTask 'Get-AppUpdatesForUi' 'Recherche des mises à jour' 'appdialog')
@@ -3367,7 +3465,7 @@ foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'))) { try 
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique
 try {
     $uk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare'
-    if ((Test-Path $uk) -and (Get-ItemProperty $uk -ErrorAction Stop).DisplayVersion -ne $AppVersion) { Set-ItemProperty -Path $uk -Name DisplayVersion -Value $AppVersion }
+    if (-not $Portable -and (Test-Path $uk) -and (Get-ItemProperty $uk -ErrorAction Stop).DisplayVersion -ne $AppVersion) { Set-ItemProperty -Path $uk -Name DisplayVersion -Value $AppVersion }
 } catch {}
 # L'overlay se rouvre seulement une fois la fenêtre principale affichée
 $window.Add_ContentRendered({

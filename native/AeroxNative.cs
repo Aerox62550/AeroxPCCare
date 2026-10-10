@@ -797,3 +797,161 @@ public static class AeroxDisplay {
     static DEVMODE NewMode() { DEVMODE d = new DEVMODE(); d.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE)); return d; }
     static string Clean(string s) { return (s ?? "").Replace('|', '/').Trim(); }
 }
+
+// =====================================================================
+//  Lecture / modification chirurgicale d'un fichier JSON (réglages des navigateurs)
+//  Le fichier n'est jamais réécrit en entier : on ne remplace que la valeur visée,
+//  tout le reste reste identique, octet pour octet.
+// =====================================================================
+public static class AeroxJson {
+    static char At(string s, int i) { return (i >= 0 && i < s.Length) ? s[i] : '\0'; }
+    static int Ws(string s, int i) { while (i < s.Length && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')) i++; return i; }
+
+    // Lit la chaîne qui commence à i (s[i] == '"'), renvoie l'index juste après (-1 si invalide)
+    static int ReadString(string s, int i, StringBuilder sb) {
+        if (At(s, i) != '"') return -1;
+        i++;
+        while (i < s.Length) {
+            char c = s[i];
+            if (c == '"') return i + 1;
+            if (c == '\\') {
+                char e = At(s, i + 1);
+                if (e == 'u') {
+                    if (i + 6 > s.Length) return -1;
+                    int code;
+                    if (!int.TryParse(s.Substring(i + 2, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out code)) return -1;
+                    if (sb != null) sb.Append((char)code);
+                    i += 6; continue;
+                }
+                if (sb != null) {
+                    switch (e) {
+                        case 'n': sb.Append('\n'); break; case 't': sb.Append('\t'); break; case 'r': sb.Append('\r'); break;
+                        case 'b': sb.Append('\b'); break; case 'f': sb.Append('\f'); break;
+                        case '"': case '\\': case '/': sb.Append(e); break;
+                        default: return -1;
+                    }
+                }
+                i += 2; continue;
+            }
+            if (sb != null) sb.Append(c);
+            i++;
+        }
+        return -1;
+    }
+
+    // Saute la valeur qui commence à i, renvoie l'index juste après (-1 si invalide)
+    static int SkipValue(string s, int i, int depth) {
+        if (depth > 200) return -1;
+        i = Ws(s, i);
+        char c = At(s, i);
+        if (c == '"') return ReadString(s, i, null);
+        if (c == '{' || c == '[') {
+            char close = c == '{' ? '}' : ']';
+            i = Ws(s, i + 1);
+            if (At(s, i) == close) return i + 1;
+            while (true) {
+                if (c == '{') {
+                    i = ReadString(s, Ws(s, i), null); if (i < 0) return -1;
+                    i = Ws(s, i); if (At(s, i) != ':') return -1; i++;
+                }
+                i = SkipValue(s, i, depth + 1); if (i < 0) return -1;
+                i = Ws(s, i);
+                if (At(s, i) == ',') { i++; continue; }
+                if (At(s, i) == close) return i + 1;
+                return -1;
+            }
+        }
+        int st = i;
+        while (i < s.Length && "-+.0123456789eEtrufalsn".IndexOf(s[i]) >= 0) i++;
+        return i > st ? i : -1;
+    }
+
+    // Position [début, fin[ de la valeur au chemin donné, null si absente
+    public static int[] Find(string s, string[] path) {
+        if (s == null) return null;
+        int i = Ws(s, 0);
+        if (path != null) {
+            foreach (string key in path) {
+                i = Ws(s, i);
+                if (At(s, i) != '{') return null;
+                i = Ws(s, i + 1);
+                if (At(s, i) == '}') return null;
+                bool found = false;
+                while (true) {
+                    StringBuilder sb = new StringBuilder();
+                    i = ReadString(s, Ws(s, i), sb); if (i < 0) return null;
+                    i = Ws(s, i); if (At(s, i) != ':') return null; i = Ws(s, i + 1);
+                    if (sb.ToString() == key) { found = true; break; }
+                    i = SkipValue(s, i, 0); if (i < 0) return null;
+                    i = Ws(s, i);
+                    if (At(s, i) == ',') { i++; continue; }
+                    break;
+                }
+                if (!found) return null;
+            }
+        }
+        int e = SkipValue(s, i, 0);
+        if (e < 0) return null;
+        return new int[] { i, e };
+    }
+
+    // Valeur au chemin : texte décodé pour une chaîne, texte brut sinon (nombre, true, objet...), null si absente
+    public static string Get(string s, string[] path) {
+        int[] r = Find(s, path);
+        if (r == null) return null;
+        if (s[r[0]] == '"') { StringBuilder sb = new StringBuilder(); ReadString(s, r[0], sb); return sb.ToString(); }
+        return s.Substring(r[0], r[1] - r[0]);
+    }
+
+    // Clés directes de l'objet au chemin
+    public static string[] Keys(string s, string[] path) {
+        List<string> outp = new List<string>();
+        int[] r = Find(s, path);
+        if (r == null || s[r[0]] != '{') return outp.ToArray();
+        int i = Ws(s, r[0] + 1);
+        if (At(s, i) == '}') return outp.ToArray();
+        while (true) {
+            StringBuilder sb = new StringBuilder();
+            i = ReadString(s, Ws(s, i), sb); if (i < 0) break;
+            outp.Add(sb.ToString());
+            i = Ws(s, i); if (At(s, i) != ':') break;
+            i = SkipValue(s, i + 1, 0); if (i < 0) break;
+            i = Ws(s, i);
+            if (At(s, i) == ',') { i++; continue; }
+            break;
+        }
+        return outp.ToArray();
+    }
+
+    // Éléments texte du tableau au chemin
+    public static string[] Items(string s, string[] path) {
+        List<string> outp = new List<string>();
+        int[] r = Find(s, path);
+        if (r == null || s[r[0]] != '[') return outp.ToArray();
+        int i = Ws(s, r[0] + 1);
+        if (At(s, i) == ']') return outp.ToArray();
+        while (true) {
+            i = Ws(s, i);
+            if (At(s, i) == '"') { StringBuilder sb = new StringBuilder(); int e = ReadString(s, i, sb); if (e < 0) break; outp.Add(sb.ToString()); i = e; }
+            else { i = SkipValue(s, i, 0); if (i < 0) break; }
+            i = Ws(s, i);
+            if (At(s, i) == ',') { i++; continue; }
+            break;
+        }
+        return outp.ToArray();
+    }
+
+    // Remplace la valeur au chemin par un texte JSON brut ; null si le chemin n'existe pas
+    public static string Replace(string s, string[] path, string raw) {
+        int[] r = Find(s, path);
+        if (r == null) return null;
+        return s.Substring(0, r[0]) + raw + s.Substring(r[1]);
+    }
+
+    // Le texte entier est-il un JSON valide ?
+    public static bool Valid(string s) {
+        if (s == null) return false;
+        int e = SkipValue(s, 0, 0);
+        return e > 0 && Ws(s, e) == s.Length;
+    }
+}
