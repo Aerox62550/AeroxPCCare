@@ -353,7 +353,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState'
+    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -361,6 +361,10 @@ function Test-SafeUndo([string]$Code) {
     if ($pipe -isnot [System.Management.Automation.Language.PipelineAst] -or $pipe.PipelineElements.Count -ne 1) { return $false }
     $cmd = $pipe.PipelineElements[0]
     if ($cmd -isnot [System.Management.Automation.Language.CommandAst] -or $allowed -notcontains $cmd.GetCommandName()) { return $false }
+    if ($cmd.GetCommandName() -eq 'Set-BgItem') {
+        $last = @($cmd.CommandElements)[-1]
+        if ($last -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or $last.Value -notin 'on', 'auto') { return $false }
+    }
     foreach ($el in @($cmd.CommandElements | Select-Object -Skip 1)) {
         $bad = $el.FindAll({ param($n) -not ($n -is [System.Management.Automation.Language.CommandParameterAst] -or $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
                                                $n -is [System.Management.Automation.Language.ConstantExpressionAst] -or $n -is [System.Management.Automation.Language.ArrayExpressionAst] -or
@@ -648,6 +652,142 @@ function Test-Battery {
                 -Steps @("Onglet « Mon PC » > Batterie : tu y trouves sa référence et sa capacité pour commander la bonne batterie de remplacement.", "Cherche une batterie avec le modèle exact du PC (ou la référence de la batterie) chez le fabricant ou un vendeur sérieux.", "En attendant : laisse le PC branché quand tu peux et évite de le laisser se vider complètement.")
         }
     }
+}
+
+# =====================================================================
+#  PROGRAMMES CACHÉS EN FOND : tâches planifiées et services qui ne sont pas de Microsoft
+# =====================================================================
+# Reconnus : regex sur nom + chemin, libellé clair, verdict ('off' = inutile en fond, 'keep' = à garder), explication
+$script:BgKnown = @(
+    @('(?i)mcafee|norton|avast|\bavg\b|bitdefender|kaspersky|\beset\b|malwarebytes|sophos|trend ?micro|panda|f-secure|webroot|g ?data|windows ?defender', 'Antivirus', 'keep', "Protège le PC : ne pas toucher."),
+    @('(?i)google ?update|gupdate|googleupdater', 'Mises à jour de Google Chrome', 'keep', "Installe les correctifs de sécurité de Chrome : à garder."),
+    @('(?i)edgeupdate|microsoftedgeupdate', 'Mises à jour de Microsoft Edge', 'keep', "Installe les correctifs de sécurité d'Edge : à garder."),
+    @('(?i)brave.*update|braveupdate|firefox.*(maintenance|background ?update)|mozilla', 'Mises à jour du navigateur', 'keep', "Correctifs de sécurité du navigateur : à garder."),
+    @('(?i)onedrive.*(standalone|update)', 'Mises à jour de OneDrive', 'keep', "À garder si tu utilises OneDrive."),
+    @('(?i)nvdisplay\.container|nvcontainerlocalsystem|nvidia display', 'Panneau de configuration NVIDIA', 'keep', "Nécessaire au pilote de la carte graphique."),
+    @('(?i)realtek|audio|nahimic|dolby|dts|waves', 'Son (pilote audio)', 'keep', "Fait partie du pilote audio : à garder."),
+    @('(?i)opera.*(assistant|autoupdate|scheduled)|opera gx', "Assistant et mises à jour d'Opera", 'off', "Inutile en fond : Opera se met à jour quand tu l'ouvres."),
+    @('(?i)adobe ?arm|adobe acrobat update|acrobat.*update', "Mises à jour d'Adobe Acrobat Reader", 'off', "Reader se met aussi à jour quand tu l'ouvres."),
+    @('(?i)adobe.*genuine|agsservice|adobegcinvoker|gc ?invoker', "Vérification de licence Adobe", 'off', "Tourne en permanence pour vérifier les licences Adobe : inutile si tu n'as pas de logiciel Adobe payant."),
+    @('(?i)ccleaner|driver ?booster|iobit|advanced systemcare|glary|wise ?care|avast ?cleanup|pc ?app ?store|reimage|restoro|segurazo|wondershare.*helper', "Logiciel « d'optimisation » / douteux", 'off', "Ce genre de logiciel tourne en fond pour afficher des alertes et vendre une version payante."),
+    @('(?i)nvtm|nvtelemetry|nvdriverupdatecheck|nvidia telemetry', 'Statistiques et vérifications NVIDIA', 'off', "Envoie des statistiques à NVIDIA : le pilote marche très bien sans."),
+    @('(?i)intel.*(telemetry|computing improvement|system usage report)|sursvc|esrv', 'Statistiques Intel', 'off', "Envoie des statistiques d'utilisation à Intel."),
+    @('(?i)hp.*(analytics|touchpoint|customer participation|insights|diagnostics data|app helper|jumpstart)|hpsvcsscan', 'Statistiques et publicités HP', 'off', "Collecte des données pour HP : le PC marche sans."),
+    @('(?i)dell.*(data ?vault|supportassist ?remediation|techhub)', 'Statistiques Dell', 'off', "Collecte des données pour Dell : le PC marche sans."),
+    @('(?i)lenovo.*(telemetry|experience improvement|customer feedback)|imcontroller.*telemetry', 'Statistiques Lenovo', 'off', "Collecte des données pour Lenovo : le PC marche sans."),
+    @('(?i)acer.*(portal|jumpstart)|asus.*giftbox', 'Utilitaires du fabricant', 'off', "Petits utilitaires préinstallés qui tournent en fond sans être indispensables."),
+    @('(?i)onedrive.*reporting', 'Rapports OneDrive', 'off', "Envoie des rapports d'utilisation à Microsoft."),
+    @('(?i)cortana|\bbing\b|\bmsn\b', 'Services Bing / MSN', 'off', "Contenus et publicités Bing/MSN.")
+)
+function Get-BgVerdict([string]$Text) {
+    foreach ($k in $script:BgKnown) { if ($Text -match $k[0]) { return @{ Label = $k[1]; Verdict = $k[2]; Why = $k[3] } } }
+    return @{ Label = ''; Verdict = 'unknown'; Why = "Pas reconnu : garde-le si tu ne sais pas à quoi il sert." }
+}
+function Get-ExeFromCommand([string]$Cmd) {
+    $c = "$Cmd".Trim()
+    if ($c -match '^"([^"]+)"') { return $matches[1] }
+    if ($c -match '^(.+?\.exe)\b') { return $matches[1] }
+    return ($c -split '\s+')[0]
+}
+function Get-BgCompany([string]$Exe) {
+    try { $p = [Environment]::ExpandEnvironmentVariables($Exe); if (Test-Path -LiteralPath $p) { return "$((Get-Item -LiteralPath $p).VersionInfo.CompanyName)".Trim() } } catch {}
+    return ''
+}
+function Get-BgItemsList {
+    $list = New-Object System.Collections.ArrayList
+    # Tâches planifiées actives hors Microsoft
+    foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' })) {
+        $exe = ''; $arg = ''; try { $exe = Get-ExeFromCommand "$(@($t.Actions)[0].Execute)"; $arg = "$(@($t.Actions)[0].Arguments)" } catch {}
+        $co = Get-BgCompany $exe
+        if ($exe -match '(?i)(rundll32|wscript|cscript|powershell|pwsh|cmd|mshta|conhost)(\.exe)?$') {
+            # Programme hôte de Windows : le vrai programme est dans les arguments
+            $inner = [regex]::Match($arg, '(?i)[a-z]:\\[^"]+?\.(exe|dll)').Value
+            if ($inner) { $exe = $inner; $co = Get-BgCompany $inner } else { $co = '' }
+        }
+        if ($co -match '^Microsoft' -and "$($t.TaskName)" -notmatch '(?i)onedrive|edge') { continue }
+        if ("$($t.TaskName)" -match '(?i)aerox') { continue }
+        $v = Get-BgVerdict ("{0} {1} {2} {3}" -f $t.TaskName, $t.TaskPath, $exe, $co)
+        [void]$list.Add(@{ Kind = 'task'; Path = "$($t.TaskPath)"; Name = "$($t.TaskName)"; Exe = $exe; Company = $co; Label = $v.Label; Verdict = $v.Verdict; Why = $v.Why })
+    }
+    # Services qui démarrent avec Windows, hors Microsoft
+    foreach ($sv in @(Get-CimInstance Win32_Service -Filter "StartMode='Auto'" -ErrorAction SilentlyContinue)) {
+        $exe = Get-ExeFromCommand "$($sv.PathName)"
+        if ($exe -match '(?i)\\windows\\(system32|syswow64)\\' -and "$($sv.PathName)" -match '(?i)svchost') { continue }
+        $co = Get-BgCompany $exe
+        if ($co -match '^Microsoft' -or (-not $co -and $exe -match '(?i)^[a-z]:\\windows\\')) { continue }
+        $v = Get-BgVerdict ("{0} {1} {2} {3}" -f $sv.Name, $sv.DisplayName, $exe, $co)
+        [void]$list.Add(@{ Kind = 'service'; Path = ''; Name = "$($sv.Name)"; Display = "$($sv.DisplayName)"; Exe = $exe; Company = $co; Label = $v.Label; Verdict = $v.Verdict; Why = $v.Why; Running = ("$($sv.State)" -eq 'Running') })
+    }
+    return $list.ToArray()
+}
+function Get-BgItems {
+    Step "Recherche des programmes cachés qui tournent en fond (tâches planifiées et services)"
+    $sync.BgItems = $null
+    $items = @(Get-BgItemsList)
+    $sync.BgItems = $items
+    Log ("   ✔ {0} tâche(s) et {1} service(s) hors Microsoft, dont {2} inutile(s) en fond." -f @($items | Where-Object { $_.Kind -eq 'task' }).Count, @($items | Where-Object { $_.Kind -eq 'service' }).Count, @($items | Where-Object { $_.Verdict -eq 'off' }).Count)
+}
+# Un élément : tâche activée / désactivée, service automatique / manuel (manuel = il démarre seulement si un logiciel en a besoin)
+function Set-BgItem([string]$Kind, [string]$Path, [string]$Name, [string]$State) {
+    if ($Kind -eq 'task' -and $Path -like '\Microsoft\*' -and $State -ne 'on') { throw "Les tâches de Windows ne sont jamais coupées par AEROX." }
+    if ($Kind -eq 'task') {
+        if ($State -eq 'on') { Enable-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop | Out-Null } else { Disable-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop | Out-Null }
+    } else {
+        Set-Service -Name $Name -StartupType $(if ($State -eq 'auto') { 'Automatic' } else { 'Manual' }) -ErrorAction Stop
+    }
+}
+function Disable-BgItems([string[]]$Items) {
+    Step ("Désactivation de {0} programme(s) caché(s) en fond" -f $Items.Count)
+    $ok = 0
+    foreach ($it in $Items) {
+        $p = $it.Split('|', 4); if ($p.Count -lt 4) { continue }
+        $kind = $p[0]; $path = $p[1]; $name = $p[2]; $label = $p[3]
+        try {
+            if ($kind -eq 'task') {
+                Set-BgItem 'task' $path $name 'off'
+                Add-Change -Title ("Tâche en fond désactivée : {0}" -f $label) -Undo ("Set-BgItem 'task' {0} {1} 'on'" -f (ConvertTo-PsLiteral $path), (ConvertTo-PsLiteral $name))
+            } else {
+                Set-BgItem 'service' '' $name 'manual'
+                Add-Change -Title ("Service en démarrage manuel : {0}" -f $label) -Detail "Il démarre seulement si un logiciel en a besoin." -Undo ("Set-BgItem 'service' '' {0} 'auto'" -f (ConvertTo-PsLiteral $name))
+            }
+            $ok++; Log ("   ✔ {0}" -f $label)
+        } catch { Log ("   ⚠ {0} : {1}" -f $label, $_.Exception.Message) }
+    }
+    Log ("✅ {0} programme(s) caché(s) ne tournent plus en fond. Effet complet au prochain redémarrage. Tout est annulable dans l'historique." -f $ok)
+}
+# Diagnostic : programmes cachés reconnus comme inutiles
+function Test-BgItems {
+    $off = @(Get-BgItemsList | Where-Object { $_.Verdict -eq 'off' })
+    if ($off.Count -ge 1) {
+        $names = (@($off | Select-Object -First 3 | ForEach-Object { if ($_.Label) { $_.Label } else { $_.Name } } | Select-Object -Unique) -join ', ')
+        Add-Issue -Id 'bgitems' -Sev 'warn' -Title ("{0} programme(s) caché(s) tournent en fond pour rien" -f $off.Count) -Detail $names `
+            -Cause "Statistiques de fabricants, outils de mise à jour inutiles ou logiciels « d'optimisation » qui se lancent tout seuls, sans apparaître dans les programmes au démarrage." `
+            -Effect "Ils prennent de la mémoire et du processeur en permanence, et ralentissent le démarrage." `
+            -FixLabel "Voir et choisir" -UiFix 'bgitems'
+    } else { Add-Ok "Programmes cachés en fond : rien d'inutile repéré" }
+}
+
+# =====================================================================
+#  BILAN AVANT / APRÈS : mesures simples et vérifiables de l'état du PC
+# =====================================================================
+# Temps du dernier démarrage complet mesuré par Windows lui-même (journal « Diagnostics-Performance », événement 100)
+function Get-LastBootTime {
+    try {
+        $e = Get-WinEvent -LogName 'Microsoft-Windows-Diagnostics-Performance/Operational' -FilterXPath '*[System[EventID=100]]' -MaxEvents 1 -ErrorAction Stop
+        $x = [xml]$e.ToXml()
+        $ms = ($x.Event.EventData.Data | Where-Object { $_.Name -eq 'BootTime' } | Select-Object -First 1).'#text'
+        if ($ms -and [int64]$ms -gt 0 -and [int64]$ms -lt 1800000) { return @{ Sec = [math]::Round([double]$ms / 1000); Date = $e.TimeCreated } }
+    } catch {}
+    return $null
+}
+function Get-PcSnapshot {
+    $s = @{ Date = (Get-Date).ToString('s') }
+    try { $b = Get-LastBootTime; if ($b) { $s.BootSec = $b.Sec; $s.BootDate = $b.Date.ToString('s') } } catch {}
+    try { $s.Startup = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count } catch {}
+    try { $os = Get-CimInstance Win32_OperatingSystem; $s.RamUsed = [double]($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) * 1KB } catch {}
+    try { $s.Procs = @(Get-Process -ErrorAction SilentlyContinue).Count } catch {}
+    try { $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"; $s.Free = [double]$d.FreeSpace } catch {}
+    return $s
 }
 
 # =====================================================================
@@ -1145,7 +1285,12 @@ function Test-ConnectionStability {
     # 2. Pilote Wi-Fi ancien
     if ($a.Wifi -and $a.DriverDate) {
         $age = [int]((Get-Date) - $a.DriverDate).TotalDays
-        if ($age -ge 730) {
+        # Cartes Intel d'ancienne génération : Intel ne sort plus que la branche « legacy » (19.51 pour 3165/3168/7265, 18.33 pour 3160/7260).
+        # Avec cette branche installée, c'est la dernière version possible : pas d'alerte, même si sa date est ancienne.
+        $legacy = ($a.Desc -match '(?i)wireless-ac (3165|3168|7265)' -and "$($a.DriverVersion)" -match '^19\.51\.') -or
+                  ($a.Desc -match '(?i)wireless(-ac|-n)? (3160|7260)' -and "$($a.DriverVersion)" -match '^18\.33\.')
+        if ($legacy) { Add-Ok ("Pilote Wi-Fi : dernière version proposée par Intel pour cette carte ({0})" -f $a.DriverVersion) }
+        elseif ($age -ge 730) {
             $intel = ($a.Desc -match '(?i)intel|killer')
             $url = 'https://www.intel.fr/content/www/fr/fr/support/detect.html'
             Add-Issue -Id 'wifidrv' -Sev 'warn' -Title ("Le pilote Wi-Fi date de {0}" -f (Format-Date $a.DriverDate 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $a.Desc, $a.DriverVersion) `
@@ -1555,6 +1700,7 @@ function Invoke-Diagnostic {
     $sens = $sync.Sens
     if ($sens -and ($sens['cpu.temp'] -or $sens['gpu.temp'])) { $checks['Températures'] = 'Test-Temperatures' }
     $checks['Performances'] = 'Test-Performance'
+    $checks['En fond'] = 'Test-BgItems'
     if (@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue).Count) { $checks['Batterie'] = 'Test-Battery' }
     $sync.Scan.Clear()
     foreach ($k in $checks.Keys) { $sync.Scan[$k] = 'wait' }
@@ -1576,6 +1722,7 @@ function Invoke-Diagnostic {
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
     $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
+    try { $sync.Diag.Snap = Get-PcSnapshot } catch {}
     if ($script:IgnoredList.Count) { Log ("   ({0} alerte(s) ignorée(s) à ta demande)" -f $script:IgnoredList.Count) }
     Step "Résultat"
     Log ("{0} problème(s) dont {1} critique(s), {2} point(s) OK" -f $script:Issues.Count, $crit, $script:OkList.Count)

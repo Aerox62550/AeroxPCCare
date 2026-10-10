@@ -305,6 +305,19 @@ public class AeroxSplash {
                 Label pct = new Label(); pct.ForeColor = System.Drawing.Color.FromArgb(185, 168, 255); pct.Font = new System.Drawing.Font("Segoe UI", 8.5f, System.Drawing.FontStyle.Bold);
                 pct.AutoSize = false; pct.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; pct.Location = new System.Drawing.Point(0, S(152)); pct.Size = new System.Drawing.Size(W, S(20)); pct.Text = "0 %";
                 f.Controls.Add(pb); f.Controls.Add(t1); f.Controls.Add(t2); f.Controls.Add(track); f.Controls.Add(pct);
+                // Centrage vertical : hauteur réelle de chaque texte (selon la police et l'échelle de l'écran), puis le bloc entier au milieu du cadre
+                try {
+                    int h1 = TextRenderer.MeasureText("Ag", t1.Font).Height, h2 = TextRenderer.MeasureText("Ag", t2.Font).Height, h3 = TextRenderer.MeasureText("Ag", pct.Font).Height;
+                    t1.Height = h1; t2.Height = h2; pct.Height = h3;
+                    int g1 = S(10), g2 = S(2), g3 = S(14), g4 = S(6);
+                    int total = pb.Height + g1 + h1 + g2 + h2 + g3 + track.Height + g4 + h3;
+                    int y = Math.Max(S(8), (H - total) / 2);
+                    pb.Top = y; y += pb.Height + g1;
+                    t1.Top = y; y += h1 + g2;
+                    t2.Top = y; y += h2 + g3;
+                    track.Top = y; y += track.Height + g4;
+                    pct.Top = y;
+                } catch { }
 
                 System.Windows.Forms.Timer anim = new System.Windows.Forms.Timer(); anim.Interval = 15;
                 anim.Tick += delegate {
