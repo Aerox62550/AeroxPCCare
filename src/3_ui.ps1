@@ -2840,7 +2840,7 @@ function Start-BrowserCheck($Issue) {
     $script:BrowserIssue = $Issue
     [void](Start-AeroxTask 'Get-BrowserReport' 'Analyse des navigateurs' 'browserdialog')
 }
-function New-InfoRow($Content, $Right) {
+function New-BrowserRow($Content, $Right) {
     $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); $Right.VerticalAlignment = 'Center'; Add-Child $dp $Right }
@@ -2892,7 +2892,7 @@ function Show-BrowserDialog($Issue) {
                     $btn.Add_Click({ $t = $this.Tag; Open-BrowserPage $t[0] $t[1] })
                 }
                 if ($x.Locked) { Add-Child $txt (New-Text "PC d'entreprise ou d'école : ces réglages viennent sûrement de l'informaticien, AEROX n'y touche pas." 11.5 '#6B7389') }
-                Add-Child $list (New-InfoRow $txt $btn)
+                Add-Child $list (New-BrowserRow $txt $btn)
             }
         }
         if ($grp[0] -eq 'ext') {
