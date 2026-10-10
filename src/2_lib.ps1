@@ -768,6 +768,155 @@ function Test-BgItems {
 }
 
 # =====================================================================
+#  DÉPANNAGES DU QUOTIDIEN : imprimante, son, micro, webcam, bureau figé
+# =====================================================================
+# Autorisation Windows « Autoriser les applications à accéder au micro / à la caméra » (Confidentialité)
+function Get-PrivacyBlocked([string]$Cap) {
+    $blocked = @()
+    foreach ($root in 'HKLM:', 'HKCU:') {
+        $k = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\$Cap"
+        foreach ($p in @($k, "$k\NonPackaged")) {
+            try { if ((Get-ItemProperty -LiteralPath $p -Name Value -ErrorAction Stop).Value -eq 'Deny') { $blocked += $p } } catch {}
+        }
+    }
+    return $blocked
+}
+function Set-PrivacyAllowed([string]$Cap, [string]$Label) {
+    $b = @(Get-PrivacyBlocked $Cap)
+    if (-not $b.Count) { Log "   ✔ Windows autorise les applications à utiliser $Label"; return $false }
+    foreach ($p in $b) { try { Set-ItemProperty -LiteralPath $p -Name Value -Value 'Allow' -ErrorAction Stop } catch {} }
+    Log "   ✔ L'accès à $Label était bloqué dans les réglages de confidentialité de Windows : réautorisé."
+    Add-Change -Kind 'info' -Title "Accès à $Label réautorisé (Confidentialité de Windows)"
+    return $true
+}
+# Périphériques désactivés (code 22) d'une classe : réactivés
+function Enable-DisabledDevices([string[]]$Classes, [string]$Label, [string]$IdPattern = '') {
+    $n = 0
+    foreach ($d in @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in $Classes -and [int]$_.ConfigManagerErrorCode -eq 22 -and (-not $IdPattern -or $_.InstanceId -match $IdPattern) })) {
+        try { Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false -ErrorAction Stop; Log ("   ✔ {0} était désactivé : réactivé." -f $d.FriendlyName); $n++ } catch {}
+    }
+    if ($n) { Add-Change -Kind 'info' -Title ("{0} réactivé(s) : {1}" -f $Label, $n) }
+    return $n
+}
+
+function Repair-Printing {
+    Step "Imprimante : déblocage de l'impression"
+    $printers = @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)onenote|pdf|xps|fax|send to' })
+    if (-not $printers.Count) {
+        Add-TaskError -Title "Aucune imprimante installée sur ce PC" -Cause "Windows ne connaît aucune imprimante (hors imprimantes virtuelles PDF/XPS)." -Effect "Impossible d'imprimer tant qu'elle n'est pas ajoutée." `
+            -FixLabel "Ajouter une imprimante" -FixAction "Start-Process 'ms-settings:printers'" -Steps @("Allume l'imprimante et vérifie qu'elle est branchée (USB) ou sur le même Wi-Fi que le PC.", "Paramètres > Bluetooth et appareils > Imprimantes et scanners > « Ajouter un appareil ».", "Si elle n'apparaît pas, installe le logiciel du fabricant (HP Smart, Canon, Epson…) depuis son site officiel.")
+        return
+    }
+    $jobs = 0; try { $jobs = @(Get-CimInstance Win32_PrintJob -ErrorAction SilentlyContinue).Count } catch {}
+    Log ("   • {0} impression(s) en attente dans la file" -f $jobs)
+    # File d'attente bloquée : on arrête le service d'impression, on vide la file, on le relance
+    try {
+        Stop-Service -Name Spooler -Force -ErrorAction Stop
+        Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot 'System32\spool\PRINTERS') -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Start-Service -Name Spooler -ErrorAction Stop
+        Log "   ✔ Service d'impression relancé et file d'attente vidée"
+    } catch {
+        try { Start-Service -Name Spooler -ErrorAction SilentlyContinue } catch {}
+        Add-TaskError -Title "Le service d'impression n'a pas pu être relancé" -Cause $_.Exception.Message -FixLabel "Redémarrer le PC" -FixAction 'Request-Reboot'
+        return
+    }
+    # Imprimante restée « hors connexion » dans Windows
+    foreach ($pr in @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.WorkOffline })) {
+        try { Set-CimInstance -InputObject $pr -Property @{ WorkOffline = $false } -ErrorAction Stop; Log ("   ✔ « {0} » était en mode hors connexion : remise en ligne" -f $pr.Name) } catch {}
+    }
+    foreach ($pr in @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)onenote|pdf|xps|fax|send to' })) {
+        $st = switch ([int]$pr.PrinterStatus) { 3 { 'prête' } 4 { 'en train d''imprimer' } 5 { 'en préchauffage' } 7 { 'HORS LIGNE' } 1 { 'état inconnu' } 2 { 'état inconnu' } default { "état $($pr.PrinterStatus)" } }
+        Log ("   • {0}{1} : {2}" -f $pr.Name, $(if ($pr.Default) { ' (par défaut)' } else { '' }), $st)
+    }
+    $def = $printers | Where-Object { $_.Default } | Select-Object -First 1
+    if (-not $def) { Log "   ⚠ Aucune imprimante par défaut : choisis-la dans Paramètres > Imprimantes et scanners." }
+    Log "✅ Relance une impression. Si rien ne sort : imprimante allumée, papier, câble ou même Wi-Fi que le PC, puis éteins-la et rallume-la."
+    Add-Change -Kind 'info' -Title "Impression débloquée (service relancé, file d'attente vidée)"
+}
+
+function Repair-Sound {
+    Step "Son : vérification et réparation"
+    foreach ($svc in 'AudioEndpointBuilder', 'Audiosrv') {
+        try {
+            $sv = Get-Service -Name $svc -ErrorAction Stop
+            if ($sv.StartType -eq 'Disabled') { Set-Service -Name $svc -StartupType Automatic -ErrorAction Stop; Log "   ✔ Service audio « $svc » était désactivé : réactivé" }
+        } catch {}
+    }
+    try { Restart-Service -Name Audiosrv -Force -ErrorAction Stop; Log "   ✔ Service audio de Windows relancé" } catch { try { Start-Service -Name Audiosrv -ErrorAction SilentlyContinue } catch {} }
+    Start-Sleep -Seconds 2
+    [void](Enable-DisabledDevices @('AudioEndpoint') 'Sortie son' '\{0\.0\.0\.')
+    $outs = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '\{0\.0\.0\.' } | ForEach-Object { $_.FriendlyName })
+    if ($outs.Count) { Log ("   • Sorties détectées : {0}" -f ($outs -join ' · ')) }
+    $info = [AeroxAudio]::Info($false)
+    if (-not $info) {
+        Add-TaskError -Title "Aucun haut-parleur ni casque actif" -Cause "Windows ne trouve pas de sortie son en marche." -Effect "Aucun son ne peut sortir du PC." `
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le casque ou les enceintes (prise verte ou USB), allume-les.", "Sur un écran HDMI, le son passe souvent par l'écran : vérifie son volume.", "Paramètres > Son : choisis le bon appareil dans « Choisir où lire le son ».", "Sinon : Mises à jour > Pilotes (drivers) pour installer le pilote audio.")
+        return
+    }
+    $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
+    if ($muted -or $vol -lt 10) {
+        [void][AeroxAudio]::Fix($false, 50)
+        Log ("   ✔ Le son {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était presque à zéro ($vol %)" }), [math]::Max($vol, 50))
+        Add-Change -Kind 'info' -Title "Son réactivé (sourdine enlevée / volume remonté)"
+    } else { Log "   ✔ Volume à $vol %, sourdine désactivée" }
+    Log "✅ Si tu n'entends toujours rien : vérifie que le son sort sur le bon appareil (casque, écran ou enceintes) dans Paramètres > Son, et le volume de l'appareil lui-même."
+}
+
+function Repair-Microphone {
+    Step "Micro : vérification et réparation"
+    [void](Set-PrivacyAllowed 'microphone' 'le micro')
+    [void](Enable-DisabledDevices @('AudioEndpoint') 'Micro' '\{0\.0\.1\.')
+    $ins = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '\{0\.0\.1\.' } | ForEach-Object { $_.FriendlyName })
+    if ($ins.Count) { Log ("   • Micros détectés : {0}" -f ($ins -join ' · ')) }
+    $info = [AeroxAudio]::Info($true)
+    if (-not $info) {
+        Add-TaskError -Title "Aucun micro actif" -Cause "Windows ne trouve pas de micro en marche." -Effect "Discord, Teams, les jeux… ne t'entendent pas." `
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le micro ou le casque (prise rose ou USB). Sur un casque, vérifie le bouton « mute » du câble.", "Paramètres > Son > Entrée : choisis le bon micro.", "Dans Discord/Teams, choisis aussi ce micro dans leurs propres réglages audio.")
+        return
+    }
+    $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
+    if ($muted -or $vol -lt 30) {
+        [void][AeroxAudio]::Fix($true, 80)
+        Log ("   ✔ Le micro {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était très bas ($vol %)" }), [math]::Max($vol, 80))
+        Add-Change -Kind 'info' -Title "Micro réactivé (sourdine enlevée / volume remonté)"
+    } else { Log "   ✔ Micro à $vol %, sourdine désactivée" }
+    Log "✅ Teste ton micro : Paramètres > Son > ton micro > « Tester le micro ». Dans Discord ou Teams, vérifie aussi que c'est le bon micro qui est choisi."
+}
+
+function Repair-Webcam {
+    Step "Webcam : vérification et réparation"
+    [void](Set-PrivacyAllowed 'webcam' 'la caméra')
+    [void](Enable-DisabledDevices @('Camera', 'Image') 'Webcam')
+    $cams = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in 'Camera', 'Image' -and $_.FriendlyName -notmatch '(?i)scan|printer|imprim' })
+    if (-not $cams.Count) {
+        Add-TaskError -Title "Aucune webcam détectée" -Cause "Windows ne voit aucune caméra branchée ou allumée." -Effect "Les appels vidéo n'ont pas d'image." `
+            -Steps @("Webcam USB : débranche-la et rebranche-la sur un autre port.", "PC portable : beaucoup ont un petit cache coulissant au-dessus de l'écran, ou une touche avec une caméra barrée (souvent F8, F10 ou Fn + une touche) qui coupe la webcam.", "Sinon : Mises à jour > Pilotes (drivers) pour vérifier son pilote.")
+        return
+    }
+    foreach ($c in $cams) { Log ("   • {0} : {1}" -f $c.FriendlyName, $(if ($c.Status -eq 'OK') { 'en marche' } else { "problème ($($c.Status))" })) }
+    if (@($cams | Where-Object { $_.Status -ne 'OK' }).Count) {
+        Add-TaskError -Title "La webcam a un problème de pilote" -Cause "Windows la voit mais n'arrive pas à la faire fonctionner." -Effect "Pas d'image dans les appels vidéo." `
+            -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" -Steps @("Débranche/rebranche la webcam (USB) ou redémarre le PC.", "Onglet Mises à jour > « Pilotes (drivers) » : installe le pilote que Windows propose.")
+        return
+    }
+    try { Start-Process 'microsoft.windows.camera:' -ErrorAction Stop; Log "   ✔ L'application Caméra de Windows s'ouvre pour tester." } catch {}
+    Log "✅ Si l'image reste noire : ferme les autres logiciels qui utilisent la caméra (Teams, Discord, navigateur…), et vérifie le cache ou la touche caméra sur un portable."
+}
+
+# Bureau, barre des tâches ou menu Démarrer figés : relance de l'Explorateur Windows
+function Restart-Shell {
+    Step "Relance du bureau et de la barre des tâches (Explorateur Windows)"
+    $owner = ''
+    try { $owner = "$((Get-CimInstance Win32_ComputerSystem).UserName)" } catch {}
+    Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Windows relance tout seul l'Explorateur de la personne connectée ; sinon on le relance pour elle
+    for ($i = 0; $i -lt 10 -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
+    # (Avec un compte admin séparé, on ne relance pas nous-mêmes : ce serait le bureau du compte admin, pas celui de la personne)
+    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue) -and -not (Test-OtherAccount)) { Start-Process explorer.exe }
+    Log "✅ Bureau et barre des tâches relancés. Si le menu Démarrer bloque encore, redémarre le PC."
+}
+
+# =====================================================================
 #  BILAN AVANT / APRÈS : mesures simples et vérifiables de l'état du PC
 # =====================================================================
 # Temps du dernier démarrage complet mesuré par Windows lui-même (journal « Diagnostics-Performance », événement 100)

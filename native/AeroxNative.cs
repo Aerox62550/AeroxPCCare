@@ -668,6 +668,67 @@ public static class AeroxSpeed {
 
 // Écrans : fréquence actuelle et fréquence maximale possible à la résolution actuelle, et changement
 // de fréquence (API officielle de Windows, la même que Paramètres > Affichage > Affichage avancé).
+// Son et micro : volume et sourdine du périphérique par défaut (API Core Audio de Windows)
+public static class AeroxAudio {
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCom { }
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator {
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
+    }
+    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice {
+        [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+    }
+    [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioEndpointVolume {
+        [PreserveSig] int RegisterControlChangeNotify(IntPtr p);
+        [PreserveSig] int UnregisterControlChangeNotify(IntPtr p);
+        [PreserveSig] int GetChannelCount(out uint c);
+        [PreserveSig] int SetMasterVolumeLevel(float level, ref Guid ctx);
+        [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid ctx);
+        [PreserveSig] int GetMasterVolumeLevel(out float level);
+        [PreserveSig] int GetMasterVolumeLevelScalar(out float level);
+        [PreserveSig] int SetChannelVolumeLevel(uint ch, float level, ref Guid ctx);
+        [PreserveSig] int SetChannelVolumeLevelScalar(uint ch, float level, ref Guid ctx);
+        [PreserveSig] int GetChannelVolumeLevel(uint ch, out float level);
+        [PreserveSig] int GetChannelVolumeLevelScalar(uint ch, out float level);
+        [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid ctx);
+        [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+    }
+    static IAudioEndpointVolume Get(bool capture) {
+        IMMDeviceEnumerator en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorCom());
+        IMMDevice dev;
+        if (en.GetDefaultAudioEndpoint(capture ? 1 : 0, 1, out dev) != 0 || dev == null) return null;
+        Guid iid = typeof(IAudioEndpointVolume).GUID;
+        object o;
+        if (dev.Activate(ref iid, 23, IntPtr.Zero, out o) != 0 || o == null) return null;
+        return (IAudioEndpointVolume)o;
+    }
+    // "volume|sourdine(0/1)" du haut-parleur (capture=false) ou du micro (capture=true) par défaut ; "" si aucun
+    public static string Info(bool capture) {
+        try {
+            IAudioEndpointVolume v = Get(capture);
+            if (v == null) return "";
+            float l; bool m;
+            v.GetMasterVolumeLevelScalar(out l); v.GetMute(out m);
+            return ((int)Math.Round(l * 100)).ToString() + "|" + (m ? "1" : "0");
+        } catch { return ""; }
+    }
+    // Enlève la sourdine et remonte le volume au minimum demandé (sans jamais le baisser)
+    public static bool Fix(bool capture, int minPercent) {
+        try {
+            IAudioEndpointVolume v = Get(capture);
+            if (v == null) return false;
+            Guid g = Guid.Empty;
+            v.SetMute(false, ref g);
+            float l; v.GetMasterVolumeLevelScalar(out l);
+            if (l * 100 < minPercent) v.SetMasterVolumeLevelScalar(minPercent / 100f, ref g);
+            return true;
+        } catch { return false; }
+    }
+}
+
 public static class AeroxDisplay {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct DISPLAY_DEVICE {
