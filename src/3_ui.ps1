@@ -959,6 +959,7 @@ function Complete-Job {
         $script:UndoId = $null
     }
     Refresh-Page
+    try {
     if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
     elseif ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
@@ -967,7 +968,12 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
-    elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { Complete-SelfUpdate; return }
+    elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { $script:Wiz = $null; Complete-SelfUpdate; return }
+    } catch {
+        # Une fenêtre qui plante ne doit pas bloquer l'optimisation complète : on passe à l'étape suivante
+        Write-Bug -Context "Fenêtre après « $($job.Label) »" -ErrorRecord $_
+        Write-UiLog ("⚠ " + $_.Exception.Message)
+    }
     if ($sync.NeedReboot -and -not $script:Job -and -not $script:Wiz) {
         $sync.NeedReboot = $false
         $r = [System.Windows.MessageBox]::Show("Un redémarrage est nécessaire pour terminer.`n`nEnregistre ton travail en cours, puis clique sur « Oui » pour redémarrer maintenant.", $AppName, 'YesNo', 'Question')

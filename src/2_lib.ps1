@@ -361,6 +361,10 @@ function Test-SafeUndo([string]$Code) {
     if ($pipe -isnot [System.Management.Automation.Language.PipelineAst] -or $pipe.PipelineElements.Count -ne 1) { return $false }
     $cmd = $pipe.PipelineElements[0]
     if ($cmd -isnot [System.Management.Automation.Language.CommandAst] -or $allowed -notcontains $cmd.GetCommandName()) { return $false }
+    if ($cmd.GetCommandName() -eq 'Set-BgItem') {
+        $last = @($cmd.CommandElements)[-1]
+        if ($last -isnot [System.Management.Automation.Language.StringConstantExpressionAst] -or $last.Value -notin 'on', 'auto') { return $false }
+    }
     foreach ($el in @($cmd.CommandElements | Select-Object -Skip 1)) {
         $bad = $el.FindAll({ param($n) -not ($n -is [System.Management.Automation.Language.CommandParameterAst] -or $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
                                                $n -is [System.Management.Automation.Language.ConstantExpressionAst] -or $n -is [System.Management.Automation.Language.ArrayExpressionAst] -or
@@ -663,15 +667,15 @@ $script:BgKnown = @(
     @('(?i)nvdisplay\.container|nvcontainerlocalsystem|nvidia display', 'Panneau de configuration NVIDIA', 'keep', "Nécessaire au pilote de la carte graphique."),
     @('(?i)realtek|audio|nahimic|dolby|dts|waves', 'Son (pilote audio)', 'keep', "Fait partie du pilote audio : à garder."),
     @('(?i)opera.*(assistant|autoupdate|scheduled)|opera gx', "Assistant et mises à jour d'Opera", 'off', "Inutile en fond : Opera se met à jour quand tu l'ouvres."),
-    @('(?i)adobe ?arm|adobe acrobat update|acrobat.*update|adobeupdateservice', "Mises à jour d'Adobe Acrobat Reader", 'off', "Reader se met aussi à jour quand tu l'ouvres."),
+    @('(?i)adobe ?arm|adobe acrobat update|acrobat.*update', "Mises à jour d'Adobe Acrobat Reader", 'off', "Reader se met aussi à jour quand tu l'ouvres."),
     @('(?i)adobe.*genuine|agsservice|adobegcinvoker|gc ?invoker', "Vérification de licence Adobe", 'off', "Tourne en permanence pour vérifier les licences Adobe : inutile si tu n'as pas de logiciel Adobe payant."),
     @('(?i)ccleaner|driver ?booster|iobit|advanced systemcare|glary|wise ?care|avast ?cleanup|pc ?app ?store|reimage|restoro|segurazo|wondershare.*helper', "Logiciel « d'optimisation » / douteux", 'off', "Ce genre de logiciel tourne en fond pour afficher des alertes et vendre une version payante."),
-    @('(?i)nvtm|nvtelemetry|nvprofileupdater|nvdriverupdatecheck|nvnodelauncher|nvbatteryboost|nvidia telemetry', 'Statistiques et vérifications NVIDIA', 'off', "Envoie des statistiques à NVIDIA : le pilote marche très bien sans."),
+    @('(?i)nvtm|nvtelemetry|nvdriverupdatecheck|nvidia telemetry', 'Statistiques et vérifications NVIDIA', 'off', "Envoie des statistiques à NVIDIA : le pilote marche très bien sans."),
     @('(?i)intel.*(telemetry|computing improvement|system usage report)|sursvc|esrv', 'Statistiques Intel', 'off', "Envoie des statistiques d'utilisation à Intel."),
     @('(?i)hp.*(analytics|touchpoint|customer participation|insights|diagnostics data|app helper|jumpstart)|hpsvcsscan', 'Statistiques et publicités HP', 'off', "Collecte des données pour HP : le PC marche sans."),
     @('(?i)dell.*(data ?vault|supportassist ?remediation|techhub)', 'Statistiques Dell', 'off', "Collecte des données pour Dell : le PC marche sans."),
     @('(?i)lenovo.*(telemetry|experience improvement|customer feedback)|imcontroller.*telemetry', 'Statistiques Lenovo', 'off', "Collecte des données pour Lenovo : le PC marche sans."),
-    @('(?i)acer.*(quick ?access|portal|jumpstart)|asus.*(optimization|giftbox|link)', 'Utilitaires du fabricant', 'off', "Petits utilitaires préinstallés qui tournent en fond sans être indispensables."),
+    @('(?i)acer.*(portal|jumpstart)|asus.*giftbox', 'Utilitaires du fabricant', 'off', "Petits utilitaires préinstallés qui tournent en fond sans être indispensables."),
     @('(?i)onedrive.*reporting', 'Rapports OneDrive', 'off', "Envoie des rapports d'utilisation à Microsoft."),
     @('(?i)cortana|\bbing\b|\bmsn\b', 'Services Bing / MSN', 'off', "Contenus et publicités Bing/MSN.")
 )
@@ -693,8 +697,13 @@ function Get-BgItemsList {
     $list = New-Object System.Collections.ArrayList
     # Tâches planifiées actives hors Microsoft
     foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.State -ne 'Disabled' -and $_.TaskPath -notlike '\Microsoft\*' })) {
-        $exe = ''; try { $exe = Get-ExeFromCommand "$(@($t.Actions)[0].Execute)" } catch {}
+        $exe = ''; $arg = ''; try { $exe = Get-ExeFromCommand "$(@($t.Actions)[0].Execute)"; $arg = "$(@($t.Actions)[0].Arguments)" } catch {}
         $co = Get-BgCompany $exe
+        if ($exe -match '(?i)(rundll32|wscript|cscript|powershell|pwsh|cmd|mshta|conhost)(\.exe)?$') {
+            # Programme hôte de Windows : le vrai programme est dans les arguments
+            $inner = [regex]::Match($arg, '(?i)[a-z]:\\[^"]+?\.(exe|dll)').Value
+            if ($inner) { $exe = $inner; $co = Get-BgCompany $inner } else { $co = '' }
+        }
         if ($co -match '^Microsoft' -and "$($t.TaskName)" -notmatch '(?i)onedrive|edge') { continue }
         if ("$($t.TaskName)" -match '(?i)aerox') { continue }
         $v = Get-BgVerdict ("{0} {1} {2} {3}" -f $t.TaskName, $t.TaskPath, $exe, $co)
@@ -720,6 +729,7 @@ function Get-BgItems {
 }
 # Un élément : tâche activée / désactivée, service automatique / manuel (manuel = il démarre seulement si un logiciel en a besoin)
 function Set-BgItem([string]$Kind, [string]$Path, [string]$Name, [string]$State) {
+    if ($Kind -eq 'task' -and $Path -like '\Microsoft\*' -and $State -ne 'on') { throw "Les tâches de Windows ne sont jamais coupées par AEROX." }
     if ($Kind -eq 'task') {
         if ($State -eq 'on') { Enable-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop | Out-Null } else { Disable-ScheduledTask -TaskPath $Path -TaskName $Name -ErrorAction Stop | Out-Null }
     } else {
