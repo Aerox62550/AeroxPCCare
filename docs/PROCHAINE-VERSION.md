@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt sur la branche (1.5.2)
+## Publié en 1.5.2
 
 - Compte standard + mot de passe d'un compte ADMIN : Assistance rapide s'ouvre maintenant chez la personne devant l'écran (avant : « Création du répertoire de données impossible », elle s'ouvrait dans le compte admin). Pareil pour les pages des Paramètres, le Store, l'appli Caméra et les pages des navigateurs.
 
