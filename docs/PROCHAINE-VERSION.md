@@ -2,19 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt sur la branche (part au prochain patch, 1.2.9)
+## Prêt sur la branche (1.3.0, en test)
 
-- Écran de chargement centré (logo, titre, étape, barre, pourcentage) et adapté à la mise à l'échelle de l'écran (125 %, 150 %…), fin liseré autour.
-- Relecture à froid des versions 1.2.2 à 1.2.6, corrections :
-  - « Ne plus signaler » sur le pilote d'une carte graphique ne masque plus celui de l'autre carte (PC avec deux cartes).
-  - Les codes d'erreur Windows Update affichés sont les vrais (avant : toujours 0x80131501), donc les bonnes explications.
-  - Un winget cassé sur le compte de la personne n'est plus présenté comme un problème « d'autre compte ».
-
-- Mises à jour des logiciels : si winget répond de façon inattendue, AEROX met à jour son catalogue et réessaie, puis affiche une alerte claire (au lieu de « 0 logiciel ») et l'erreur exacte part dans les rapports. Un logiciel dont le nom commence par un nombre (« 360 Total Security »…) n'arrête plus la lecture de la liste. Note dans le journal quand AEROX tourne avec un autre compte.
-
-- Batterie (portables) : carte « Batterie » dans Mon PC (santé en % = capacité actuelle / d'origine, cycles, charge, autonomie, type) + bouton « Rapport complet de Windows » ; vérification dans le diagnostic (alerte si santé < 60 %, sinon info).
-
-- Correctif : « Désactiver cette économie d'énergie » (carte réseau) plantait (« paramètre AllowComputerToTurnOffDevice introuvable ») : la commande Windows utilisée ne sait pas modifier ce réglage. Nouveau : méthode du Gestionnaire de périphériques (WMI MSPower_DeviceEnable), sinon réglage du pilote (PnPCapabilities, au redémarrage) ; la détection lit la même source.
+- Bouton « Annuler » sur la barre de tâche en cours : arrêt immédiat des analyses, arrêt après l'élément en cours pour les mises à jour de logiciels et « Tout réparer », refus expliqué pour ce qui modifie Windows en profondeur (Windows Update, réparation, pilotes…).
+- « Pourquoi mon PC rame ? » (onglet Performances + bouton dans le diagnostic) : mesure 20 s du processeur, de la mémoire et du disque, programmes qui consomment le plus (noms parlants), pistes concrètes (programme gourmand, RAM saturée avec conseil de barrette précis, disque saturé / HDD, mode économie d'énergie, processeur bridé, PC pas redémarré, trop de programmes au démarrage) avec boutons d'action.
+- Diagnostic, nouvelle catégorie « Performances » : mode économie d'énergie sur PC fixe, processeur bridé (état max < 100 %), mémoire virtuelle désactivée.
+- Espace disque : choix du disque à analyser, et en tête de la fenêtre « Ce que tu peux faire pour libérer de la place » (corbeille, Windows.old, veille prolongée, vieux installateurs des Téléchargements mis à la corbeille, Téléchargements/Vidéos, plus gros jeux Steam, plus gros fichiers avec « Afficher », nettoyage approfondi, logiciels par taille).
 
 ## À faire
 
@@ -22,8 +15,9 @@ _(rien pour l'instant)_
 
 ## Fait
 
+- 1.2.9 : batterie (portables), écran de chargement centré, « 0 logiciel » corrigé, économie d'énergie de la carte réseau corrigée.
 - 1.2.6 : pages web ouvertes dans la session de la personne quand AEROX tourne avec un compte admin séparé.
-- 1.2.5 : winget activé pour le compte admin si besoin ; une vérification du diagnostic qui plante n'est plus affichée « OK ».
-- 1.2.4 : « Ne plus signaler » ; liens web robustes (navigateurs installés, Explorateur, lien copié).
-- 1.2.3 : écran de chargement avec une barre violette selon l'avancement réel du démarrage.
+- 1.2.5 : winget activé pour le compte admin si besoin.
+- 1.2.4 : « Ne plus signaler » ; liens web robustes.
+- 1.2.3 : écran de chargement avec une barre violette.
 - 1.2.2 : vérification des pilotes directement dans le logiciel.

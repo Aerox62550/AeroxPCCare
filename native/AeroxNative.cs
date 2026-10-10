@@ -61,29 +61,45 @@ public static class AeroxNative {
         return total;
     }
 
-    // Tailles des dossiers jusqu'à une profondeur : "profondeur|octets|chemin" ; gros fichiers à la racine : "F|octets|chemin"
+    // Tailles des dossiers jusqu'à une profondeur : "profondeur|octets|chemin" ; gros fichiers à la racine : "F|octets|chemin" ;
+    // plus gros fichiers du disque (>= 500 Mo, 60 max) : "B|octets|date(ticks)|chemin" ; chaque jeu Steam est détaillé quelle que soit la profondeur.
+    public static volatile bool StopScan = false;
+    const long BigMin = 500L * 1024 * 1024;
     public static string[] ScanSizes(string root, int maxDepth) {
+        StopScan = false;
         List<string> outp = new List<string>();
+        List<KeyValuePair<long, string>> big = new List<KeyValuePair<long, string>>();
         try {
             foreach (FileInfo f in new DirectoryInfo(root).EnumerateFiles()) {
                 try { if (f.Length >= 100L * 1024 * 1024) outp.Add("F|" + f.Length + "|" + f.FullName); } catch { }
             }
         } catch { }
-        ScanDir(root, 0, maxDepth, outp);
+        ScanDir(root, 0, maxDepth, outp, big);
+        big.Sort(delegate(KeyValuePair<long, string> a, KeyValuePair<long, string> b) { return b.Key.CompareTo(a.Key); });
+        for (int i = 0; i < big.Count && i < 60; i++) outp.Add("B|" + big[i].Key + "|" + big[i].Value);
         return outp.ToArray();
     }
-    static long ScanDir(string d, int depth, int maxDepth, List<string> outp) {
+    static bool IsGamesDir(string d) {
+        string p = Path.GetDirectoryName(d);
+        return p != null && p.EndsWith("\\steamapps\\common", StringComparison.OrdinalIgnoreCase);
+    }
+    static long ScanDir(string d, int depth, int maxDepth, List<string> outp, List<KeyValuePair<long, string>> big) {
         long total = 0;
         try {
             foreach (FileSystemInfo fi in new DirectoryInfo(d).EnumerateFileSystemInfos()) {
+                if (StopScan) return total;
                 try {
                     if ((fi.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                    if ((fi.Attributes & FileAttributes.Directory) != 0) total += ScanDir(fi.FullName, depth + 1, maxDepth, outp);
-                    else total += ((FileInfo)fi).Length;
+                    if ((fi.Attributes & FileAttributes.Directory) != 0) total += ScanDir(fi.FullName, depth + 1, maxDepth, outp, big);
+                    else {
+                        long len = ((FileInfo)fi).Length;
+                        total += len;
+                        if (len >= BigMin && depth >= 1) big.Add(new KeyValuePair<long, string>(len, fi.LastWriteTimeUtc.Ticks + "|" + fi.FullName));
+                    }
                 } catch { }
             }
         } catch { }
-        if (depth >= 1 && depth <= maxDepth) outp.Add(depth + "|" + total + "|" + d);
+        if (depth >= 1 && (depth <= maxDepth || IsGamesDir(d))) outp.Add(depth + "|" + total + "|" + d);
         return total;
     }
 
