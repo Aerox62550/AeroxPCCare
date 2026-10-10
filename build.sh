@@ -32,6 +32,14 @@ cp launcher/aerox.ico "$OUT/"
 python3 -c "import sys; t=open('docs/LISEZMOI.txt',encoding='utf-8-sig').read().replace('\r\n','\n'); open(sys.argv[1],'w',encoding='utf-8-sig',newline='\r\n').write(t)" "$OUT/LISEZMOI.txt"
 
 (cd build && zip -qr "AeroxPCCare_v$VER.zip" "AEROX PC Care")
+# Version portable (clé USB) : le même dossier + « portable.txt », qui garde réglages et journaux sur la clé
+PORT="build/portable/AEROX PC Care (portable)"
+rm -rf build/portable && mkdir -p build/portable && cp -r "$OUT" "$PORT"
+printf '%s\r\n' "Version portable d'AEROX PC Care : ne supprime pas ce fichier." \
+  "Tant qu'il est là, AEROX ne s'installe pas sur le PC : réglages, journaux et historique restent sur la clé," \
+  "dans le dossier « donnees » (un sous-dossier par PC)." > "$PORT/portable.txt"
+rm -f build/AeroxPCCare_Portable.zip
+(cd build/portable && zip -qr ../AeroxPCCare_Portable.zip "AEROX PC Care (portable)")
 makensis -V2 -DVERSION="$VER" -DSRC="$PWD/$OUT" -DOUTFILE="$PWD/build/AeroxPCCare_Setup.exe" installer/AeroxPCCare.nsi
 echo "== Terminé :"
 ls -la build/*.zip build/*.exe

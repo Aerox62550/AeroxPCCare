@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.4.0
+﻿AEROX PC Care - v1.5.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -16,10 +16,18 @@ UTILISATION
 
 Pour le désinstaller : Paramètres > Applications > AEROX PC Care > Désinstaller.
 
+VERSION PORTABLE (CLÉ USB)
+--------------------------
+« AeroxPCCare_Portable.zip » : dézippe-le sur une clé USB et lance
+« AeroxPCCare.exe » sur n'importe quel PC, sans rien installer. Les réglages,
+journaux et l'historique restent sur la clé (dossier « donnees », un dossier
+par PC). Ne supprime pas le fichier « portable.txt ».
+
 LE DIAGNOSTIC
 -------------
-Il vérifie 10 points : stockage, mémoire, système, stabilité (écrans bleus,
-plantages), mises à jour, pilotes, sécurité, réseau, démarrage, santé des disques.
+Il vérifie stockage, mémoire, système, stabilité (écrans bleus, plantages),
+mises à jour, pilotes, sécurité, réseau, démarrage, santé des disques,
+performances, programmes en fond et navigateurs (pubs, fausses alertes).
 
 Pour chaque problème trouvé, tu vois :
   - ce qui se passe (et le code d'erreur s'il y en a un),
@@ -128,6 +136,15 @@ SÉCURITÉ
 - Uniquement des outils officiels de Windows. Pas de « nettoyeur de registre ».
 - Les actions lourdes demandent une confirmation avant de se lancer.
 - Journaux enregistrés dans %LOCALAPPDATA%\AeroxPCCare
+
+PUBS ET FAUSSES ALERTES DU NAVIGATEUR
+-------------------------------------
+Onglet Réparation > « Pubs et fausses alertes de virus » : trouve les sites qui
+ont le droit d'envoyer des notifications (d'où viennent les « Ton PC est
+infecté ! »), les extensions douteuses, une page d'accueil ou une recherche
+détournée et les réglages imposés à Chrome, Edge, Brave et Opera. Les sites
+suspects sont bloqués en un clic (le navigateur est fermé le temps de la
+modification, ses réglages sont sauvegardés).
 
 COMPATIBILITÉ
 -------------

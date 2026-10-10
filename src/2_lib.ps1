@@ -353,7 +353,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem'
+    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -765,6 +765,516 @@ function Test-BgItems {
             -Effect "Ils prennent de la mémoire et du processeur en permanence, et ralentissent le démarrage." `
             -FixLabel "Voir et choisir" -UiFix 'bgitems'
     } else { Add-Ok "Programmes cachés en fond : rien d'inutile repéré" }
+}
+
+# =====================================================================
+#  DÉPANNAGES DU QUOTIDIEN : imprimante, son, micro, webcam, bureau figé
+# =====================================================================
+# Autorisation Windows « Autoriser les applications à accéder au micro / à la caméra » (Confidentialité)
+function Get-PrivacyBlocked([string]$Cap) {
+    $blocked = @()
+    foreach ($root in 'HKLM:', 'HKCU:') {
+        $k = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\$Cap"
+        foreach ($p in @($k, "$k\NonPackaged")) {
+            try { if ((Get-ItemProperty -LiteralPath $p -Name Value -ErrorAction Stop).Value -eq 'Deny') { $blocked += $p } } catch {}
+        }
+    }
+    return $blocked
+}
+function Set-PrivacyAllowed([string]$Cap, [string]$Label) {
+    $b = @(Get-PrivacyBlocked $Cap)
+    if (-not $b.Count) { Log "   ✔ Windows autorise les applications à utiliser $Label"; return $false }
+    foreach ($p in $b) { try { Set-ItemProperty -LiteralPath $p -Name Value -Value 'Allow' -ErrorAction Stop } catch {} }
+    Log "   ✔ L'accès à $Label était bloqué dans les réglages de confidentialité de Windows : réautorisé."
+    Add-Change -Kind 'info' -Title "Accès à $Label réautorisé (Confidentialité de Windows)"
+    return $true
+}
+# Périphériques désactivés (code 22) d'une classe : réactivés
+function Enable-DisabledDevices([string[]]$Classes, [string]$Label, [string]$IdPattern = '') {
+    $n = 0
+    foreach ($d in @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in $Classes -and [int]$_.ConfigManagerErrorCode -eq 22 -and (-not $IdPattern -or $_.InstanceId -match $IdPattern) })) {
+        try { Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false -ErrorAction Stop; Log ("   ✔ {0} était désactivé : réactivé." -f $d.FriendlyName); $n++ } catch {}
+    }
+    if ($n) { Add-Change -Kind 'info' -Title ("{0} réactivé(s) : {1}" -f $Label, $n) }
+    return $n
+}
+
+function Repair-Printing {
+    Step "Imprimante : déblocage de l'impression"
+    $printers = @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)onenote|pdf|xps|fax|send to' })
+    if (-not $printers.Count) {
+        Add-TaskError -Title "Aucune imprimante installée sur ce PC" -Cause "Windows ne connaît aucune imprimante (hors imprimantes virtuelles PDF/XPS)." -Effect "Impossible d'imprimer tant qu'elle n'est pas ajoutée." `
+            -FixLabel "Ajouter une imprimante" -FixAction "Start-Process 'ms-settings:printers'" -Steps @("Allume l'imprimante et vérifie qu'elle est branchée (USB) ou sur le même Wi-Fi que le PC.", "Paramètres > Bluetooth et appareils > Imprimantes et scanners > « Ajouter un appareil ».", "Si elle n'apparaît pas, installe le logiciel du fabricant (HP Smart, Canon, Epson…) depuis son site officiel.")
+        return
+    }
+    $jobs = 0; try { $jobs = @(Get-CimInstance Win32_PrintJob -ErrorAction SilentlyContinue).Count } catch {}
+    Log ("   • {0} impression(s) en attente dans la file" -f $jobs)
+    # File d'attente bloquée : on arrête le service d'impression, on vide la file, on le relance
+    try {
+        Stop-Service -Name Spooler -Force -ErrorAction Stop
+        Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot 'System32\spool\PRINTERS') -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+        Start-Service -Name Spooler -ErrorAction Stop
+        Log "   ✔ Service d'impression relancé et file d'attente vidée"
+    } catch {
+        try { Start-Service -Name Spooler -ErrorAction SilentlyContinue } catch {}
+        Add-TaskError -Title "Le service d'impression n'a pas pu être relancé" -Cause $_.Exception.Message -FixLabel "Redémarrer le PC" -FixAction 'Request-Reboot'
+        return
+    }
+    # Imprimante restée « hors connexion » dans Windows
+    foreach ($pr in @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.WorkOffline })) {
+        try { Set-CimInstance -InputObject $pr -Property @{ WorkOffline = $false } -ErrorAction Stop; Log ("   ✔ « {0} » était en mode hors connexion : remise en ligne" -f $pr.Name) } catch {}
+    }
+    foreach ($pr in @(Get-CimInstance Win32_Printer -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)onenote|pdf|xps|fax|send to' })) {
+        $st = switch ([int]$pr.PrinterStatus) { 3 { 'prête' } 4 { 'en train d''imprimer' } 5 { 'en préchauffage' } 7 { 'HORS LIGNE' } 1 { 'état inconnu' } 2 { 'état inconnu' } default { "état $($pr.PrinterStatus)" } }
+        Log ("   • {0}{1} : {2}" -f $pr.Name, $(if ($pr.Default) { ' (par défaut)' } else { '' }), $st)
+    }
+    $def = $printers | Where-Object { $_.Default } | Select-Object -First 1
+    if (-not $def) { Log "   ⚠ Aucune imprimante par défaut : choisis-la dans Paramètres > Imprimantes et scanners." }
+    Log "✅ Relance une impression. Si rien ne sort : imprimante allumée, papier, câble ou même Wi-Fi que le PC, puis éteins-la et rallume-la."
+    Add-Change -Kind 'info' -Title "Impression débloquée (service relancé, file d'attente vidée)"
+}
+
+function Repair-Sound {
+    Step "Son : vérification et réparation"
+    foreach ($svc in 'AudioEndpointBuilder', 'Audiosrv') {
+        try {
+            $sv = Get-Service -Name $svc -ErrorAction Stop
+            if ($sv.StartType -eq 'Disabled') { Set-Service -Name $svc -StartupType Automatic -ErrorAction Stop; Log "   ✔ Service audio « $svc » était désactivé : réactivé" }
+        } catch {}
+    }
+    try { Restart-Service -Name Audiosrv -Force -ErrorAction Stop; Log "   ✔ Service audio de Windows relancé" } catch { try { Start-Service -Name Audiosrv -ErrorAction SilentlyContinue } catch {} }
+    Start-Sleep -Seconds 2
+    [void](Enable-DisabledDevices @('AudioEndpoint') 'Sortie son' '\{0\.0\.0\.')
+    $outs = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '\{0\.0\.0\.' } | ForEach-Object { $_.FriendlyName })
+    if ($outs.Count) { Log ("   • Sorties détectées : {0}" -f ($outs -join ' · ')) }
+    $info = [AeroxAudio]::Info($false)
+    if (-not $info) {
+        Add-TaskError -Title "Aucun haut-parleur ni casque actif" -Cause "Windows ne trouve pas de sortie son en marche." -Effect "Aucun son ne peut sortir du PC." `
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le casque ou les enceintes (prise verte ou USB), allume-les.", "Sur un écran HDMI, le son passe souvent par l'écran : vérifie son volume.", "Paramètres > Son : choisis le bon appareil dans « Choisir où lire le son ».", "Sinon : Mises à jour > Pilotes (drivers) pour installer le pilote audio.")
+        return
+    }
+    $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
+    if ($muted -or $vol -lt 10) {
+        [void][AeroxAudio]::Fix($false, 50)
+        Log ("   ✔ Le son {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était presque à zéro ($vol %)" }), [math]::Max($vol, 50))
+        Add-Change -Kind 'info' -Title "Son réactivé (sourdine enlevée / volume remonté)"
+    } else { Log "   ✔ Volume à $vol %, sourdine désactivée" }
+    Log "✅ Si tu n'entends toujours rien : vérifie que le son sort sur le bon appareil (casque, écran ou enceintes) dans Paramètres > Son, et le volume de l'appareil lui-même."
+}
+
+function Repair-Microphone {
+    Step "Micro : vérification et réparation"
+    [void](Set-PrivacyAllowed 'microphone' 'le micro')
+    [void](Enable-DisabledDevices @('AudioEndpoint') 'Micro' '\{0\.0\.1\.')
+    $ins = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '\{0\.0\.1\.' } | ForEach-Object { $_.FriendlyName })
+    if ($ins.Count) { Log ("   • Micros détectés : {0}" -f ($ins -join ' · ')) }
+    $info = [AeroxAudio]::Info($true)
+    if (-not $info) {
+        Add-TaskError -Title "Aucun micro actif" -Cause "Windows ne trouve pas de micro en marche." -Effect "Discord, Teams, les jeux… ne t'entendent pas." `
+            -FixLabel "Ouvrir les réglages du son" -FixAction "Start-Process 'ms-settings:sound'" -Steps @("Branche le micro ou le casque (prise rose ou USB). Sur un casque, vérifie le bouton « mute » du câble.", "Paramètres > Son > Entrée : choisis le bon micro.", "Dans Discord/Teams, choisis aussi ce micro dans leurs propres réglages audio.")
+        return
+    }
+    $p = $info.Split('|'); $vol = [int]$p[0]; $muted = ($p[1] -eq '1')
+    if ($muted -or $vol -lt 30) {
+        [void][AeroxAudio]::Fix($true, 80)
+        Log ("   ✔ Le micro {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était très bas ($vol %)" }), [math]::Max($vol, 80))
+        Add-Change -Kind 'info' -Title "Micro réactivé (sourdine enlevée / volume remonté)"
+    } else { Log "   ✔ Micro à $vol %, sourdine désactivée" }
+    Log "✅ Teste ton micro : Paramètres > Son > ton micro > « Tester le micro ». Dans Discord ou Teams, vérifie aussi que c'est le bon micro qui est choisi."
+}
+
+function Repair-Webcam {
+    Step "Webcam : vérification et réparation"
+    [void](Set-PrivacyAllowed 'webcam' 'la caméra')
+    [void](Enable-DisabledDevices @('Camera', 'Image') 'Webcam')
+    $cams = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in 'Camera', 'Image' -and $_.FriendlyName -notmatch '(?i)scan|printer|imprim' })
+    if (-not $cams.Count) {
+        Add-TaskError -Title "Aucune webcam détectée" -Cause "Windows ne voit aucune caméra branchée ou allumée." -Effect "Les appels vidéo n'ont pas d'image." `
+            -Steps @("Webcam USB : débranche-la et rebranche-la sur un autre port.", "PC portable : beaucoup ont un petit cache coulissant au-dessus de l'écran, ou une touche avec une caméra barrée (souvent F8, F10 ou Fn + une touche) qui coupe la webcam.", "Sinon : Mises à jour > Pilotes (drivers) pour vérifier son pilote.")
+        return
+    }
+    foreach ($c in $cams) { Log ("   • {0} : {1}" -f $c.FriendlyName, $(if ($c.Status -eq 'OK') { 'en marche' } else { "problème ($($c.Status))" })) }
+    if (@($cams | Where-Object { $_.Status -ne 'OK' }).Count) {
+        Add-TaskError -Title "La webcam a un problème de pilote" -Cause "Windows la voit mais n'arrive pas à la faire fonctionner." -Effect "Pas d'image dans les appels vidéo." `
+            -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" -Steps @("Débranche/rebranche la webcam (USB) ou redémarre le PC.", "Onglet Mises à jour > « Pilotes (drivers) » : installe le pilote que Windows propose.")
+        return
+    }
+    try { Start-Process 'microsoft.windows.camera:' -ErrorAction Stop; Log "   ✔ L'application Caméra de Windows s'ouvre pour tester." } catch {}
+    Log "✅ Si l'image reste noire : ferme les autres logiciels qui utilisent la caméra (Teams, Discord, navigateur…), et vérifie le cache ou la touche caméra sur un portable."
+}
+
+# Bureau, barre des tâches ou menu Démarrer figés : relance de l'Explorateur Windows
+function Restart-Shell {
+    Step "Relance du bureau et de la barre des tâches (Explorateur Windows)"
+    $owner = ''
+    try { $owner = "$((Get-CimInstance Win32_ComputerSystem).UserName)" } catch {}
+    Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # Windows relance tout seul l'Explorateur de la personne connectée ; sinon on le relance pour elle
+    for ($i = 0; $i -lt 10 -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
+    # (Avec un compte admin séparé, on ne relance pas nous-mêmes : ce serait le bureau du compte admin, pas celui de la personne)
+    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue) -and -not (Test-OtherAccount)) { Start-Process explorer.exe }
+    Log "✅ Bureau et barre des tâches relancés. Si le menu Démarrer bloque encore, redémarre le PC."
+}
+
+# =====================================================================
+#  NAVIGATEURS : fausses alertes, extensions et réglages piratés
+# =====================================================================
+# Chrome, Edge, Brave, Opera : même fonctionnement (Chromium). Firefox : conseils seulement.
+$script:BrowserDefs = @(
+    @{ Key = 'chrome';  Name = 'Google Chrome';  Proc = 'chrome'; Data = 'AppData\Local\Google\Chrome\User Data';                Scheme = 'chrome'; Pol = 'SOFTWARE\Policies\Google\Chrome';        Exe = @('Google\Chrome\Application\chrome.exe') }
+    @{ Key = 'edge';    Name = 'Microsoft Edge'; Proc = 'msedge'; Data = 'AppData\Local\Microsoft\Edge\User Data';               Scheme = 'edge';   Pol = 'SOFTWARE\Policies\Microsoft\Edge';       Exe = @('Microsoft\Edge\Application\msedge.exe') }
+    @{ Key = 'brave';   Name = 'Brave';          Proc = 'brave';  Data = 'AppData\Local\BraveSoftware\Brave-Browser\User Data'; Scheme = 'brave';  Pol = 'SOFTWARE\Policies\BraveSoftware\Brave'; Exe = @('BraveSoftware\Brave-Browser\Application\brave.exe') }
+    @{ Key = 'opera';   Name = 'Opera';          Proc = 'opera';  Data = 'AppData\Roaming\Opera Software\Opera Stable';         Scheme = 'opera';  Pol = '';                                      Exe = @('Programs\Opera\opera.exe', 'Opera\opera.exe') }
+    @{ Key = 'operagx'; Name = 'Opera GX';       Proc = 'opera';  Data = 'AppData\Roaming\Opera Software\Opera GX Stable';      Scheme = 'opera';  Pol = '';                                      Exe = @('Programs\Opera GX\opera.exe', 'Opera GX\opera.exe') }
+)
+# Sites connus dont les notifications sont normales (messagerie, réseaux sociaux, mails…)
+$script:NotifOk = '(?i)(^|\.)(google\.[a-z.]+|youtube\.com|gmail\.com|facebook\.com|messenger\.com|instagram\.com|whatsapp\.com|discord\.com|twitter\.com|x\.com|linkedin\.com|outlook\.com|live\.com|office\.com|office365\.com|microsoft\.com|cloud\.microsoft|slack\.com|telegram\.org|reddit\.com|twitch\.tv|netflix\.com|spotify\.com|deezer\.com|leboncoin\.fr|vinted\.[a-z.]+|amazon\.[a-z.]+|ebay\.[a-z.]+|pinterest\.[a-z.]+|tiktok\.com|snapchat\.com|zoom\.us|skype\.com|yahoo\.com|orange\.fr|free\.fr|sfr\.fr|bouyguestelecom\.fr|laposte\.(fr|net)|doctolib\.fr|ameli\.fr|gouv\.fr|chatgpt\.com|openai\.com|claude\.ai|notion\.so|trello\.com|github\.com|steamcommunity\.com|steampowered\.com|epicgames\.com|ea\.com|ubisoft\.com|battle\.net|blizzard\.com|apple\.com|icloud\.com|proton\.me|canva\.com|dropbox\.com|airbnb\.[a-z.]+|booking\.com|blablacar\.fr|sncf-connect\.com|uber\.com|deliveroo\.fr|lemonde\.fr|lefigaro\.fr|ouest-france\.fr|bfmtv\.com|francetvinfo\.fr|20minutes\.fr|lequipe\.fr)$'
+# Ce qui ressemble aux fausses alertes (« clique sur Autoriser pour prouver que tu n'es pas un robot »)
+$script:NotifBad = '(?i)(captcha|robot|verif|allow|click|push|notif|alert|prize|winner|gift|bonus|virus|secur|protect|clean|update|download|stream|movie|film|porn|xxx|sex|dating|casino|bet|loan|crypto|bitcoin)|\.(xyz|top|club|online|site|live|icu|buzz|space|click|pw|info|life|work|fun|bid|loan|win|cf|ga|gq|ml|tk|biz|cyou|monster|rest|sbs|cfd|quest|hair|homes|beauty|autos|boats|lol|today|digital|world|pro)$|\d{4,}|^\d+\.\d+\.\d+\.\d+$'
+# Pages d'accueil / moteurs de recherche normaux
+$script:HomeOk = '(?i)(^|\.)(google\.[a-z.]+|bing\.com|msn\.com|microsoft\.com|duckduckgo\.com|qwant\.com|ecosia\.org|lilo\.org|startpage\.com|brave\.com|yahoo\.com|yandex\.[a-z]+|opera\.com|mozilla\.org|wikipedia\.org|youtube\.com|orange\.fr|free\.fr|sfr\.fr|laposte\.net|chatgpt\.com|perplexity\.ai)$'
+# Éditeurs connus dont l'extension imposée est normale (antivirus, contrôle parental, mots de passe)
+$script:ExtTrusted = '(?i)norton|avast|\bavg\b|bitdefender|kaspersky|\beset\b|mcafee|malwarebytes|avira|f-secure|trend micro|panda|qustodio|family|parental|1password|bitwarden|lastpass|dashlane|keeper|zscaler|google|microsoft'
+
+function Get-UrlHost([string]$Url) {
+    if (-not $Url) { return '' }
+    if ($Url -match '\{google:baseURL\}') { return 'google.com' }
+    $u = $Url -replace '^\[\*\.\]', '' -replace ',\*$', ''
+    if ($u -notmatch '^[a-z][a-z0-9+.-]*://') { $u = 'http://' + $u }
+    try { return ([uri]$u).Host.ToLower() } catch { return '' }
+}
+function Test-HomeUrlOk([string]$Url) {
+    if (-not $Url -or $Url -match '^(?i)(chrome|edge|brave|opera|about)://|^about:') { return $true }
+    $h = Get-UrlHost $Url
+    return ($h -and $h -match $script:HomeOk)
+}
+function Read-JsonFile([string]$Path) {
+    try { if (Test-Path -LiteralPath $Path) { return [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) } } catch {}
+    return $null
+}
+function Get-JsonValue([string]$Json, [string[]]$Path) { if (-not $Json) { return $null }; return [AeroxJson]::Get($Json, $Path) }
+
+# Nom lisible d'une extension depuis son manifest (avec la traduction __MSG_xxx__)
+function Get-ExtManifestInfo([string]$Dir) {
+    $m = Read-JsonFile (Join-Path $Dir 'manifest.json')
+    if (-not $m) { return $null }
+    $name = Get-JsonValue $m @('name')
+    if ($name -match '^__MSG_(.+)__$') {
+        $key = $Matches[1]; $loc = Get-JsonValue $m @('default_locale')
+        foreach ($l in @('fr', $loc, 'en', 'en_US') | Where-Object { $_ } | Select-Object -Unique) {
+            $msgs = Read-JsonFile (Join-Path $Dir "_locales\$l\messages.json")
+            if (-not $msgs) { continue }
+            $k = @([AeroxJson]::Keys($msgs, [string[]]@()) | Where-Object { $_ -ieq $key }) | Select-Object -First 1
+            if ($k) { $v = Get-JsonValue $msgs @($k, 'message'); if ($v) { $name = $v; break } }
+        }
+    }
+    if ($name -match '^__MSG_') { $name = '' }
+    return @{ Name = $name; Hijack = ($null -ne [AeroxJson]::Find($m, [string[]]@('chrome_settings_overrides')) -or $null -ne [AeroxJson]::Find($m, [string[]]@('chrome_url_overrides'))) }
+}
+
+function Get-BrowserExe($Def, [string]$ProfileRoot) {
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, (Join-Path $ProfileRoot 'AppData\Local')) | Where-Object { $_ }
+    foreach ($r in $roots) { foreach ($e in $Def.Exe) { $p = Join-Path $r $e; if (Test-Path -LiteralPath $p) { return $p } } }
+    return ''
+}
+
+# Ouvre une page interne du navigateur (chrome://extensions…) chez la personne devant l'écran
+function Open-BrowserPage([string]$Exe, [string]$Page) {
+    if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { Log "⚠ Navigateur introuvable : ouvre-le toi-même et tape $Page dans la barre d'adresse."; return }
+    if (Test-OtherAccount) {
+        $tn = 'AEROX PC Care - ouvrir le navigateur'
+        try {
+            $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+            if ($user) {
+                $a = New-ScheduledTaskAction -Execute $Exe -Argument $Page
+                $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+                $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+                Register-ScheduledTask -TaskName $tn -Action $a -Principal $p -Settings $st -Force -ErrorAction Stop | Out-Null
+                Start-ScheduledTask -TaskName $tn -ErrorAction Stop
+                Start-Sleep -Milliseconds 1500
+                return
+            }
+        } catch {}
+        finally { try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
+    }
+    try { Start-Process -FilePath $Exe -ArgumentList $Page -ErrorAction Stop } catch { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
+}
+
+# Profils d'un navigateur Chromium : « Default », « Profile 1 »… (Opera : le dossier lui-même)
+function Get-ChromiumProfiles([string]$DataDir) {
+    $out = @()
+    if (-not (Test-Path -LiteralPath $DataDir)) { return $out }
+    $ls = Read-JsonFile (Join-Path $DataDir 'Local State')
+    if (Test-Path -LiteralPath (Join-Path $DataDir 'Preferences')) { $out += @{ Dir = $DataDir; Name = '' } }
+    foreach ($d in @(Get-ChildItem -LiteralPath $DataDir -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile *' })) {
+        if (-not (Test-Path -LiteralPath (Join-Path $d.FullName 'Preferences'))) { continue }
+        $n = Get-JsonValue $ls @('profile', 'info_cache', $d.Name, 'name')
+        $out += @{ Dir = $d.FullName; Name = $(if ($n) { $n } else { $d.Name }) }
+    }
+    return $out
+}
+
+# Réglages imposés (« Géré par ton organisation ») : clés de stratégie des navigateurs, machine et comptes
+function Get-BrowserPolicies($Def, $ExtNames) {
+    $out = @()
+    if (-not $Def.Pol) { return $out }
+    $hives = @('Registry::HKEY_LOCAL_MACHINE')
+    $hives += @(Get-ChildItem 'Registry::HKEY_USERS' -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-[\d-]+$' } | ForEach-Object { 'Registry::HKEY_USERS\' + $_.PSChildName })
+    foreach ($h in $hives) {
+        $k = "$h\$($Def.Pol)"
+        if (-not (Test-Path -LiteralPath $k)) { continue }
+        $props = $null; try { $props = Get-ItemProperty -LiteralPath $k -ErrorAction Stop } catch {}
+        foreach ($n in 'HomepageLocation', 'NewTabPageLocation', 'DefaultSearchProviderSearchURL') {
+            $v = "$($props.$n)"
+            if (-not $v) { continue }
+            $lbl = switch ($n) { 'HomepageLocation' { "Page d'accueil imposée" } 'NewTabPageLocation' { 'Page « Nouvel onglet » imposée' } default { 'Moteur de recherche imposé' } }
+            $out += @{ Key = $k; Value = $n; Label = $lbl; Detail = $v; Bad = -not (Test-HomeUrlOk $v) }
+        }
+        foreach ($sub in 'RestoreOnStartupURLs', 'ExtensionInstallForcelist') {
+            $sk = "$k\$sub"
+            if (-not (Test-Path -LiteralPath $sk)) { continue }
+            $sp = $null; try { $sp = Get-ItemProperty -LiteralPath $sk -ErrorAction Stop } catch { continue }
+            foreach ($pp in @($sp.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' })) {
+                $v = "$($pp.Value)"
+                if ($sub -eq 'RestoreOnStartupURLs') {
+                    $out += @{ Key = $sk; Value = $pp.Name; Label = 'Page imposée au démarrage'; Detail = $v; Bad = -not (Test-HomeUrlOk $v) }
+                } else {
+                    $id = ($v -split ';')[0].Trim(); $upd = (($v -split ';', 2) + @(''))[1].Trim()
+                    $nm = "$($ExtNames[$id])"
+                    $official = (-not $upd) -or $upd -match '(?i)^https://(clients2\.google\.com|edge\.microsoft\.com)/'
+                    $bad = (-not $official) -or ($nm -notmatch $script:ExtTrusted)
+                    $out += @{ Key = $sk; Value = $pp.Name; Label = 'Extension imposée (impossible à retirer)'; Detail = $(if ($nm) { "$nm ($id)" } else { "extension inconnue $id" }) + $(if (-not $official) { ' · téléchargée hors du magasin officiel' } else { '' }); Bad = $bad }
+                }
+            }
+        }
+    }
+    return $out
+}
+
+# Analyse complète : une liste d'éléments pour la fenêtre (et le diagnostic)
+# Type : notif (cochable), pol (cochable), home (info), ext (info) ; Bad = suspect
+function Get-BrowserReportList {
+    $items = New-Object System.Collections.ArrayList
+    $users = @(Get-UserProfiles)
+    $multi = $users.Count -gt 1
+    $domain = $false; try { $domain = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain } catch {}
+    $firefox = $false
+    foreach ($def in $script:BrowserDefs) {
+        $extNames = @{}
+        $exe = ''
+        foreach ($u in $users) {
+            $uname = Split-Path $u -Leaf
+            $dataDir = Join-Path $u $def.Data
+            $profiles = @(Get-ChromiumProfiles $dataDir)
+            if (-not $profiles.Count) { continue }
+            if (-not $exe) { $exe = Get-BrowserExe $def $u }
+            foreach ($pr in $profiles) {
+                $where = @($def.Name, $(if ($pr.Name -and @($profiles).Count -gt 1) { "profil « $($pr.Name) »" }), $(if ($multi) { "compte $uname" })) | Where-Object { $_ }
+                $whereTxt = $where -join ' · '
+                $prefFile = Join-Path $pr.Dir 'Preferences'
+                $pref = Read-JsonFile $prefFile
+                if (-not $pref) { continue }
+                $sec = Read-JsonFile (Join-Path $pr.Dir 'Secure Preferences')
+                # Notifications autorisées
+                $np = [string[]]@('profile', 'content_settings', 'exceptions', 'notifications')
+                foreach ($o in @([AeroxJson]::Keys($pref, $np))) {
+                    if ("$([AeroxJson]::Get($pref, [string[]]($np + @($o, 'setting'))))" -ne '1') { continue }
+                    if ($o -notmatch '^(?i)https?://') { continue }
+                    $h = Get-UrlHost $o
+                    $kind = if ($h -match $script:NotifOk) { 'ok' } elseif ($h -match $script:NotifBad) { 'bad' } else { 'unknown' }
+                    [void]$items.Add(@{ Type = 'notif'; Browser = $def.Key; Where = $whereTxt; Label = $h; Kind = $kind; Bad = ($kind -ne 'ok'); Check = ($kind -ne 'ok'); Proc = $def.Proc
+                                        Fix = "notif|$($def.Key)|$prefFile|$o"; Detail = $(switch ($kind) { 'bad' { "Typique des fausses alertes et des pubs" } 'unknown' { "Site inconnu : à bloquer si tu ne le connais pas" } default { "Site connu" } }) })
+                }
+                # Page d'accueil, pages au démarrage, moteur de recherche
+                $hm = @()
+                if ("$(Get-JsonValue $pref @('homepage_is_newtabpage'))" -eq 'false') { $hp = Get-JsonValue $pref @('homepage'); if ($hp) { $hm += @{ L = "Page d'accueil"; U = $hp } } }
+                if ("$(Get-JsonValue $pref @('session', 'restore_on_startup'))" -eq '4') { foreach ($s in @([AeroxJson]::Items($pref, [string[]]@('session', 'startup_urls')))) { $hm += @{ L = 'Au démarrage'; U = $s } } }
+                $su = Get-JsonValue $pref @('default_search_provider_data', 'template_url_data', 'url')
+                $sn = Get-JsonValue $pref @('default_search_provider_data', 'template_url_data', 'short_name')
+                if ($su) { $hm += @{ L = 'Recherche'; U = $su; N = $sn } }
+                foreach ($x in $hm) {
+                    $ok = Test-HomeUrlOk $x.U
+                    $shown = if ($x.N -and $ok) { $x.N } else { Get-UrlHost $x.U }
+                    if (-not $shown) { $shown = $x.U }
+                    [void]$items.Add(@{ Type = 'home'; Browser = $def.Key; Where = $whereTxt; Label = "$($x.L) : $shown"; Bad = -not $ok; Exe = $exe; Page = "$($def.Scheme)://settings"
+                                        Detail = $(if ($ok) { 'Normal' } else { "Pas un site habituel : si tu ne l'as pas choisi toi-même, c'est un pirate de navigateur. Change-le dans les paramètres du navigateur." }) })
+                }
+                # Extensions installées
+                $extDir = Join-Path $pr.Dir 'Extensions'
+                $ids = @()
+                foreach ($j in @($pref, $sec)) { if ($j) { $ids += @([AeroxJson]::Keys($j, [string[]]@('extensions', 'settings'))) } }
+                foreach ($id in @($ids | Select-Object -Unique)) {
+                    $loc = ''; $path = ''; $dis = ''
+                    foreach ($j in @($sec, $pref)) {
+                        if (-not $j) { continue }
+                        if (-not $loc) { $loc = "$(Get-JsonValue $j @('extensions', 'settings', $id, 'location'))" }
+                        if (-not $path) { $path = "$(Get-JsonValue $j @('extensions', 'settings', $id, 'path'))" }
+                        if (-not $dis) { $dis = "$(Get-JsonValue $j @('extensions', 'settings', $id, 'disable_reasons'))" }
+                    }
+                    if ($loc -in '5', '10', '') { continue }   # composants internes du navigateur
+                    $dir = ''
+                    if ($path -match '^[A-Za-z]:\\') { $dir = $path }
+                    elseif (Test-Path -LiteralPath (Join-Path $extDir $id)) {
+                        $dir = @(Get-ChildItem -LiteralPath (Join-Path $extDir $id) -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { $_.FullName })[0]
+                    }
+                    if (-not $dir) { continue }
+                    $mi = Get-ExtManifestInfo $dir
+                    if (-not $mi) { continue }
+                    $nm = if ($mi.Name) { $mi.Name } else { $id }
+                    $extNames[$id] = $nm
+                    $flags = @()
+                    if ($loc -in '7', '9') { $flags += 'imposée par un réglage' }
+                    elseif ($loc -in '2', '3', '6') { $flags += 'installée par un autre logiciel' }
+                    elseif ($loc -in '4', '8') { $flags += 'installée à la main, hors magasin' }
+                    if ($mi.Hijack) { $flags += "change la page d'accueil, le nouvel onglet ou la recherche" }
+                    $off = ($dis -and $dis -ne '[]' -and $dis -ne '0')
+                    $bad = (($loc -in '4', '7', '8', '9') -or $mi.Hijack) -and ($nm -notmatch $script:ExtTrusted)
+                    [void]$items.Add(@{ Type = 'ext'; Browser = $def.Key; Where = $whereTxt; Label = $nm + $(if ($off) { ' (désactivée)' } else { '' }); Bad = $bad; Exe = $exe; Page = "$($def.Scheme)://extensions"
+                                        Detail = $(if ($flags.Count) { ($flags -join ' · ') } else { 'Installée depuis le magasin' }) })
+                }
+            }
+        }
+        foreach ($p in @(Get-BrowserPolicies $def $extNames)) {
+            [void]$items.Add(@{ Type = 'pol'; Browser = $def.Key; Where = $def.Name; Label = $p.Label; Detail = $p.Detail; Bad = $p.Bad; Check = ($p.Bad -and -not $domain); Locked = $domain
+                                Fix = "pol|$($p.Key)|$($p.Value)" })
+        }
+    }
+    foreach ($u in $users) { if (Test-Path -LiteralPath (Join-Path $u 'AppData\Roaming\Mozilla\Firefox\Profiles')) { $firefox = $true } }
+    if ($firefox) {
+        $fx = ''; foreach ($r in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) { if ($r -and (Test-Path -LiteralPath (Join-Path $r 'Mozilla Firefox\firefox.exe'))) { $fx = Join-Path $r 'Mozilla Firefox\firefox.exe'; break } }
+        [void]$items.Add(@{ Type = 'firefox'; Browser = 'firefox'; Where = 'Firefox'; Label = 'Firefox : à vérifier toi-même'; Bad = $false; Exe = $fx; Page = 'about:preferences#privacy'
+                            Detail = "Paramètres > Vie privée et sécurité > Permissions > Notifications « Paramètres… » : supprime les sites que tu ne connais pas. Puis Modules complémentaires (Ctrl+Maj+A) : retire ce que tu n'as pas installé." })
+    }
+    return $items
+}
+
+function Get-BrowserReport {
+    Step "Analyse des navigateurs : notifications, extensions, page d'accueil et réglages imposés"
+    $sync.BrowserReport = $null
+    $items = @(Get-BrowserReportList)
+    $sync.BrowserReport = @{ Items = $items; Domain = [bool](@($items | Where-Object { $_.Locked }).Count) }
+    Log ("   ✔ {0} site(s) autorisé(s) à envoyer des notifications, dont {1} suspect(s) · {2} extension(s), dont {3} à vérifier · {4} réglage(s) imposé(s)" -f `
+        @($items | Where-Object { $_.Type -eq 'notif' }).Count, @($items | Where-Object { $_.Type -eq 'notif' -and $_.Bad }).Count,
+        @($items | Where-Object { $_.Type -eq 'ext' }).Count, @($items | Where-Object { $_.Type -eq 'ext' -and $_.Bad }).Count, @($items | Where-Object { $_.Type -eq 'pol' }).Count)
+}
+
+# Remet une sauvegarde de réglages imposés (annulation depuis l'historique) : uniquement nos propres sauvegardes
+function Restore-RegBackup([string]$File) {
+    $root = [IO.Path]::GetFullPath((Join-Path $AppInfo.LogDir 'sauvegardes')) + '\'
+    $full = [IO.Path]::GetFullPath($File)
+    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full -notmatch '(?i)\.reg$' -or -not (Test-Path -LiteralPath $full)) { throw "Sauvegarde introuvable : $File" }
+    $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\reg.exe') -ArgumentList @('import', ('"{0}"' -f $full)) -Wait -PassThru -WindowStyle Hidden
+    if ($p.ExitCode -ne 0) { throw "La sauvegarde n'a pas pu être remise (code $($p.ExitCode))." }
+    Log "   ✔ Réglages du navigateur remis comme avant"
+}
+
+# Bloque les notifications choisies et retire les réglages imposés choisis
+# Items : "notif|navigateur|fichier Preferences|origine" ou "pol|clé de registre|valeur"
+function Repair-BrowserItems([string[]]$Items) {
+    Step "Nettoyage des navigateurs"
+    $notifs = @($Items | Where-Object { $_ -like 'notif|*' })
+    $pols = @($Items | Where-Object { $_ -like 'pol|*' })
+    $bkDir = Join-Path $AppInfo.LogDir 'sauvegardes\navigateurs'
+    New-Item -ItemType Directory -Force -Path $bkDir -ErrorAction SilentlyContinue | Out-Null
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $blocked = 0
+    if ($notifs.Count) {
+        # Le navigateur réécrit ses réglages en se fermant : il doit être fermé AVANT la modification
+        $procs = @($notifs | ForEach-Object { $k = ($_ -split '\|')[1]; ($script:BrowserDefs | Where-Object { $_.Key -eq $k } | Select-Object -First 1).Proc } | Where-Object { $_ } | Select-Object -Unique)
+        foreach ($pn in $procs) { Stop-Browser $pn }
+        $still = @($procs | Where-Object { Get-Process -Name $_ -ErrorAction SilentlyContinue })
+        if ($still.Count) {
+            Add-TaskError -Title "Le navigateur n'a pas pu être fermé" -Cause ("Toujours ouvert : {0}." -f ($still -join ', ')) -Effect "Les notifications ne sont pas bloquées (le navigateur annulerait la modification en se fermant)." `
+                -Steps @("Ferme complètement le navigateur (y compris l'icône près de l'horloge s'il y en a une).", "Relance « Arnaques du navigateur ».")
+            $notifs = @()
+        }
+        $byFile = @{}
+        foreach ($n in $notifs) {
+            $f = $n -split '\|', 4
+            if ($f.Count -lt 4 -or $f[2] -notmatch '\\Preferences$' -or -not (Test-Path -LiteralPath $f[2])) { continue }
+            if (-not $byFile.ContainsKey($f[2])) { $byFile[$f[2]] = @{ Browser = $f[1]; Origins = New-Object System.Collections.ArrayList } }
+            [void]$byFile[$f[2]].Origins.Add($f[3])
+        }
+        $i = 0
+        foreach ($file in $byFile.Keys) {
+            $i++
+            $g = $byFile[$file]
+            $json = Read-JsonFile $file
+            if (-not $json -or -not [AeroxJson]::Valid($json)) { Log "   ⚠ Réglages illisibles, rien n'est modifié : $file"; continue }
+            $new = $json; $n = 0
+            foreach ($o in $g.Origins) {
+                $r = [AeroxJson]::Replace($new, [string[]]@('profile', 'content_settings', 'exceptions', 'notifications', $o, 'setting'), '2')
+                if ($null -ne $r) { $new = $r; $n++; Log ("   ✔ Notifications bloquées : {0}" -f (Get-UrlHost $o)) }
+            }
+            if (-not $n) { continue }
+            if (-not [AeroxJson]::Valid($new)) { Log "   ⚠ Modification annulée (le fichier de réglages aurait été abîmé) : $file"; continue }
+            try {
+                $bk = Join-Path $bkDir ("{0}_{1}_{2}_Preferences.json" -f $g.Browser, $stamp, $i)
+                Copy-Item -LiteralPath $file -Destination $bk -Force -ErrorAction Stop
+                [IO.File]::WriteAllText($file, $new, (New-Object System.Text.UTF8Encoding($false)))
+                # Relecture : en cas de souci, on remet la sauvegarde
+                if (-not [AeroxJson]::Valid((Read-JsonFile $file))) { Copy-Item -LiteralPath $bk -Destination $file -Force; Log "   ⚠ Écriture ratée, réglages remis comme avant : $file"; continue }
+                $blocked += $n
+            } catch { Log ("   ⚠ Impossible de modifier les réglages du navigateur : {0}" -f $_.Exception.Message) }
+        }
+        if ($blocked) { Add-Change -Kind 'info' -Title ("Navigateurs : notifications bloquées pour {0} site(s)" -f $blocked) -Detail "Sauvegarde des réglages : $bkDir" }
+    }
+    $removed = 0
+    if ($pols.Count) {
+        $byKey = [ordered]@{}
+        foreach ($p in $pols) { $f = $p -split '\|', 3; if ($f.Count -eq 3) { if (-not $byKey.Contains($f[1])) { $byKey[$f[1]] = New-Object System.Collections.ArrayList }; [void]$byKey[$f[1]].Add($f[2]) } }
+        $i = 0
+        foreach ($k in $byKey.Keys) {
+            $i++
+            if ($k -notmatch '^Registry::HKEY_(LOCAL_MACHINE|USERS\\S-1-5-21-[\d-]+)\\SOFTWARE\\Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave)(\\(RestoreOnStartupURLs|ExtensionInstallForcelist))?$') { continue }
+            $regPath = $k -replace '^Registry::', ''
+            $bk = Join-Path $bkDir ("reglages_imposes_{0}_{1}.reg" -f $stamp, $i)
+            $ex = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\reg.exe') -ArgumentList @('export', ('"{0}"' -f $regPath), ('"{0}"' -f $bk), '/y') -Wait -PassThru -WindowStyle Hidden
+            if ($ex.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $bk)) { Log "   ⚠ Sauvegarde impossible, rien n'est retiré : $regPath"; continue }
+            $done = @()
+            foreach ($v in $byKey[$k]) {
+                $names = @($v)
+                # Moteur de recherche imposé : on retire tout le groupe de réglages qui va avec
+                if ($v -eq 'DefaultSearchProviderSearchURL') { try { $names = @((Get-Item -LiteralPath $k -ErrorAction Stop).GetValueNames() | Where-Object { $_ -like 'DefaultSearchProvider*' }) } catch {} }
+                foreach ($nm in $names) {
+                    try { Remove-ItemProperty -LiteralPath $k -Name $nm -ErrorAction Stop; $done += $nm } catch {}
+                }
+            }
+            if ($done.Count) {
+                $removed += $done.Count
+                Log ("   ✔ Réglage(s) imposé(s) retiré(s) : {0}" -f ($done -join ', '))
+                Add-Change -Title "Navigateur : réglages imposés retirés" -Detail ("{0} : {1}" -f $regPath, ($done -join ', ')) -Undo ("Restore-RegBackup '{0}'" -f ($bk -replace "'", "''"))
+            }
+        }
+        if ($removed) {
+            # Une stratégie de groupe locale peut les remettre : on prévient
+            foreach ($pol in @("$env:SystemRoot\System32\GroupPolicy\Machine\Registry.pol", "$env:SystemRoot\System32\GroupPolicy\User\Registry.pol")) {
+                try { if ((Test-Path -LiteralPath $pol) -and ([Text.Encoding]::Unicode.GetString([IO.File]::ReadAllBytes($pol)) -match '(?i)Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware)')) {
+                    Log "   ⚠ Une « stratégie de groupe » de Windows impose aussi des réglages au navigateur : ils peuvent revenir. Si c'est le cas, fais une analyse avec Malwarebytes (gratuit)."
+                    break } } catch {}
+            }
+        }
+    }
+    if ($blocked -or $removed) { Log "✅ C'est fait. Rouvre ton navigateur : les fausses alertes ne s'affichent plus. Pense aussi à retirer les extensions que tu ne connais pas." }
+    else { Log "• Rien n'a été modifié." }
+}
+
+# Diagnostic : notifications de pub, extensions qui détournent le navigateur, réglages imposés
+function Test-Browsers {
+    $items = @(Get-BrowserReportList)
+    $n = @($items | Where-Object { $_.Type -eq 'notif' -and $_.Bad })
+    $p = @($items | Where-Object { $_.Type -eq 'pol' -and $_.Bad -and -not $_.Locked })
+    $e = @($items | Where-Object { ($_.Type -eq 'ext' -or $_.Type -eq 'home') -and $_.Bad })
+    if ($n.Count + $p.Count + $e.Count) {
+        $parts = @()
+        if ($n.Count) { $parts += "$($n.Count) site(s) peuvent t'envoyer des notifications" }
+        if ($p.Count) { $parts += "$($p.Count) réglage(s) imposé(s) au navigateur" }
+        if ($e.Count) { $parts += "$($e.Count) extension(s) ou page(s) d'accueil suspecte(s)" }
+        Add-Issue -Id 'browser' -Sev 'warn' -Title "Ton navigateur est peut-être détourné par des pubs" -Detail ($parts -join ' · ') `
+            -Cause "Un site a obtenu le droit d'envoyer des notifications (« clique sur Autoriser pour continuer »), ou un logiciel a changé les réglages du navigateur." `
+            -Effect "Fausses alertes de virus en bas de l'écran, pubs, redirections vers des sites d'arnaque." `
+            -FixLabel "Voir et nettoyer" -UiFix 'browser'
+    } else { Add-Ok "Navigateurs : pas de notifications de pub ni de réglage suspect" }
 }
 
 # =====================================================================
@@ -1701,6 +2211,7 @@ function Invoke-Diagnostic {
     if ($sens -and ($sens['cpu.temp'] -or $sens['gpu.temp'])) { $checks['Températures'] = 'Test-Temperatures' }
     $checks['Performances'] = 'Test-Performance'
     $checks['En fond'] = 'Test-BgItems'
+    $checks['Navigateurs'] = 'Test-Browsers'
     if (@(Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue).Count) { $checks['Batterie'] = 'Test-Battery' }
     $sync.Scan.Clear()
     foreach ($k in $checks.Keys) { $sync.Scan[$k] = 'wait' }
@@ -1818,15 +2329,24 @@ function Clear-WindowsUpdateCache {
     Start-Service -Name bits, wuauserv -ErrorAction SilentlyContinue
 }
 
+# Mise à jour Windows qui attend un redémarrage : DISM refuse alors de nettoyer les composants (code 0x800F0806)
+function Test-ComponentsPending {
+    return (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+           (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\PackagesPending')
+}
+$script:PendingMsg = "   • Anciens composants : une mise à jour de Windows attend un redémarrage. Ce nettoyage-là se fera après : redémarre le PC puis relance le nettoyage approfondi."
+
 function Start-DeepClean {
     Step "Nettoyage profond des composants Windows (DISM)"
     Log "   Ça peut prendre un moment, laisse le logiciel ouvert..."
+    if (Test-ComponentsPending) { Log $script:PendingMsg; return }
     $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     $ec = Invoke-Native 'dism.exe' @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
     $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
     $gain = [math]::Max([double]0, [double]$free1 - [double]$free0)
     $script:TotalFreed += $gain
-    if ($ec -ne 0) {
+    if ($ec -eq -2146498554) { Log $script:PendingMsg }
+    elseif ($ec -ne 0) {
         Add-TaskError -Title "Le nettoyage profond n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
             -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot' -Steps @("Redémarre le PC.", "Relance « Nettoyage profond » dans l'onglet Nettoyage.")
     } else { Log ("✅ Nettoyage profond terminé : environ {0} libérés" -f (Format-Size $gain)) }
@@ -2147,8 +2667,9 @@ function Invoke-DeepClean([string[]]$Ids) {
         Step "Anciens composants Windows (DISM, 5 à 20 minutes)"
         $dargs = @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
         if ($Ids -contains 'resetbase') { $dargs += '/ResetBase' }
-        $ec = Invoke-Native 'dism.exe' $dargs -Quiet
-        if ($ec -ne 0) {
+        $ec = if (Test-ComponentsPending) { -2146498554 } else { Invoke-Native 'dism.exe' $dargs -Quiet }
+        if ($ec -eq -2146498554) { Log $script:PendingMsg }
+        elseif ($ec -ne 0) {
             Add-TaskError -Title "Le nettoyage des anciens composants n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
                 -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot'
         } else { Log "   ✔ Anciens composants Windows nettoyés" }
@@ -2748,7 +3269,14 @@ function Find-AppUpdate {
         $v = ($r.tag_name -replace '^[vV]', '')
         if ([version]$v -gt [version]$AppInfo.Version) {
             $asset = @($r.assets | Where-Object { $_.name -match '(?i)setup.*\.exe$' }) | Select-Object -First 1
-            $sync.UpdateInfo = @{ Version = $v; Url = $r.html_url; Notes = "$($r.body)"; Test = [bool]$r.prerelease
+            $url = $r.html_url
+            if ($AppInfo.Portable) {
+                # Version portable : pas d'installateur (il installerait AEROX sur le PC), on propose le zip portable
+                $zip = @($r.assets | Where-Object { $_.name -match '(?i)portable.*\.zip$' }) | Select-Object -First 1
+                if ($zip) { $url = [string]$zip.browser_download_url }
+                $asset = $null
+            }
+            $sync.UpdateInfo = @{ Version = $v; Url = $url; Notes = "$($r.body)"; Test = [bool]$r.prerelease
                                   Setup = $(if ($asset) { [string]$asset.browser_download_url } else { '' })
                                   Digest = $(if ($asset -and $asset.digest) { [string]$asset.digest } else { '' }) }
         }
