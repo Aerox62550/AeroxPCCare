@@ -2023,7 +2023,7 @@ function Get-GpuDrivers {
     try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     $list = New-Object System.Collections.ArrayList
     foreach ($g in @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
-        if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage') { continue }
+        if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage|hyper-v|vmware|virtualbox|parallels|qxl|red hat') { continue }
         $vendor = if ("$($g.PNPDeviceID)" -match 'VEN_10DE' -or $g.Name -match 'NVIDIA') { 'NVIDIA' } elseif ("$($g.PNPDeviceID)" -match 'VEN_1002' -or $g.Name -match 'AMD|Radeon') { 'AMD' } elseif ("$($g.PNPDeviceID)" -match 'VEN_8086' -or $g.Name -match 'Intel') { 'Intel' } else { '' }
         $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = (ConvertTo-DateSafe $g.DriverDate); AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown' }
         if ($o.Date) { $o.AgeDays = [int]((Get-Date) - $o.Date).TotalDays }

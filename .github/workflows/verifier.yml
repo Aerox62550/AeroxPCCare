@@ -79,6 +79,7 @@ jobs:
               Write-Host "::notice title=$Title $n::$chunk"
             }
           }
+          $env:AEROX_SMOKE_ACTIONS = '1'   # machine jetable : on teste aussi les vraies actions et leurs annulations
           $out = & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$app\AeroxPCCare_test.ps1" 2>&1 | Out-String -Width 400
           $code = $LASTEXITCODE
           Write-Host $out

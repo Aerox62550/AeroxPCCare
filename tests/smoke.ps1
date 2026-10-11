@@ -87,6 +87,50 @@ function Invoke-Smoke {
     }
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
 }
+
+# Actions réelles : uniquement sur la machine de test jetable de GitHub (AEROX_SMOKE_ACTIONS=1)
+function Invoke-SmokeActions {
+    Write-Host ''
+    Write-Host '== Actions (machine de test jetable)'
+    Smoke 'Fichiers temporaires' { Clear-TempFiles }
+    Smoke 'Nettoyage approfondi (sélection conseillée)' {
+        $ids = @($sync.CleanList | Where-Object { $_.Default -and $_.Id -notmatch '^(components|resetbase|winold|hiber)$' } | ForEach-Object { $_.Id })
+        Write-Host "        catégories : $($ids -join ', ')"
+        Invoke-DeepClean -Ids $ids
+    }
+    Smoke 'Corbeille' { Clear-RecycleBinAll }
+    Smoke 'Mode performances' { Set-HighPerformance; Set-BalancedPower }
+    Smoke 'Assistant stockage' { Enable-StorageSense; if (-not (Get-StorageSenseOn)) { throw 'pas activé' }; Disable-StorageSense }
+    Smoke 'Puissance du processeur' { Set-CpuMaxState 90 }
+    Smoke 'Programme au démarrage' {
+        $e = @(Get-StartupEntries | Where-Object { $_.Enabled }) | Select-Object -First 1
+        if ($e) { Set-StartupApps -Disable @($e.Id); if (@(Get-StartupEntries | Where-Object { $_.Id -eq $e.Id -and -not $_.Enabled }).Count -ne 1) { throw "« $($e.Name) » toujours actif" } } else { Write-Host '        (aucun programme au démarrage)' }
+    }
+    Smoke 'Programme caché en fond' {
+        $x = @($sync.BgItems | Where-Object { $_.Verdict -ne 'keep' -and $_.Kind -eq 'task' }) | Select-Object -First 1
+        if ($x) { Disable-BgItems -Items @(("{0}|{1}|{2}|{3}" -f $x.Kind, $x.Path, $x.Name, $x.Name)) } else { Write-Host '        (aucune tâche à couper)' }
+    }
+    Smoke 'Dépannage : son' { Repair-Sound }
+    Smoke 'Dépannage : micro' { Repair-Microphone }
+    Smoke 'Dépannage : webcam' { Repair-Webcam }
+    Smoke 'Dépannage : imprimante' { Repair-Printing }
+    Smoke 'Dépannage : bureau figé' { Restart-Shell }
+    Smoke 'Test de connexion' { Test-Internet }
+    Smoke 'Vérifier le disque' { Test-Disk }
+    Smoke 'Point de restauration' { New-RestorePoint }
+    Smoke 'Annulations depuis l historique' {
+        $n = 0
+        foreach ($c in @(Get-Changes | Where-Object { $_.Undo })) {
+            if (-not (Test-SafeUndo $c.Undo)) { throw "annulation refusée : $($c.Undo)" }
+            $script:AeroxUndo = $true
+            try { Invoke-Expression $c.Undo } finally { $script:AeroxUndo = $false }
+            $n++; Write-Host "        annulé : $($c.Title)"
+        }
+        if (-not $n) { throw 'aucune annulation trouvée dans l historique' }
+        $e = @(Get-StartupEntries | Where-Object { -not $_.Enabled })
+        if ($e.Count) { Write-Host ("        encore désactivés au démarrage : " + (($e | ForEach-Object { $_.Name }) -join ', ')) }
+    }
+}
 # Bilan
 function Complete-Smoke {
     $bugs = @(); if (Test-Path $script:SmokeBugFile) { $bugs = @(Get-Content $script:SmokeBugFile | Select-Object -Skip $script:SmokeBug0) }
@@ -99,7 +143,7 @@ function Complete-Smoke {
 }
 $script:SmokeExit = 2
 $window.Add_ContentRendered({
-    try { Invoke-Smoke } catch { [void]$script:SmokeFail.Add("Test interrompu : $($_.Exception.Message) $($_.InvocationInfo.PositionMessage)") }
+    try { Invoke-Smoke; if ($env:AEROX_SMOKE_ACTIONS) { Invoke-SmokeActions } } catch { [void]$script:SmokeFail.Add("Test interrompu : $($_.Exception.Message) $($_.InvocationInfo.PositionMessage)") }
     Complete-Smoke
     $window.Close()
 })
