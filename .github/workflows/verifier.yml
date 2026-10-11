@@ -1,0 +1,77 @@
+# Vérification automatique sur un vrai Windows, à chaque envoi sur la branche de travail.
+# Ne publie rien : construit le logiciel, l'analyse (PSScriptAnalyzer) et lance le test
+# tests/smoke.ps1 (toutes les pages, analyses en lecture seule, chaque fenêtre ouverte puis fermée).
+name: Vérifier sur Windows
+
+on:
+  push:
+    branches: [prochaine-version]
+    paths: ['src/**', 'native/**', 'launcher/**', 'tests/**', 'build.sh', '.github/workflows/verifier.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  construire:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils de construction
+        run: sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y --no-install-recommends mono-devel nsis zip
+      - name: Construire
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aerox
+          path: |
+            build/AEROX PC Care
+            tests/smoke.ps1
+
+  tester:
+    needs: construire
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: aerox
+          path: art
+
+      - name: Analyse du code (PSScriptAnalyzer)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }
+          $ex = 'PSAvoidUsingWriteHost','PSUseShouldProcessForStateChangingFunctions','PSUseApprovedVerbs','PSUseSingularNouns','PSAvoidUsingPositionalParameters','PSAvoidGlobalVars','PSUseDeclaredVarsMoreThanAssignments','PSAvoidUsingEmptyCatchBlock','PSUseBOMForUnicodeEncodedFile','PSAvoidUsingCmdletAliases','PSReviewUnusedParameter','PSUseOutputTypeCorrectly','PSAvoidTrailingWhitespace','PSUseConsistentWhitespace','PSAvoidUsingInvokeExpression','PSAvoidDefaultValueSwitchParameter','PSUseCompatibleCmdlets','PSAvoidUsingPlainTextForPassword','PSAvoidLongLines'
+          $r = Invoke-ScriptAnalyzer -Path 'art\build\AEROX PC Care\AeroxPCCare.ps1' -Severity Error, Warning -ExcludeRule $ex
+          $r | Sort-Object RuleName, Line | Format-Table RuleName, Line, Message -AutoSize -Wrap | Out-String -Width 400 | Write-Host
+          Write-Host "Total : $(@($r).Count)"
+
+      - name: Test complet (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          $app = 'C:\aerox\app'
+          New-Item -ItemType Directory -Force $app | Out-Null
+          Copy-Item 'art\build\AEROX PC Care\*' $app -Recurse -Force
+          $src = [IO.File]::ReadAllText("$app\AeroxPCCare.ps1")
+          $i = $src.LastIndexOf('[void]$window.ShowDialog()')
+          if ($i -lt 0) { throw 'point d''injection introuvable' }
+          $smoke = [IO.File]::ReadAllText((Resolve-Path 'art\tests\smoke.ps1'))
+          [IO.File]::WriteAllText("$app\AeroxPCCare_test.ps1", $src.Substring(0, $i) + $smoke, (New-Object Text.UTF8Encoding($true)))
+          & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$app\AeroxPCCare_test.ps1"
+          $code = $LASTEXITCODE
+          Write-Host "Code de sortie : $code"
+          exit $code
+
+      - name: Test version portable
+        shell: powershell
+        run: |
+          $p = 'C:\aerox\cle'
+          New-Item -ItemType Directory -Force $p | Out-Null
+          Copy-Item 'C:\aerox\app\*' $p -Recurse -Force
+          Set-Content "$p\portable.txt" 'test'
+          $env:AEROX_SMOKE_PORTABLE = '1'
+          & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$p\AeroxPCCare_test.ps1"
+          exit $LASTEXITCODE
