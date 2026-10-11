@@ -1797,7 +1797,7 @@ function Show-RemoteHelpDialog {
                     if ($this.Tag -eq 'qa') { Open-QuickAssist; return }
                     $txt = Build-HelpReport
                     [System.Windows.Clipboard]::SetText($txt)
-                    $f = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Rapport AEROX PC Care.txt'
+                    $f = Join-Path (Get-SessionFolder 'Desktop') 'Rapport AEROX PC Care.txt'
                     try { [IO.File]::WriteAllText($f, $txt, (New-Object System.Text.UTF8Encoding($true))) } catch { $f = $null }
                     $this.Content = '✔ Rapport copié'
                     Write-UiLog ("Rapport d'aide copié dans le presse-papiers" + $(if ($f) { " et enregistré sur le Bureau (« Rapport AEROX PC Care.txt »)." } else { '.' }))

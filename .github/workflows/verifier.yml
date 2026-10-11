@@ -45,9 +45,19 @@ jobs:
           Set-PSRepository PSGallery -InstallationPolicy Trusted
           if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }
           $ex = 'PSAvoidUsingWriteHost','PSUseShouldProcessForStateChangingFunctions','PSUseApprovedVerbs','PSUseSingularNouns','PSAvoidUsingPositionalParameters','PSAvoidGlobalVars','PSUseDeclaredVarsMoreThanAssignments','PSAvoidUsingEmptyCatchBlock','PSUseBOMForUnicodeEncodedFile','PSAvoidUsingCmdletAliases','PSReviewUnusedParameter','PSUseOutputTypeCorrectly','PSAvoidTrailingWhitespace','PSUseConsistentWhitespace','PSAvoidUsingInvokeExpression','PSAvoidDefaultValueSwitchParameter','PSUseCompatibleCmdlets','PSAvoidUsingPlainTextForPassword','PSAvoidLongLines'
+          function Send-Note([string]$Title, [string]$Text) {
+            # Résultat lisible via l'API GitHub (annotations), par morceaux
+            $lines = $Text -split "`r?`n"; $n = 0
+            for ($i = 0; $i -lt $lines.Count; $i += 60) {
+              $n++; $chunk = ($lines[$i..([math]::Min($i + 59, $lines.Count - 1))] -join "`n")
+              $chunk = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::notice title=$Title $n::$chunk"
+            }
+          }
           $r = Invoke-ScriptAnalyzer -Path 'art\build\AEROX PC Care\AeroxPCCare.ps1' -Severity Error, Warning -ExcludeRule $ex
-          $r | Sort-Object RuleName, Line | Format-Table RuleName, Line, Message -AutoSize -Wrap | Out-String -Width 400 | Write-Host
-          Write-Host "Total : $(@($r).Count)"
+          $txt = ($r | Sort-Object RuleName, Line | ForEach-Object { "{0} L{1} : {2}" -f $_.RuleName, $_.Line, $_.Message }) -join "`n"
+          Write-Host $txt
+          Send-Note 'Analyse' ("Total : $(@($r).Count)`n" + $txt)
 
       - name: Test complet (Windows PowerShell 5.1)
         shell: powershell
@@ -60,8 +70,19 @@ jobs:
           if ($i -lt 0) { throw 'point d''injection introuvable' }
           $smoke = [IO.File]::ReadAllText((Resolve-Path 'art\tests\smoke.ps1'))
           [IO.File]::WriteAllText("$app\AeroxPCCare_test.ps1", $src.Substring(0, $i) + $smoke, (New-Object Text.UTF8Encoding($true)))
-          & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$app\AeroxPCCare_test.ps1"
+          function Send-Note([string]$Title, [string]$Text) {
+            # Résultat lisible via l'API GitHub (annotations), par morceaux
+            $lines = $Text -split "`r?`n"; $n = 0
+            for ($i = 0; $i -lt $lines.Count; $i += 60) {
+              $n++; $chunk = ($lines[$i..([math]::Min($i + 59, $lines.Count - 1))] -join "`n")
+              $chunk = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::notice title=$Title $n::$chunk"
+            }
+          }
+          $out = & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$app\AeroxPCCare_test.ps1" 2>&1 | Out-String -Width 400
           $code = $LASTEXITCODE
+          Write-Host $out
+          Send-Note 'Test' ($out + "`nCode de sortie : $code")
           Write-Host "Code de sortie : $code"
           exit $code
 

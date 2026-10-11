@@ -282,6 +282,44 @@ function Test-OtherAccountNow {
         return ($console -and $me -and $console -ne $me)
     } catch { return $false }
 }
+# Compte de la personne devant l'écran. Différent du compte qui fait tourner AEROX quand on a tapé le mot de passe
+# d'un compte ADMIN : ses réglages (registre HKCU) et ses dossiers sont alors ceux de la personne, pas ceux de l'admin.
+function Get-SessionUser {
+    if ($null -ne $script:SessionUser) { return $script:SessionUser }
+    $r = @{ Other = $false; Sid = ''; Profile = $env:USERPROFILE; Hkcu = 'HKCU:' }
+    try {
+        if (Test-OtherAccount) {
+            $name = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+            $sid = ([Security.Principal.NTAccount]$name).Translate([Security.Principal.SecurityIdentifier]).Value
+            $hk = "Registry::HKEY_USERS\$sid"
+            $prof = "$((Get-CimInstance Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction Stop).LocalPath)"
+            if ((Test-Path -LiteralPath $hk) -and $prof -and (Test-Path -LiteralPath $prof)) { $r = @{ Other = $true; Sid = $sid; Profile = $prof; Hkcu = $hk } }
+        }
+    } catch {}
+    $script:SessionUser = $r
+    return $r
+}
+# Dossier de la personne devant l'écran : 'Local AppData', 'AppData', 'LocalLow', 'Desktop', 'Startup'
+function Get-SessionFolder([string]$Name) {
+    $u = Get-SessionUser
+    if (-not $u.Other) {
+        switch ($Name) { 'Local AppData' { return $env:LOCALAPPDATA } 'AppData' { return $env:APPDATA } 'LocalLow' { return (Join-Path $env:USERPROFILE 'AppData\LocalLow') }
+                         'Desktop' { return [Environment]::GetFolderPath('Desktop') } 'Startup' { return [Environment]::GetFolderPath('Startup') } }
+    }
+    if ($Name -eq 'LocalLow') { return (Join-Path $u.Profile 'AppData\LocalLow') }
+    try {
+        # Valeur brute (sans développer %USERPROFILE%, qui serait celui du compte admin)
+        $k = Get-Item -LiteralPath "$($u.Hkcu)\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" -ErrorAction Stop
+        $v = [string]$k.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        if ($v) { return [Environment]::ExpandEnvironmentVariables(($v -replace '(?i)%USERPROFILE%', $u.Profile.Replace('$', '$$'))) }
+    } catch {}
+    switch ($Name) {
+        'Local AppData' { return (Join-Path $u.Profile 'AppData\Local') }
+        'AppData' { return (Join-Path $u.Profile 'AppData\Roaming') }
+        'Desktop' { return (Join-Path $u.Profile 'Desktop') }
+        'Startup' { return (Join-Path $u.Profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup') }
+    }
+}
 # Message clair quand winget manque ou ne peut pas être lancé
 function Add-WingetError([string]$What) {
     if ($script:WingetUnreadable) {
@@ -464,10 +502,11 @@ function Test-StartupEnabled([string]$Approved, [string]$ValueName) {
     return $true
 }
 function Get-StartupEntries {
+    $hk = (Get-SessionUser).Hkcu   # programmes au démarrage de la personne devant l'écran
     $list = New-Object System.Collections.ArrayList
     $ab = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved'
     $sources = @(
-        @{ Path = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run';             Approved = "HKCU:\$ab\Run" },
+        @{ Path = "$hk\Software\Microsoft\Windows\CurrentVersion\Run";               Approved = "$hk\$ab\Run" },
         @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run';             Approved = "HKLM:\$ab\Run" },
         @{ Path = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run'; Approved = "HKLM:\$ab\Run32" }
     )
@@ -479,7 +518,7 @@ function Get-StartupEntries {
             [void]$list.Add(@{ Id = "$($s.Approved)|$n"; Name = $n; Command = [string]$key.GetValue($n); Approved = $s.Approved; ValueName = $n; Enabled = (Test-StartupEnabled $s.Approved $n) })
         }
     }
-    foreach ($f in @(@{ Dir = [Environment]::GetFolderPath('Startup'); Approved = "HKCU:\$ab\StartupFolder" },
+    foreach ($f in @(@{ Dir = (Get-SessionFolder 'Startup'); Approved = "$hk\$ab\StartupFolder" },
                      @{ Dir = [Environment]::GetFolderPath('CommonStartup'); Approved = "HKLM:\$ab\StartupFolder" })) {
         if (-not $f.Dir -or -not (Test-Path -LiteralPath $f.Dir)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $f.Dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' })) {
@@ -813,7 +852,7 @@ function Test-BgItems {
 # Autorisation Windows « Autoriser les applications à accéder au micro / à la caméra » (Confidentialité)
 function Get-PrivacyBlocked([string]$Cap) {
     $blocked = @()
-    foreach ($root in 'HKLM:', 'HKCU:') {
+    foreach ($root in 'HKLM:', (Get-SessionUser).Hkcu) {
         $k = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\$Cap"
         foreach ($p in @($k, "$k\NonPackaged")) {
             try { if ((Get-ItemProperty -LiteralPath $p -Name Value -ErrorAction Stop).Value -eq 'Deny') { $blocked += $p } } catch {}
@@ -1917,7 +1956,7 @@ function Restore-Dns([string]$Guid, [string]$Servers) {
     $a = Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { "$($_.InterfaceGuid)" -eq $Guid } | Select-Object -First 1
     if (-not $a) { Add-TaskError -Title "Carte réseau introuvable" -Cause "La carte réseau dont les DNS avaient été changés n'existe plus sur ce PC."; return }
     if ($Servers) { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ServerAddresses @($Servers -split '[,\s]+' | Where-Object { $_ }) -ErrorAction Stop }
-    else { $null = Invoke-Native 'netsh.exe' @('interface', 'ipv4', 'set', 'dnsservers', "name=$($a.ifIndex)", 'source=dhcp') }
+    else { Set-DnsClientServerAddress -InterfaceIndex $a.ifIndex -ResetServerAddresses -ErrorAction Stop }
     Clear-DnsClientCache -ErrorAction SilentlyContinue
     Log "   ✔ DNS remis comme avant."
 }
@@ -2303,15 +2342,16 @@ function Stop-Browser([string]$Proc) {
 }
 
 function Clear-BrowserCache {
+    $la = Get-SessionFolder 'Local AppData'
     Step "Nettoyage du cache des navigateurs"
     $before = $script:TotalFreed
     $found  = $false
     $browsers = @(
-        @{ Name = 'Google Chrome';  Proc = 'chrome'; Dir = "$env:LOCALAPPDATA\Google\Chrome\User Data" },
-        @{ Name = 'Microsoft Edge'; Proc = 'msedge'; Dir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data" },
-        @{ Name = 'Brave';          Proc = 'brave';  Dir = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data" },
-        @{ Name = 'Opera GX';       Proc = 'opera';  Dir = "$env:LOCALAPPDATA\Opera Software\Opera GX Stable" },
-        @{ Name = 'Opera';          Proc = 'opera';  Dir = "$env:LOCALAPPDATA\Opera Software\Opera Stable" }
+        @{ Name = 'Google Chrome';  Proc = 'chrome'; Dir = "$la\Google\Chrome\User Data" },
+        @{ Name = 'Microsoft Edge'; Proc = 'msedge'; Dir = "$la\Microsoft\Edge\User Data" },
+        @{ Name = 'Brave';          Proc = 'brave';  Dir = "$la\BraveSoftware\Brave-Browser\User Data" },
+        @{ Name = 'Opera GX';       Proc = 'opera';  Dir = "$la\Opera Software\Opera GX Stable" },
+        @{ Name = 'Opera';          Proc = 'opera';  Dir = "$la\Opera Software\Opera Stable" }
     )
     foreach ($b in $browsers) {
         if (-not (Test-Path -LiteralPath $b.Dir)) { continue }
@@ -2329,7 +2369,7 @@ function Clear-BrowserCache {
         $script:TotalFreed += $freed
         Log ("   ✔ {0} : {1} libérés" -f $b.Name, (Format-Size $freed))
     }
-    $ff = "$env:LOCALAPPDATA\Mozilla\Firefox\Profiles"
+    $ff = "$la\Mozilla\Firefox\Profiles"
     if (Test-Path -LiteralPath $ff) {
         $found = $true
         if (Get-Process -Name 'firefox' -ErrorAction SilentlyContinue) {
@@ -2379,10 +2419,10 @@ function Start-DeepClean {
 
 function Enable-StorageSense {
     Step "Activation du nettoyage automatique (Assistant stockage)"
-    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'
-    if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-    Set-ItemProperty -Path $key -Name '01' -Value 1 -Type DWord
-    Set-ItemProperty -Path $key -Name '04' -Value 1 -Type DWord
+    $key = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"
+    if (-not (Test-Path -LiteralPath $key)) { New-Item -Path $key -Force | Out-Null }
+    Set-ItemProperty -LiteralPath $key -Name '01' -Value 1 -Type DWord
+    Set-ItemProperty -LiteralPath $key -Name '04' -Value 1 -Type DWord
     Log "   ✔ Windows supprimera maintenant tout seul les fichiers temporaires régulièrement."
     Add-Change -Title "Nettoyage automatique de Windows activé (Assistant stockage)" -Undo 'Disable-StorageSense'
     Open-WinUri 'ms-settings:storagesense'
@@ -2521,13 +2561,14 @@ function Get-PathsSize([string[]]$Paths) {
     return $t
 }
 function Get-BrowserCacheDirs {
+    $la = Get-SessionFolder 'Local AppData'
     $list = @()
     $defs = @(
-        @{ Name = 'Google Chrome';  Proc = 'chrome'; Dir = "$env:LOCALAPPDATA\Google\Chrome\User Data" },
-        @{ Name = 'Microsoft Edge'; Proc = 'msedge'; Dir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data" },
-        @{ Name = 'Brave';          Proc = 'brave';  Dir = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data" },
-        @{ Name = 'Opera GX';       Proc = 'opera';  Dir = "$env:LOCALAPPDATA\Opera Software\Opera GX Stable" },
-        @{ Name = 'Opera';          Proc = 'opera';  Dir = "$env:LOCALAPPDATA\Opera Software\Opera Stable" }
+        @{ Name = 'Google Chrome';  Proc = 'chrome'; Dir = "$la\Google\Chrome\User Data" },
+        @{ Name = 'Microsoft Edge'; Proc = 'msedge'; Dir = "$la\Microsoft\Edge\User Data" },
+        @{ Name = 'Brave';          Proc = 'brave';  Dir = "$la\BraveSoftware\Brave-Browser\User Data" },
+        @{ Name = 'Opera GX';       Proc = 'opera';  Dir = "$la\Opera Software\Opera GX Stable" },
+        @{ Name = 'Opera';          Proc = 'opera';  Dir = "$la\Opera Software\Opera Stable" }
     )
     foreach ($b in $defs) {
         if (-not (Test-Path -LiteralPath $b.Dir)) { continue }
@@ -2535,12 +2576,12 @@ function Get-BrowserCacheDirs {
         $dirs = foreach ($p in $profiles) { foreach ($c in 'Cache', 'Code Cache', 'GPUCache', 'GrShaderCache', 'ShaderCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache') { Join-Path $p $c } }
         $list += @{ Name = $b.Name; Proc = $b.Proc; Dirs = @($dirs) }
     }
-    $ff = "$env:LOCALAPPDATA\Mozilla\Firefox\Profiles"
+    $ff = "$la\Mozilla\Firefox\Profiles"
     if (Test-Path -LiteralPath $ff) { $list += @{ Name = 'Firefox'; Proc = 'firefox'; Dirs = @(Get-ChildItem -LiteralPath $ff -Directory -ErrorAction SilentlyContinue | ForEach-Object { Join-Path $_.FullName 'cache2' }) } }
     return $list
 }
 function Get-AppCacheDirs {
-    $l = $env:LOCALAPPDATA; $r = $env:APPDATA
+    $l = Get-SessionFolder 'Local AppData'; $r = Get-SessionFolder 'AppData'
     $epic = @(Get-ChildItem -LiteralPath "$l\EpicGamesLauncher\Saved" -Directory -Filter 'webcache*' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     return @(
         @{ Name = 'Discord';    Proc = 'discord';           Dirs = @("$r\discord\Cache", "$r\discord\Code Cache", "$r\discord\GPUCache") },
@@ -2551,7 +2592,7 @@ function Get-AppCacheDirs {
     ) | Where-Object { @($_.Dirs | Where-Object { $_ -and (Test-Path -LiteralPath $_) }).Count -gt 0 }
 }
 function Get-ShaderCacheDirs {
-    $l = $env:LOCALAPPDATA; $ll = Join-Path $env:USERPROFILE 'AppData\LocalLow'
+    $l = Get-SessionFolder 'Local AppData'; $ll = Get-SessionFolder 'LocalLow'
     return @("$l\D3DSCache", "$l\NVIDIA\DXCache", "$l\NVIDIA\GLCache", "$ll\NVIDIA\PerDriverVersion\DXCache", "$ll\NVIDIA\PerDriverVersion\GLCache",
              "$l\AMD\DxCache", "$l\AMD\DxcCache", "$l\AMD\GLCache", "$l\AMD\VkCache", "$l\Intel\ShaderCache", "$env:ProgramData\NVIDIA Corporation\NV_Cache")
 }
@@ -2753,16 +2794,16 @@ function Set-BalancedPower {
     else { Add-TaskError -Title "Impossible de revenir au mode Équilibré" -Cause "Le mode Équilibré n'existe pas sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'powercfg.cpl'" }
 }
 function Get-VisualFxStatus {
-    try { $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects' -Name VisualFXSetting -ErrorAction Stop).VisualFXSetting } catch { $v = 0 }
+    try { $v = (Get-ItemProperty -LiteralPath "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -ErrorAction Stop).VisualFXSetting } catch { $v = 0 }
     return [int]$v
 }
 function Get-StorageSenseOn {
-    try { return ((Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy' -Name '01' -ErrorAction Stop).'01' -eq 1) } catch { return $false }
+    try { return ((Get-ItemProperty -LiteralPath "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy" -Name '01' -ErrorAction Stop).'01' -eq 1) } catch { return $false }
 }
 function Disable-StorageSense {
     Step "Désactivation du nettoyage automatique"
-    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy'
-    if (Test-Path $key) { Set-ItemProperty -Path $key -Name '01' -Value 0 -Type DWord }
+    $key = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"
+    if (Test-Path -LiteralPath $key) { Set-ItemProperty -LiteralPath $key -Name '01' -Value 0 -Type DWord }
     Log "   ✔ Nettoyage automatique désactivé."
     Add-Change -Title "Nettoyage automatique de Windows désactivé (Assistant stockage)" -Undo 'Enable-StorageSense'
 }
@@ -3099,7 +3140,11 @@ function Repair-Network {
     Step "Réparation de la connexion Internet"
     $null = Invoke-Native 'ipconfig.exe' @('/flushdns')
     $null = Invoke-Native 'netsh.exe'   @('winsock', 'reset')
-    $null = Invoke-Native 'netsh.exe'   @('int', 'ip', 'reset')
+    # « int ip reset » remet toutes les cartes en automatique (DHCP) : une adresse IP fixe réglée à la main serait perdue
+    $static = @()
+    try { $static = @(Get-NetIPInterface -AddressFamily IPv4 -Dhcp Disabled -ConnectionState Connected -ErrorAction Stop | Where-Object { $_.InterfaceAlias -notmatch '(?i)loopback|vEthernet|VirtualBox|VMware' } | ForEach-Object { $_.InterfaceAlias }) } catch {}
+    if ($static.Count) { Log ("   • Adresse IP fixe sur « {0} » : gardée (la remise à zéro TCP/IP est sautée)." -f ($static -join ', ')) }
+    else { $null = Invoke-Native 'netsh.exe' @('int', 'ip', 'reset') }
     $null = Invoke-Native 'ipconfig.exe' @('/release')
     $null = Invoke-Native 'ipconfig.exe' @('/renew')
     Log "✅ Réseau réinitialisé. Redémarre le PC pour terminer la réparation."
@@ -3244,7 +3289,9 @@ function Set-HighPerformance {
 function Open-VisualEffects {
     Step "Effets visuels"
     Log "   → Coche « Ajuster afin d'obtenir les meilleures performances », puis recoche « Lisser les polices écran » et clique sur OK."
-    Start-Process 'SystemPropertiesPerformance.exe'
+    $exe = Join-Path $env:SystemRoot 'System32\SystemPropertiesPerformance.exe'
+    if ((Get-SessionUser).Other -and (Start-AsSessionUser $exe)) { return }
+    Start-Process $exe
 }
 
 function Open-AppsSettings {
