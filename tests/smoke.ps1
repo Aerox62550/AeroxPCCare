@@ -17,6 +17,8 @@ function Confirm-Box([string]$Text) { Write-Host "    (confirmation refusée aut
     [void]$s.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ApplicationIdle, [Action[object]]{ param($w) try { $w.Close() } catch {} }, $s)
 })
 function Smoke([string]$Name, [scriptblock]$Code) {
+    Write-Host ("  … {0}" -f $Name)
+    [Console]::Out.Flush()
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $before = $sync.Errors.Count
     try { & $Code; $st = 'OK' }

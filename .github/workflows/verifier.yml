@@ -31,7 +31,7 @@ jobs:
   tester:
     needs: construire
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -80,8 +80,11 @@ jobs:
             }
           }
           $env:AEROX_SMOKE_ACTIONS = '1'   # machine jetable : on teste aussi les vraies actions et leurs annulations
-          $out = & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$app\AeroxPCCare_test.ps1" 2>&1 | Out-String -Width 400
-          $code = $LASTEXITCODE
+          # Lancé avec un chronomètre : si le test bloque (fenêtre restée ouverte…), on garde ce qu'il a écrit jusque-là
+          $log = 'C:\aerox\test.log'
+          $pr = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', "`"$app\AeroxPCCare_test.ps1`"") -RedirectStandardOutput $log -RedirectStandardError 'C:\aerox\test.err' -PassThru -NoNewWindow
+          if ($pr.WaitForExit(30 * 60 * 1000)) { $code = $pr.ExitCode } else { $code = 9; Stop-Process -Id $pr.Id -Force; Add-Content $log "`n!!! TEST BLOQUÉ : arrêté au bout de 30 minutes (dernière étape ci-dessus)" }
+          $out = (Get-Content $log -Raw -Encoding UTF8) + "`n" + (Get-Content 'C:\aerox\test.err' -Raw -ErrorAction SilentlyContinue)
           Write-Host $out
           Send-Note 'Test' ($out + "`nCode de sortie : $code")
           Write-Host "Code de sortie : $code"
