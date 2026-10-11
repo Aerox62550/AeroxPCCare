@@ -34,7 +34,7 @@ function Smoke-Page([string]$Key) {
         $b0 = $(if (Test-Path $script:SmokeBugFile) { @(Get-Content $script:SmokeBugFile).Count } else { 0 })
         Show-Page $Key
         $b1 = $(if (Test-Path $script:SmokeBugFile) { @(Get-Content $script:SmokeBugFile).Count } else { 0 })
-        if ($b1 -gt $b0) { throw ("la page a planté : " + (Get-Content $script:SmokeBugFile | Select-Object -Last 1)) }
+        if ($b1 -gt $b0) { throw ("la page a planté : " + (Get-Content $script:SmokeBugFile -Encoding UTF8 | Select-Object -Last 1)) }
     }
 }
 Write-Host "== Démarrage : version $AppVersion, portable=$Portable, données=$LogDir"
@@ -133,7 +133,8 @@ function Invoke-SmokeActions {
 }
 # Bilan
 function Complete-Smoke {
-    $bugs = @(); if (Test-Path $script:SmokeBugFile) { $bugs = @(Get-Content $script:SmokeBugFile | Select-Object -Skip $script:SmokeBug0) }
+    # Seuls les vrais bugs comptent (type « bug ») : les erreurs expliquées à l'utilisateur (pas de son, pas d'imprimante… sur la machine de test) sont normales
+    $bugs = @(); if (Test-Path $script:SmokeBugFile) { $bugs = @(Get-Content $script:SmokeBugFile -Encoding UTF8 | Select-Object -Skip $script:SmokeBug0 | Where-Object { $_ -notmatch '"type":"erreur"' }) }
     Write-Host ''
     Write-Host "== Bugs enregistrés par le logiciel pendant le test : $($bugs.Count)"
     foreach ($b in $bugs) { Write-Host "   $b" }
