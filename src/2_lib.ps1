@@ -1497,7 +1497,8 @@ function Get-ForgottenApps([string]$Drive, $ScanLines) {
         if ($null -eq $lu -or $lu -lt $limit) { [void]$out.Add(@{ Kind = 'game'; Name = (Split-Path $p[2] -Leaf); Size = $size; LastUsed = $lu; Path = $p[2] }) }
     }
     try {
-        foreach ($a in @(Get-InstalledApps | Where-Object { $_.Kind -eq 'win32' -and $_.Size -ge 500MB -and $_.Drive -eq $Drive.ToUpper() })) {
+        $apps = Get-InstalledApps   # (liste renvoyée d'un bloc : la dérouler avant de filtrer)
+        foreach ($a in @($apps | Where-Object { $_.Kind -eq 'win32' -and $_.Size -ge 500MB -and $_.Drive -eq $Drive.ToUpper() })) {
             if ($a.Name -match '(?i)microsoft visual c\+\+|\.net|runtime|driver|pilote|redistributable|steam$|nvidia|amd software|intel|realtek|windows') { continue }
             if (($null -ne $a.LastUsed -and $a.LastUsed -lt $limit) -or ($null -eq $a.LastUsed -and $a.Date -and $a.Date -lt $limit)) {
                 [void]$out.Add(@{ Kind = 'app'; Name = $a.Name; Size = $a.Size; LastUsed = $a.LastUsed; Path = $a.Location })
@@ -2930,7 +2931,11 @@ function Invoke-CleanMgr([string[]]$Handlers, [int]$Slot) {
         try { New-ItemProperty -Path $k.PSPath -Name $flag -Value $v -PropertyType DWord -Force -ErrorAction Stop | Out-Null } catch {}
     }
     $p = Start-Process -FilePath "$env:SystemRoot\System32\cleanmgr.exe" -ArgumentList "/sagerun:$Slot" -PassThru
-    $p.WaitForExit()
+    # Jamais d'attente infinie : au-delà de 15 minutes (ou si on annule), Windows finit tout seul en arrière-plan
+    $t0 = Get-Date
+    while (-not $p.WaitForExit(2000)) {
+        if ($sync.Cancel -or ((Get-Date) - $t0).TotalMinutes -ge 15) { Log "   • Le nettoyage de Windows continue en arrière-plan (il peut être long), AEROX passe à la suite."; break }
+    }
 }
 
 function Invoke-DeepClean([string[]]$Ids) {
