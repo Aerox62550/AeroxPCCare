@@ -7,6 +7,9 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 
 <p align="center"><a href="https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Setup.exe"><b>⬇ Télécharger AEROX PC Care (installateur Windows)</b></a></p>
 
+<p align="center"><a href="https://github.com/Aerox62550/AeroxPCCare/issues?q=label%3Aavis+is%3Aopen"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Faerox-relais.sam-heitz.workers.dev%2Fnote" alt="Avis des utilisateurs"></a>
+&nbsp;<a href="https://github.com/Aerox62550/AeroxPCCare/issues?q=label%3Aavis+is%3Aopen">Lire les avis</a></p>
+
 ---
 
 ## Ce qu'il fait
@@ -52,6 +55,12 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 **Version portable (clé USB)** : pour dépanner plusieurs PC sans rien installer, télécharge
 **[AeroxPCCare_Portable.zip](https://github.com/Aerox62550/AeroxPCCare/releases/latest/download/AeroxPCCare_Portable.zip)**,
 dézippe-le sur la clé et lance `AeroxPCCare.exe`. Réglages et historique restent sur la clé (un dossier par PC).
+
+## Avis
+
+Le logiciel est gratuit : la seule récompense, ce sont vos retours. Dans le logiciel : onglet **Aide** > **Donner mon avis**
+(une note de 1 à 5 et un commentaire, sans compte, avec le pseudo de votre choix). Les avis sont publiés directement
+et se lisent [ici](../../issues?q=label%3Aavis+is%3Aopen).
 
 ## Signaler un bug
 

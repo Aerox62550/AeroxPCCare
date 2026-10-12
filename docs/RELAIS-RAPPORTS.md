@@ -1,4 +1,4 @@
-# Rapports de bug sans compte GitHub : mise en place du relais (10 minutes, gratuit)
+# Rapports de bug et avis sans compte GitHub : mise en place du relais (10 minutes, gratuit)
 
 Le bouton « Envoyer le rapport » du logiciel passe par un petit relais (Cloudflare Worker) qui
 crée l'Issue sur GitHub. La clé d'accès GitHub reste dans le relais : elle n'est jamais dans le logiciel.
@@ -29,3 +29,12 @@ Pour couper le relais : vide le fichier `relais.txt`.
 
 Les rapports arrivent dans l'onglet **Issues** du dépôt (étiquette `bug`). Ils sont publics comme le dépôt,
 mais ne contiennent ni nom d'utilisateur, ni nom du PC, ni adresse e-mail (remplacés automatiquement).
+
+## 4. Avis (note + commentaire)
+Le même relais publie les avis (bouton « Donner mon avis » du logiciel) dans les Issues, étiquette `avis`,
+et calcule la note moyenne affichée par le badge du README (`https://aerox-relais.<ton-nom>.workers.dev/note`).
+- Mise à jour du relais : Cloudflare > Workers & Pages > `aerox-relais` > **Edit code** > remplace tout par le contenu
+  de `relais/worker.js` > **Deploy**. Rien d'autre à changer (même jeton, même espace KV `LIMITES`).
+- Un seul avis par PC : s'il est renvoyé, l'avis existant est modifié.
+- Supprimer un avis : ouvre-le dans les Issues > **Close issue** (il ne compte plus dans la note), ou tout en bas
+  **Delete issue** pour l'effacer complètement. La note du badge se met à jour en 10 minutes au plus.
