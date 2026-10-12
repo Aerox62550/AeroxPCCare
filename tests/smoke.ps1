@@ -78,7 +78,18 @@ function Invoke-Smoke {
     Smoke 'Fenêtre : nettoyage' { Show-CleanDialog $null }
     Smoke 'Logiciels installés' { Get-InstalledAppsAdvice }
     Smoke 'Fenêtre : logiciels' { Show-UninstallDialog $null }
-    Smoke 'Espace disque' { Get-SpaceUsage 'C:' }
+    # Doublons : 2 copies d'une même « photo » dans Documents et Téléchargements
+    $docs = Get-SessionFolder 'Personal'; $dls = Get-SessionFolder 'Downloads'
+    New-Item -ItemType Directory -Force -Path $docs, $dls | Out-Null
+    $bytes = New-Object byte[] 2500000; (New-Object Random 42).NextBytes($bytes)
+    [IO.File]::WriteAllBytes((Join-Path $docs 'vacances.jpg'), $bytes); [IO.File]::WriteAllBytes((Join-Path $dls 'vacances (1).jpg'), $bytes)
+    Smoke 'Doublons' {
+        Get-Duplicates
+        $g = @($sync.Dupes.Groups | Where-Object { @($_ | Where-Object { $_.Path -like '*vacances*' }).Count -eq 2 })
+        if ($g.Count -ne 1) { throw "doublon de test non trouvé ($(@($sync.Dupes.Groups).Count) groupe(s))" }
+    }
+    Smoke 'Fenêtre : doublons' { Show-DuplicatesDialog }
+    Smoke 'Espace disque' { Get-SpaceUsage 'C:'; foreach ($x in @($sync.SpaceScan.Win)) { Write-Host ("        Windows : {0} ≈ {1} (coché={2})" -f $x.T, (Format-Size $x.S), $x.Check) }; foreach ($x in @($sync.SpaceScan.Forgotten | Select-Object -First 5)) { Write-Host ("        oublié : {0} {1}" -f $x.Name, (Format-Size $x.Size)) } }
     Smoke 'Fenêtre : espace disque' { Show-SpaceDialog }
     Smoke 'Bilan avant/après' { $s = Get-PcSnapshot; Write-Host ("        démarrage={0}s, démarrage auto={1}, fond={2}" -f $s.BootSec, $s.Startup, $s.Procs) }
     Smoke 'Annulations autorisées' {
@@ -101,6 +112,11 @@ function Invoke-SmokeActions {
         Invoke-DeepClean -Ids $ids
     }
     Smoke 'Corbeille' { Clear-RecycleBinAll }
+    Smoke 'Place gardée par Windows' {
+        $ids = @($sync.SpaceScan.Win | Where-Object { $_.Id -ne 'compact' } | ForEach-Object { if ($_.Arg) { "{0}:{1}" -f $_.Id, $_.Arg } else { $_.Id } })
+        Write-Host "        éléments : $($ids -join ', ')"
+        if ($ids.Count) { Invoke-WindowsSpace -Items $ids }
+    }
     Smoke 'Mode performances' { Set-HighPerformance; Set-BalancedPower }
     Smoke 'Assistant stockage' { Enable-StorageSense; if (-not (Get-StorageSenseOn)) { throw 'pas activé' }; Disable-StorageSense }
     Smoke 'Puissance du processeur' { Set-CpuMaxState 90 }
