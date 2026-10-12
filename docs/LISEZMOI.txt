@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.6.0
+﻿AEROX PC Care - v1.7.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -151,6 +151,11 @@ infecté ! »), les extensions douteuses, une page d'accueil ou une recherche
 détournée et les réglages imposés à Chrome, Edge, Brave et Opera. Les sites
 suspects sont bloqués en un clic (le navigateur est fermé le temps de la
 modification, ses réglages sont sauvegardés).
+
+DONNER SON AVIS
+---------------
+Onglet Aide > « Donner mon avis » : une note de 1 à 5 et un commentaire, sans compte,
+avec le pseudo de ton choix. L'avis est publié sur la page GitHub du logiciel.
 
 COMPATIBILITÉ
 -------------

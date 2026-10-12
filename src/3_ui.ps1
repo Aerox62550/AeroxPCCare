@@ -234,6 +234,7 @@ $script:Settings = @{
     SpeedHistory = @()
     BetaChannel = $false
     PostOptimize = $false
+    InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
 }
 function ConvertTo-Hash($o) {
@@ -246,7 +247,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -568,6 +569,7 @@ $PageDefs = [ordered]@{
     @{ T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." }) }
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
     @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
+    @{ T = "Donner mon avis"; Badge = "⭐"; B = "Donner mon avis"; UI = 'review'; D = "AEROX PC Care est gratuit : une note et un petit mot font plaisir au développeur et aident d'autres personnes à lui faire confiance. Ton avis est publié sur la page GitHub du logiciel." },
     @{ T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
     @{ T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
     @{ T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
@@ -618,6 +620,18 @@ function Build-HomePage {
         Add-Child $t (New-Text ("Nouvelle version disponible : {0}{1}" -f $sync.UpdateInfo.Version, $(if ($sync.UpdateInfo.Test) { ' (version de test)' } else { '' })) 15 '#FFFFFF' 'SemiBold')
         Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier" + $(if ($Portable) { " sur la clé (garde le dossier « donnees » : il contient tes réglages)." } else { '.' }) }) 13 '#8B93A7')
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
+    }
+    if (Test-ReviewInvite) {
+        $rv = New-CardBorder '#2A2350'; $rd = New-Object System.Windows.Controls.DockPanel
+        $rb = New-Object System.Windows.Controls.StackPanel; $rb.Orientation = 'Horizontal'; [System.Windows.Controls.DockPanel]::SetDock($rb, 'Right'); $rb.VerticalAlignment = 'Center'
+        $b1 = New-Button 'Plus tard' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'review-later' } } $false; $b1.Margin = Th 0 0 4 0; Add-Child $rb $b1
+        $b2 = New-Button 'Ne plus demander' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'review-never' } } $false; $b2.Margin = Th 0 0 8 0; Add-Child $rb $b2
+        Add-Child $rb (New-Button 'Donner mon avis' 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'review' } } $false)
+        Add-Child $rd $rb
+        $rt = New-Object System.Windows.Controls.StackPanel; $rt.VerticalAlignment = 'Center'
+        Add-Child $rt (New-Text "AEROX PC Care t'a aidé ? ⭐" 15 '#FFFFFF' 'SemiBold')
+        Add-Child $rt (New-Text "Le logiciel est gratuit : une note et un petit mot, ça fait plaisir et ça aide d'autres personnes à lui faire confiance." 13 '#8B93A7')
+        Add-Child $rd $rt; $rv.Child = $rd; Add-Child $sp $rv
     }
     # Bannière santé
     $h = New-CardBorder; $dp = New-Object System.Windows.Controls.DockPanel
@@ -1120,6 +1134,9 @@ function Invoke-UiCommand($T) {
             'ui' {
                 switch ($T.Def.UI) {
                     'report' { Show-BugReport '' }
+                    'review' { Show-ReviewDialog }
+                    'review-later' { $script:Settings.ReviewSnooze = (Get-Date).AddDays(14).ToString('s'); Save-Settings; Refresh-Page }
+                    'review-never' { $script:Settings.ReviewNever = $true; Save-Settings; Refresh-Page }
                     'remotehelp' { Show-RemoteHelpDialog }
                     'history' { Show-HistoryDialog }
                     'display-fix' { $d = @(Get-Displays) | Where-Object { $_.Device -eq $T.Def.Device } | Select-Object -First 1; Set-DisplayWithConfirm $d $null }
@@ -1762,6 +1779,81 @@ function Open-QuickAssistForSession([string]$Qa) {
         return
     }
     [System.Windows.MessageBox]::Show("Assistance rapide n'a pas pu s'ouvrir toute seule (AEROX tourne avec le mot de passe d'un autre compte).`n`nOuvre-la toi-même : menu Démarrer, tape « Assistance rapide », puis Entrée.$(if (-not $upkg) { "`n`nSi elle n'apparaît pas, installe-la depuis le Microsoft Store (recherche « Assistance rapide »)." })", $AppName, 'OK', 'Information') | Out-Null
+}
+
+# ---------------------------------------------------------------- Avis (note + commentaire, publiés sur GitHub)
+$script:ReviewsUrl = "https://github.com/$GitHubRepo/issues?q=label%3Aavis+is%3Aopen"
+function Test-ReviewInvite {
+    $st = $script:Settings
+    if ($st.ReviewSent -or $st.ReviewNever -or [int]$st.Launches -lt 3 -or -not $sync.BugRelay) { return $false }
+    if ($st.ReviewSnooze) { try { if ([datetime]$st.ReviewSnooze -gt (Get-Date)) { return $false } } catch {} }
+    return $true
+}
+function Show-ReviewDialog {
+    $w = New-Dialog "$AppName : donner mon avis" 560
+    $script:RevWin = $w; $script:RevNote = [int]$script:Settings.ReviewNote; $script:RevStars = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text $(if ($script:Settings.ReviewSent) { "Modifier mon avis" } else { "Donner mon avis" }) 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Ton avis est publié sur la page GitHub d'AEROX PC Care, visible par tout le monde, avec le pseudo de ton choix (ou « Anonyme »). N'y mets pas d'informations personnelles. Un seul avis par PC : tu pourras le modifier." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 14; Add-Child $sp $p
+    Add-Child $sp (New-Text "Ta note" 12 '#C3CAD9' 'SemiBold')
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.Margin = Th 0 4 0 12
+    foreach ($i in 1..5) {
+        $b = New-Object System.Windows.Controls.Button; $b.Content = '★'; $b.FontSize = 30; $b.Tag = $i; $b.Cursor = 'Hand'
+        $b.Background = [System.Windows.Media.Brushes]::Transparent; $b.BorderThickness = Th 0 0 0 0; $b.Padding = Th 2 0 2 0; $b.Margin = Th 0 0 4 0
+        $b.Add_Click({ $script:RevNote = [int]$this.Tag; & $script:PaintStars })
+        Add-Child $row $b; [void]$script:RevStars.Add($b)
+    }
+    $script:RevLabel = New-Text '' 13 '#B9A8FF' 'SemiBold'; $script:RevLabel.VerticalAlignment = 'Center'; $script:RevLabel.Margin = Th 10 0 0 0; Add-Child $row $script:RevLabel
+    Add-Child $sp $row
+    $mk = { param($h, $max, $multi)
+        $t = New-Object System.Windows.Controls.TextBox; $t.MaxLength = $max; $t.Margin = Th 0 6 0 12
+        if ($multi) { $t.AcceptsReturn = $true; $t.TextWrapping = 'Wrap'; $t.Height = $h; $t.VerticalScrollBarVisibility = 'Auto' }
+        $t.Background = Brush '#0E1016'; $t.Foreground = Brush '#E6E9F2'; $t.BorderBrush = Brush '#2E3446'; $t.Padding = Th 8 6 8 6; $t.FontSize = 13; $t.CaretBrush = Brush '#E6E9F2'
+        return $t }
+    Add-Child $sp (New-Text "Ton commentaire (facultatif)" 12 '#C3CAD9' 'SemiBold')
+    $script:RevText = & $mk 110 1500 $true; $script:RevText.Text = "$($script:Settings.ReviewText)"; Add-Child $sp $script:RevText
+    Add-Child $sp (New-Text "Ton pseudo (facultatif)" 12 '#C3CAD9' 'SemiBold')
+    $script:RevPseudo = & $mk 0 30 $false; $script:RevPseudo.Text = "$($script:Settings.ReviewPseudo)"; Add-Child $sp $script:RevPseudo
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 4 0 0
+    $bRead = New-DlgButton 'Lire les avis' 'TextBtn'; [System.Windows.Controls.DockPanel]::SetDock($bRead, 'Left'); Add-Child $bar $bRead
+    $right = New-Object System.Windows.Controls.StackPanel; $right.Orientation = 'Horizontal'; $right.HorizontalAlignment = 'Right'
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $script:RevSend = New-DlgButton 'Envoyer' 'PrimaryBtn'
+    Add-Child $right $bClose; Add-Child $right $script:RevSend; Add-Child $bar $right; Add-Child $sp $bar
+    $script:PaintStars = {
+        $labels = @('', 'Décevant', 'Bof', 'Correct', 'Bien', 'Génial !')
+        foreach ($s in $script:RevStars) { $s.Foreground = Brush $(if ([int]$s.Tag -le $script:RevNote) { '#FFC83D' } else { '#3A4052' }) }
+        $script:RevLabel.Text = $labels[$script:RevNote]
+        $script:RevSend.IsEnabled = ($script:RevNote -ge 1)
+    }
+    $bRead.Add_Click({ [void](Open-Url $script:ReviewsUrl) })
+    $bClose.Add_Click({ $script:RevWin.Close() })
+    $script:RevSend.Add_Click({
+        $btn = $this
+        try {
+            if (-not $sync.BugRelay) { throw "le service d'envoi ne répond pas pour l'instant. Réessaie plus tard." }
+            $btn.IsEnabled = $false; $btn.Content = 'Envoi...'
+            [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
+            $payload = @{ note = $script:RevNote; commentaire = $script:RevText.Text.Trim(); pseudo = $script:RevPseudo.Text.Trim(); version = $AppVersion; id = "$($script:Settings.InstallId)" } | ConvertTo-Json -Compress
+            $r = Invoke-RestMethod -Uri ($sync.BugRelay.TrimEnd('/') + '/avis') -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -TimeoutSec 20 -ErrorAction Stop
+            [System.Windows.Input.Mouse]::OverrideCursor = $null
+            $script:Settings.ReviewSent = $true; $script:Settings.ReviewNote = $script:RevNote; $script:Settings.ReviewText = $script:RevText.Text.Trim(); $script:Settings.ReviewPseudo = $script:RevPseudo.Text.Trim(); Save-Settings
+            Write-UiLog ("⭐ Avis " + $(if ($r.updated) { 'modifié' } else { 'publié' }) + ". Merci !")
+            [System.Windows.MessageBox]::Show("Merci pour ton avis ! Il est publié sur la page GitHub d'AEROX PC Care.", $AppName, 'OK', 'Information') | Out-Null
+            $script:RevWin.Close()
+        } catch {
+            [System.Windows.Input.Mouse]::OverrideCursor = $null
+            $btn.IsEnabled = $true; $btn.Content = 'Envoyer'
+            $m = $_.Exception.Message
+            try { $resp = $_.ErrorDetails.Message | ConvertFrom-Json; if ($resp.error) { $m = $resp.error } } catch {}
+            [System.Windows.MessageBox]::Show("L'avis n'a pas pu être envoyé : $m", $AppName, 'OK', 'Warning') | Out-Null
+        }
+    })
+    & $script:PaintStars
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    Refresh-Page
 }
 
 function Show-RemoteHelpDialog {
@@ -3624,6 +3716,11 @@ Write-UiLog "Commence par « Lancer le diagnostic » sur l'accueil."
 $LogDot.Visibility = 'Collapsed'
 Load-Settings
 if ($script:Settings.LogOpen) { Set-LogOpen $true }
+try {
+    if ("$($script:Settings.InstallId)" -notmatch '^[0-9a-f]{32}$') { $script:Settings.InstallId = [guid]::NewGuid().ToString('N') }
+    $script:Settings.Launches = [int]$script:Settings.Launches + 1
+    Save-Settings
+} catch {}
 # Fichiers temporaires d'une mise à jour terminée
 foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'))) { try { Get-ChildItem -LiteralPath $mj -Force -ErrorAction Stop | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique

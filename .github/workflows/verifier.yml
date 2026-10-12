@@ -80,11 +80,17 @@ jobs:
             }
           }
           $env:AEROX_SMOKE_ACTIONS = '1'   # machine jetable : on teste aussi les vraies actions et leurs annulations
-          # Lancé avec un chronomètre : si le test bloque (fenêtre restée ouverte…), on garde ce qu'il a écrit jusque-là
-          $log = 'C:\aerox\test.log'
-          $pr = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', "`"$app\AeroxPCCare_test.ps1`"") -RedirectStandardOutput $log -RedirectStandardError 'C:\aerox\test.err' -PassThru -NoNewWindow
-          if ($pr.WaitForExit(30 * 60 * 1000)) { $code = $pr.ExitCode } else { $code = 9; Stop-Process -Id $pr.Id -Force; Add-Content $log "`n!!! TEST BLOQUÉ : arrêté au bout de 30 minutes (dernière étape ci-dessus)" }
-          $out = (Get-Content $log -Raw -Encoding UTF8) + "`n" + (Get-Content 'C:\aerox\test.err' -Raw -ErrorAction SilentlyContinue)
+          # Lancé avec un chronomètre : si le test bloque, on garde l'avancement écrit étape par étape
+          $code = 9
+          try {
+            $pr = Start-Process powershell.exe -ArgumentList @('-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-File', "`"$app\AeroxPCCare_test.ps1`"") -RedirectStandardOutput 'C:\aerox\test.log' -RedirectStandardError 'C:\aerox\test.err' -PassThru -NoNewWindow
+            $null = $pr.Handle   # sinon ExitCode reste vide
+            if ($pr.WaitForExit(30 * 60 * 1000)) { $code = $pr.ExitCode } else { try { Stop-Process -Id $pr.Id -Force } catch {} }
+          } catch { Write-Host "Lancement : $($_.Exception.Message)" }
+          Start-Sleep -Seconds 2
+          function Read-Shared([string]$f) { try { $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite'); $r = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8); $t = $r.ReadToEnd(); $r.Close(); return $t } catch { return '' } }
+          $out = (Read-Shared 'C:\aerox\progress.txt') + "`n---- sortie ----`n" + (Read-Shared 'C:\aerox\test.log') + "`n" + (Read-Shared 'C:\aerox\test.err')
+          if ($code -eq 9) { $out = "!!! TEST BLOQUÉ OU INTERROMPU (dernière étape commencée ci-dessous)`n" + $out }
           Write-Host $out
           Send-Note 'Test' ($out + "`nCode de sortie : $code")
           Write-Host "Code de sortie : $code"
