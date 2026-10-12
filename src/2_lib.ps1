@@ -299,26 +299,22 @@ function Get-SessionUser {
     $script:SessionUser = $r
     return $r
 }
-# Dossier de la personne devant l'écran : 'Local AppData', 'AppData', 'LocalLow', 'Desktop', 'Startup'
+# Dossier de la personne devant l'écran : nom de valeur de « User Shell Folders » ('Local AppData', 'AppData', 'Desktop', 'Startup',
+# 'Personal' = Documents, 'My Pictures', 'My Video', 'My Music', 'Downloads') ou 'LocalLow'
 function Get-SessionFolder([string]$Name) {
     $u = Get-SessionUser
-    if (-not $u.Other) {
-        switch ($Name) { 'Local AppData' { return $env:LOCALAPPDATA } 'AppData' { return $env:APPDATA } 'LocalLow' { return (Join-Path $env:USERPROFILE 'AppData\LocalLow') }
-                         'Desktop' { return [Environment]::GetFolderPath('Desktop') } 'Startup' { return [Environment]::GetFolderPath('Startup') } }
-    }
     if ($Name -eq 'LocalLow') { return (Join-Path $u.Profile 'AppData\LocalLow') }
+    $vn = if ($Name -eq 'Downloads') { '{374DE290-123F-4565-9164-39C4925E467B}' } else { $Name }
     try {
-        # Valeur brute (sans développer %USERPROFILE%, qui serait celui du compte admin)
+        # Valeur brute (sans développer %USERPROFILE%, qui serait celui du compte qui fait tourner AEROX)
         $k = Get-Item -LiteralPath "$($u.Hkcu)\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" -ErrorAction Stop
-        $v = [string]$k.GetValue($Name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        $v = [string]$k.GetValue($vn, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
         if ($v) { return [Environment]::ExpandEnvironmentVariables(($v -replace '(?i)%USERPROFILE%', $u.Profile.Replace('$', '$$'))) }
     } catch {}
-    switch ($Name) {
-        'Local AppData' { return (Join-Path $u.Profile 'AppData\Local') }
-        'AppData' { return (Join-Path $u.Profile 'AppData\Roaming') }
-        'Desktop' { return (Join-Path $u.Profile 'Desktop') }
-        'Startup' { return (Join-Path $u.Profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup') }
-    }
+    $sub = @{ 'Local AppData' = 'AppData\Local'; 'AppData' = 'AppData\Roaming'; 'Desktop' = 'Desktop'; 'Personal' = 'Documents'; 'My Pictures' = 'Pictures'
+              'My Video' = 'Videos'; 'My Music' = 'Music'; 'Downloads' = 'Downloads'; 'Startup' = 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup' }
+    if ($sub.ContainsKey($Name)) { return (Join-Path $u.Profile $sub[$Name]) }
+    return ''
 }
 # Message clair quand winget manque ou ne peut pas être lancé
 function Add-WingetError([string]$What) {
@@ -431,7 +427,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup'
+    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -1362,6 +1358,256 @@ function Get-PcSnapshot {
     try { $s.Procs = @(Get-Process -ErrorAction SilentlyContinue).Count } catch {}
     try { $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"; $s.Free = [double]$d.FreeSpace } catch {}
     return $s
+}
+
+# =====================================================================
+#  PLACE SUR LE DISQUE : ce que Windows garde pour lui, OneDrive, doublons, jeux et logiciels oubliés
+# =====================================================================
+# Dernière utilisation d'un programme : Windows note chaque lancement dans C:\Windows\Prefetch (NOM.EXE-XXXX.pf)
+function Get-PrefetchMap {
+    if ($null -ne $script:PrefetchMap) { return $script:PrefetchMap }
+    $m = @{}
+    try {
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot 'Prefetch') -Filter '*.pf' -File -ErrorAction Stop)) {
+            $exe = ($f.Name -replace '-[0-9A-F]{8}\.pf$', '').ToUpperInvariant()
+            if (-not $m.ContainsKey($exe) -or $m[$exe] -lt $f.LastWriteTime) { $m[$exe] = $f.LastWriteTime }
+        }
+    } catch {}
+    $script:PrefetchMap = $m
+    return $m
+}
+# Date du dernier lancement d'un des programmes d'un dossier (null si inconnue)
+function Get-FolderLastUsed([string]$Dir) {
+    if (-not $Dir -or -not (Test-Path -LiteralPath $Dir)) { return $null }
+    if ($Dir -match '(?i)^[a-z]:\\(windows|program files( \(x86\))?)?\\?$') { return $null }
+    $m = Get-PrefetchMap
+    if (-not $m.Count) { return $null }
+    $best = $null; $n = 0
+    $dirs = @($Dir) + @(Get-ChildItem -LiteralPath $Dir -Directory -ErrorAction SilentlyContinue | Select-Object -First 40 | ForEach-Object { $_.FullName })
+    foreach ($d in $dirs) {
+        foreach ($e in @(Get-ChildItem -LiteralPath $d -Filter '*.exe' -File -ErrorAction SilentlyContinue)) {
+            if (++$n -gt 300) { break }
+            $k = $e.Name.ToUpperInvariant()
+            if ($k.Length -gt 29) { $k = $k.Substring(0, 29) }   # Windows coupe le nom à 29 caractères
+            if ($m.ContainsKey($k) -and ($null -eq $best -or $m[$k] -gt $best)) { $best = $m[$k] }
+        }
+    }
+    return $best
+}
+
+# Ce que Windows garde pour lui sur le disque système (surtout utile sur les petits disques)
+# Chaque élément : Id, T (titre), D (explication), S (octets gagnés, estimation si Est), Check (coché d'office), Arg
+function Get-WindowsSpaceItems {
+    $items = New-Object System.Collections.ArrayList
+    $sd = $env:SystemDrive
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$sd'" -ErrorAction SilentlyContinue
+    if (-not $disk) { return @() }
+    $size = [double]$disk.Size; $free = [double]$disk.FreeSpace
+    $small = ($size -le 300GB) -or ($free / $size -lt 0.15)
+    $laptop = $false
+    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    # 1. Stockage réservé aux mises à jour (~7 Go)
+    try {
+        $st = "$((Get-WindowsReservedStorageState -ErrorAction Stop).ReservedStorageState)"
+        if ($st -match '(?i)enabled' -and $small) {
+            [void]$items.Add(@{ Id = 'reserved'; T = 'Stockage réservé par Windows'; S = 7GB; Est = $true; Check = $true
+                                D = "Windows bloque environ 7 Go pour ses futures mises à jour. Sur un petit disque, mieux vaut récupérer cette place : les mises à jour continuent de s'installer normalement. Annulable." })
+        }
+    } catch {}
+    # 2. Fichier de veille prolongée : réduit au minimum (le démarrage rapide reste)
+    try {
+        $hf = New-Object IO.FileInfo (Join-Path $sd 'hiberfil.sys')
+        $ram = [double](Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+        if ($hf.Exists -and $ram -gt 0 -and $hf.Length -gt 0.3 * $ram) {
+            $gain = [double]$hf.Length - 0.2 * $ram
+            if ($gain -ge 1GB) {
+                [void]$items.Add(@{ Id = 'hiber'; T = 'Fichier de veille prolongée (hiberfil.sys)'; S = $gain; Est = $true; Check = (-not $laptop)
+                                    D = $(if ($laptop) { "Réduit au strict nécessaire : le démarrage rapide de Windows reste, mais l'option « Veille prolongée » disparaît du menu. Garde-le si tu l'utilises sur ce portable. Annulable." } else { "Réduit au strict nécessaire : le démarrage rapide de Windows reste. Sur un PC fixe, la « veille prolongée » ne sert presque jamais. Annulable." }) })
+            }
+        }
+    } catch {}
+    # 3. Points de restauration : place limitée à 5 % du disque (les plus récents sont gardés)
+    try {
+        $vol = Get-CimInstance Win32_Volume -Filter ("DriveLetter='{0}'" -f $sd) -ErrorAction Stop
+        $ss = @(Get-CimInstance Win32_ShadowStorage -ErrorAction Stop | Where-Object { "$($_.Volume.DeviceID)" -eq "$($vol.DeviceID)" }) | Select-Object -First 1
+        if ($ss) {
+            $target = 0.05 * $size
+            $used = [double]$ss.UsedSpace; $max = [double]$ss.MaxSpace
+            if ($used - $target -ge 1GB -and $max -gt $target * 1.1) {
+                $prev = if ($max -ge 1e18) { 'UNBOUNDED' } else { "{0}MB" -f [math]::Floor($max / 1MB) }
+                [void]$items.Add(@{ Id = 'restore'; T = 'Points de restauration'; S = ($used - $target); Est = $true; Check = $true; Arg = $prev
+                                    D = ("Ils prennent {0}. On limite leur place à 5 % du disque ({1}) : les plus anciens sont supprimés, les plus récents sont gardés et Windows continue d'en créer. Annulable." -f (Format-Size $used), (Format-Size $target)) })
+            }
+        }
+    } catch {}
+    # 4. Anciennes versions de pilotes gardées par Windows (jamais celle utilisée)
+    try {
+        $used = @{}; foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop)) { if ($d.InfName) { $used["$($d.InfName)".ToLower()] = $true } }
+        $drv = @(Get-WindowsDriver -Online -ErrorAction Stop)
+        $old = New-Object System.Collections.ArrayList
+        foreach ($g in @($drv | Group-Object { "{0}|{1}|{2}" -f [IO.Path]::GetFileName("$($_.OriginalFileName)").ToLower(), $_.ProviderName, $_.ClassName })) {
+            if ($g.Count -lt 2) { continue }
+            $sorted = @($g.Group | Sort-Object @{ Expression = { try { [version]"$($_.Version)" } catch { [version]'0.0' } } }, @{ Expression = { $_.Date } } -Descending)
+            foreach ($x in @($sorted | Select-Object -Skip 1)) {
+                $inf = "$($x.Driver)".ToLower()
+                if ($inf -notmatch '^oem\d+\.inf$' -or $used[$inf]) { continue }
+                $dir = Split-Path "$($x.OriginalFileName)" -Parent
+                [void]$old.Add(@{ Inf = $inf; Name = ("{0} {1}" -f $x.ProviderName, $x.ClassName).Trim(); Version = "$($x.Version)"; Size = (Get-FolderSize $dir) })
+            }
+        }
+        $tot = [double](($old | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+        if ($old.Count -and $tot -ge 300MB) {
+            $names = (@($old | Sort-Object { - $_.Size } | Select-Object -First 4 | ForEach-Object { "$($_.Name) $($_.Version)" }) -join ' · ')
+            [void]$items.Add(@{ Id = 'drivers'; T = "Anciennes versions de pilotes ($($old.Count))"; S = $tot; Est = $false; Check = $true; Arg = (@($old | ForEach-Object { $_.Inf }) -join ',')
+                                D = "Windows garde les anciennes versions des pilotes après chaque mise à jour (surtout la carte graphique) : $names. Les pilotes utilisés ne sont jamais touchés. Définitif, mais ces versions ne servent plus." })
+        }
+    } catch {}
+    # 5. Compression des fichiers de Windows (outil officiel CompactOS), seulement sur les petits disques
+    if ($small) {
+        try {
+            $q = (& compact.exe /compactos:query 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $q -and $q -notmatch '(?i)\b(is in the compact state|est dans l.état compact|est à l.état compact|ist im komprimierten)') {
+                [void]$items.Add(@{ Id = 'compact'; T = 'Compression de Windows (CompactOS)'; S = 2.5GB; Est = $true; Check = $false
+                                    D = "Outil officiel de Microsoft prévu pour les petits disques : il compresse les fichiers de Windows, rien n'est supprimé. Gain de 2 à 4 Go. Prend 10 à 20 minutes ; Windows reste un tout petit peu plus sollicité ensuite (sans différence visible sur un PC récent). Annulable." })
+            }
+        } catch {}
+    }
+    return $items.ToArray()
+}
+
+# Dossiers OneDrive de la personne devant l'écran
+function Get-OneDriveFolders {
+    $out = @()
+    $root = "$((Get-SessionUser).Hkcu)\Software\Microsoft\OneDrive\Accounts"
+    foreach ($k in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+        try { $f = "$((Get-ItemProperty -LiteralPath $k.PSPath -Name UserFolder -ErrorAction Stop).UserFolder)"; if ($f -and (Test-Path -LiteralPath $f) -and $out -notcontains $f) { $out += $f } } catch {}
+    }
+    return $out
+}
+
+# Jeux Steam et logiciels pas lancés depuis 3 mois (d'après le Prefetch de Windows)
+function Get-ForgottenApps([string]$Drive, $ScanLines) {
+    $limit = (Get-Date).AddDays(-90)
+    $out = New-Object System.Collections.ArrayList
+    foreach ($l in @($ScanLines | Where-Object { $_ -match '^\d+\|\d+\|.*\\steamapps\\common\\[^\\]+$' })) {
+        $p = $l.Split('|', 3)
+        $size = [double]$p[1]
+        if ($size -lt 2GB) { continue }
+        $lu = Get-FolderLastUsed $p[2]
+        if ($null -eq $lu -or $lu -lt $limit) { [void]$out.Add(@{ Kind = 'game'; Name = (Split-Path $p[2] -Leaf); Size = $size; LastUsed = $lu; Path = $p[2] }) }
+    }
+    try {
+        foreach ($a in @(Get-InstalledApps | Where-Object { $_.Kind -eq 'win32' -and $_.Size -ge 500MB -and $_.Drive -eq $Drive.ToUpper() })) {
+            if ($a.Name -match '(?i)microsoft visual c\+\+|\.net|runtime|driver|pilote|redistributable|steam$|nvidia|amd software|intel|realtek|windows') { continue }
+            if (($null -ne $a.LastUsed -and $a.LastUsed -lt $limit) -or ($null -eq $a.LastUsed -and $a.Date -and $a.Date -lt $limit)) {
+                [void]$out.Add(@{ Kind = 'app'; Name = $a.Name; Size = $a.Size; LastUsed = $a.LastUsed; Path = $a.Location })
+            }
+        }
+    } catch {}
+    return @($out | Sort-Object { - $_.Size })
+}
+
+# Libère la place gardée par Windows. Items : 'reserved', 'hiber', 'restore:<taille d'avant>', 'drivers:oem1.inf,oem2.inf', 'compact'
+function Invoke-WindowsSpace([string[]]$Items) {
+    $before = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
+    foreach ($it in $Items) {
+        if ($sync.Cancel) { break }
+        $id, $arg = $it -split ':', 2
+        switch ($id) {
+            'reserved' { Set-ReservedStorage 'Disabled' }
+            'hiber'    { Set-HiberType 'reduced' }
+            'restore'  { Set-RestoreSpace '5%' $arg }
+            'drivers'  { Remove-OldDrivers @("$arg" -split ',' | Where-Object { $_ }) }
+            'compact'  { Set-CompactOS 'on' }
+        }
+    }
+    $after = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
+    if ($after -gt $before) { Log ("✅ Place libérée sur {0} : {1} (il reste {2} de libre)." -f $env:SystemDrive, (Format-Size ($after - $before)), (Format-Size $after)) }
+}
+function Set-ReservedStorage([string]$State) {
+    if ($State -notin 'Enabled', 'Disabled') { throw "État inconnu : $State" }
+    Step $(if ($State -eq 'Disabled') { "Stockage réservé par Windows : libération" } else { "Stockage réservé par Windows : réactivation" })
+    try {
+        Set-WindowsReservedStorageState -State $State -ErrorAction Stop | Out-Null
+        Log $(if ($State -eq 'Disabled') { "   ✔ Les ~7 Go réservés par Windows sont libérés." } else { "   ✔ Windows réserve de nouveau de la place pour ses mises à jour." })
+        Add-Change -Title $(if ($State -eq 'Disabled') { "Stockage réservé de Windows libéré (~7 Go)" } else { "Stockage réservé de Windows réactivé" }) -Undo ("Set-ReservedStorage '{0}'" -f $(if ($State -eq 'Disabled') { 'Enabled' } else { 'Disabled' }))
+    } catch {
+        Add-TaskError -Title "Le stockage réservé n'a pas pu être libéré" -Cause "Windows s'en sert en ce moment (une mise à jour est en cours ou attend un redémarrage)." -Effect "Rien n'a changé." `
+            -Steps @("Redémarre le PC.", "Laisse Windows Update finir les mises à jour en attente.", "Relance « Ce qui prend de la place ».")
+    }
+}
+function Set-HiberType([string]$Type) {
+    if ($Type -notin 'reduced', 'full') { throw "Type inconnu : $Type" }
+    Step $(if ($Type -eq 'reduced') { "Fichier de veille prolongée : réduction" } else { "Fichier de veille prolongée : taille complète" })
+    $hf = Join-Path $env:SystemDrive 'hiberfil.sys'
+    $b = 0.0; try { $b = [double](New-Object IO.FileInfo $hf).Length } catch {}
+    $code = Invoke-Native 'powercfg.exe' @('/hibernate', '/type', $Type)
+    if ($code -ne 0) { Add-TaskError -Title "Le fichier de veille prolongée n'a pas pu être modifié" -Cause ($script:NativeOutput -join ' ') -Effect "Rien n'a changé."; return }
+    $a = 0.0; try { $a = [double](New-Object IO.FileInfo $hf).Length } catch {}
+    Log ("   ✔ hiberfil.sys : {0} → {1}" -f (Format-Size $b), (Format-Size $a))
+    Add-Change -Title $(if ($Type -eq 'reduced') { "Fichier de veille prolongée réduit (le démarrage rapide reste)" } else { "Fichier de veille prolongée remis en taille complète" }) -Undo ("Set-HiberType '{0}'" -f $(if ($Type -eq 'reduced') { 'full' } else { 'reduced' }))
+}
+function Set-RestoreSpace([string]$Max, [string]$Previous = '') {
+    if ($Max -notmatch '^(\d{1,2}%|\d{3,9}MB|UNBOUNDED)$' -or ($Previous -and $Previous -notmatch '^(\d{1,2}%|\d{3,9}MB|UNBOUNDED)$')) { throw "Taille invalide : $Max" }
+    Step "Points de restauration : place maximale $Max"
+    $code = Invoke-Native 'vssadmin.exe' @('resize', 'shadowstorage', "/for=$env:SystemDrive", "/on=$env:SystemDrive", "/maxsize=$Max")
+    if ($code -ne 0) { Add-TaskError -Title "La place des points de restauration n'a pas pu être changée" -Cause ($script:NativeOutput -join ' ') -Effect "Rien n'a changé."; return }
+    Log "   ✔ Les points de restauration les plus récents sont gardés, Windows continue d'en créer."
+    if ($Previous) { Add-Change -Title "Place des points de restauration limitée à $Max" -Undo ("Set-RestoreSpace '{0}'" -f $Previous) }
+    else { Add-Change -Kind 'info' -Title "Place des points de restauration : $Max" }
+}
+function Remove-OldDrivers([string[]]$Infs) {
+    Step ("Suppression de {0} ancienne(s) version(s) de pilotes" -f @($Infs).Count)
+    $inUse = @{}; foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue)) { if ($d.InfName) { $inUse["$($d.InfName)".ToLower()] = $true } }
+    $ok = 0
+    foreach ($inf in $Infs) {
+        $inf = "$inf".ToLower()
+        if ($inf -notmatch '^oem\d+\.inf$' -or $inUse[$inf]) { continue }
+        # Sans /force : Windows refuse tout seul si le pilote sert encore
+        if ((Invoke-Native 'pnputil.exe' @('/delete-driver', $inf) -Quiet) -eq 0) { $ok++ }
+    }
+    Log ("   ✔ {0} ancienne(s) version(s) supprimée(s)." -f $ok)
+    if ($ok) { Add-Change -Kind 'info' -Title ("{0} ancienne(s) version(s) de pilotes supprimée(s)" -f $ok) -Detail "Les pilotes utilisés par le PC n'ont pas été touchés." }
+}
+function Set-CompactOS([string]$State) {
+    if ($State -notin 'on', 'off') { throw "État inconnu : $State" }
+    Step $(if ($State -eq 'on') { "Compression des fichiers de Windows (10 à 20 minutes, laisse le PC allumé)" } else { "Décompression des fichiers de Windows (10 à 20 minutes)" })
+    $code = Invoke-Native 'compact.exe' @("/compactos:$(if ($State -eq 'on') { 'always' } else { 'never' })") -Quiet
+    if ($code -ne 0) { Add-TaskError -Title "La compression de Windows n'a pas pu se faire" -Cause (($script:NativeOutput | Select-Object -Last 3) -join ' ') -Effect "Rien n'a changé."; return }
+    Log $(if ($State -eq 'on') { "   ✔ Fichiers de Windows compressés." } else { "   ✔ Fichiers de Windows décompressés." })
+    Add-Change -Title $(if ($State -eq 'on') { "Fichiers de Windows compressés (CompactOS)" } else { "Fichiers de Windows décompressés" }) -Undo ("Set-CompactOS '{0}'" -f $(if ($State -eq 'on') { 'off' } else { 'on' }))
+}
+# OneDrive : les fichiers restent dans le cloud et s'ouvrent quand on clique dessus (téléchargés à ce moment-là)
+function Set-OneDriveOnlineOnly([string]$Folder) {
+    if (@(Get-OneDriveFolders) -notcontains $Folder) { throw "Ce dossier n'est pas un dossier OneDrive de ce PC : $Folder" }
+    Step "OneDrive : fichiers gardés uniquement en ligne"
+    $before = [AeroxFiles]::LocalCloudSize($Folder)
+    $null = Invoke-Native 'attrib.exe' @('+U', '-P', '/S', '/D', (Join-Path $Folder '*')) -Quiet
+    Start-Sleep -Seconds 5
+    $after = [AeroxFiles]::LocalCloudSize($Folder)
+    Log ("   ✔ {0} libérés pour l'instant (OneDrive continue en arrière-plan). Tes fichiers restent dans OneDrive et s'ouvrent d'un clic." -f (Format-Size ([math]::Max(0, $before - $after))))
+    Add-Change -Kind 'info' -Title "OneDrive : fichiers gardés uniquement en ligne" -Detail "Pour garder un dossier sur le PC (sans Internet) : clic droit dessus > « Toujours conserver sur cet appareil »."
+}
+
+# Fichiers en double dans les dossiers perso de la personne devant l'écran (Bureau, Documents, Images, Vidéos, Musique, Téléchargements)
+function Get-Duplicates {
+    Step "Recherche des fichiers en double (photos, vidéos, documents…)"
+    $sync.Dupes = $null
+    $roots = @('Desktop', 'Personal', 'My Pictures', 'My Video', 'My Music', 'Downloads' | ForEach-Object { Get-SessionFolder $_ } | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
+    Log ("   Dossiers : {0}" -f ($roots -join ' · '))
+    $lines = [AeroxFiles]::FindDuplicates([string[]]$roots, 1MB, 300)
+    if ($sync.Cancel) { return }
+    $groups = @{}
+    foreach ($l in $lines) {
+        $p = $l.Split('|', 5)
+        if ($p.Count -ne 5) { continue }
+        if (-not $groups.ContainsKey($p[1])) { $groups[$p[1]] = New-Object System.Collections.ArrayList }
+        [void]$groups[$p[1]].Add(@{ Size = [double]$p[2]; Date = ([datetime]::new([int64]$p[3], 'Utc')).ToLocalTime(); Path = $p[4] })
+    }
+    $out = @($groups.Keys | Sort-Object { [int]$_ } | ForEach-Object { , @($groups[$_]) })
+    $sync.Dupes = @{ Groups = $out; Roots = $roots }
+    $gain = [double](($out | ForEach-Object { $_[0].Size * ($_.Count - 1) } | Measure-Object -Sum).Sum)
+    Log ("   ✔ {0} fichier(s) en plusieurs exemplaires, {1} récupérables." -f $out.Count, (Format-Size $gain))
 }
 
 # =====================================================================
@@ -2484,7 +2730,7 @@ function Get-InstalledApps {
             if ($seen.ContainsKey($name)) { continue }; $seen[$name] = $true
             $date = $null; if ("$($e.InstallDate)" -match '^(\d{4})(\d{2})(\d{2})$') { try { $date = Get-Date -Year $matches[1] -Month $matches[2] -Day $matches[3] } catch {} }
             $loc = Get-AppLocation $e
-            $o = @{ Kind = 'win32'; Name = $name; Publisher = "$($e.Publisher)"; Size = $(if ($e.EstimatedSize) { [double]$e.EstimatedSize * 1KB } else { 0 }); Date = $date
+            $o = @{ Kind = 'win32'; LastUsed = (Get-FolderLastUsed $loc); Name = $name; Publisher = "$($e.Publisher)"; Size = $(if ($e.EstimatedSize) { [double]$e.EstimatedSize * 1KB } else { 0 }); Date = $date
                     Cmd = "$($e.UninstallString)"; Tag = ''; Reason = ''; Location = $loc; Drive = $(if ($loc -match '^([A-Za-z]:)') { $matches[1].ToUpper() } else { '' }) }
             foreach ($r in $script:BloatRules) { if ($name -match $r.P -or "$($e.Publisher)" -match $r.P) { $o.Tag = $r.Tag; $o.Reason = $r.R; break } }
             if (-not $o.Tag -and $name -match $script:AvRule) { $avs += $o }
@@ -2770,7 +3016,23 @@ function Get-SpaceUsage([string]$Drive = $env:SystemDrive) {
             }
         }
     } catch {}
-    $sync.SpaceScan = @{ Lines = $lines; Drive = $Drive; Size = [double]$d.Size; Free = [double]$d.FreeSpace; OldInstallers = @($old | Sort-Object { - $_.Size }) }
+    $scan = @{ Lines = $lines; Drive = $Drive; Size = [double]$d.Size; Free = [double]$d.FreeSpace; OldInstallers = @($old | Sort-Object { - $_.Size }); Win = @(); OneDrive = @(); Forgotten = @(); OtherDrives = @() }
+    if ($Drive -eq $env:SystemDrive) {
+        Log "   • Place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes)…"
+        try { $scan.Win = @(Get-WindowsSpaceItems) } catch {}
+        # Autres disques avec de la place : on peut y déplacer Téléchargements, Vidéos, jeux…
+        try { $scan.OtherDrives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop | Where-Object { $_.DeviceID -ne $Drive -and [double]$_.FreeSpace -ge 20GB } | ForEach-Object { @{ Drive = $_.DeviceID; Free = [double]$_.FreeSpace } }) } catch {}
+    }
+    if ($sync.Cancel) { return }
+    Log "   • OneDrive, jeux et logiciels pas utilisés depuis 3 mois…"
+    try {
+        foreach ($f in @(Get-OneDriveFolders | Where-Object { $_.StartsWith($Drive, [StringComparison]::OrdinalIgnoreCase) })) {
+            $local = [double][AeroxFiles]::LocalCloudSize($f)
+            if ($local -ge 1GB) { $scan.OneDrive += @{ Folder = $f; Local = $local } }
+        }
+    } catch {}
+    try { $scan.Forgotten = @(Get-ForgottenApps $Drive $lines) } catch {}
+    $sync.SpaceScan = $scan
     Log ("   ✔ Analyse terminée : {0} dossiers mesurés." -f @($lines | Where-Object { $_ -notmatch '^[FB]\|' }).Count)
 }
 

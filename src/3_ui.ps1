@@ -534,7 +534,8 @@ function New-IssueCard($I, [switch]$IsError) {
 $PageDefs = [ordered]@{
  clean = @{ Title = "Nettoyage"; Sub = "Libère de la place et supprime les fichiers inutiles. Tes fichiers perso (photos, documents, téléchargements, jeux) ne sont jamais touchés."; Cards = @(
     @{ T = "Nettoyage approfondi"; Badge = "Recommandé"; P = $true; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
-    @{ T = "Ce qui prend de la place"; B = "Analyser le disque"; UI = 'space'; UiBusy = $true; D = "Affiche les dossiers et fichiers les plus gros du disque C: sous forme d'arbre, pour savoir quoi trier (jeux, vidéos, téléchargements…). 1 à 3 minutes." },
+    @{ T = "Ce qui prend de la place"; B = "Analyser le disque"; UI = 'space'; UiBusy = $true; D = "Trouve ce qui remplit le disque et te dit quoi en faire : place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes), OneDrive en double, jeux et logiciels oubliés, plus gros fichiers et dossiers. 1 à 3 minutes." },
+    @{ T = "Fichiers en double"; B = "Chercher"; UI = 'dupes'; UiBusy = $true; D = "Photos, vidéos, documents et installateurs présents en plusieurs exemplaires dans tes dossiers. Tu choisis ce qui part à la corbeille, un exemplaire est toujours gardé." },
     @{ T = "Fichiers temporaires (rapide)"; B = "Nettoyer"; A = "Clear-TempFiles"; D = "Juste les fichiers temporaires et le cache des miniatures, en quelques secondes." },
     @{ T = "Corbeille"; B = "Vider"; A = "Clear-RecycleBinAll"; D = "Vide la corbeille de tous les disques. Vérifie avant qu'il n'y a rien dedans dont tu as besoin !"; C = "Vider définitivement la corbeille ? Les fichiers dedans ne pourront plus être récupérés." },
     @{ T = "Nettoyage automatique"; B = "Activer"; A = "Enable-StorageSense"; StatusFn = { Get-SenseCardStatus }; D = "L'Assistant stockage de Windows vide tout seul les fichiers temporaires et la corbeille régulièrement." }) }
@@ -836,8 +837,8 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # ---------------------------------------------------------------- Annuler une tâche en cours
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
-$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Open-BatteryReport|Test-Internet|Test-Disk)\b'
-$script:SoftCancel = '^(Update-SelectedApps|Update-Apps)\b'
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk)\b'
+$script:SoftCancel = '^(Update-SelectedApps|Update-Apps|Invoke-WindowsSpace|New-RestorePoint; Invoke-WindowsSpace)\b'
 function Stop-AeroxTask {
     $job = $script:Job
     if (-not $job) { return }
@@ -972,6 +973,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
+    elseif ($job.OnDone -eq 'dupdialog' -and $null -ne $sync.Dupes) { Show-DuplicatesDialog }
     elseif ($job.OnDone -eq 'browserdialog' -and $null -ne $sync.BrowserReport) { Show-BrowserDialog $script:BrowserIssue; $script:BrowserIssue = $null }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
@@ -1133,6 +1135,7 @@ function Invoke-UiCommand($T) {
                     'startup' { Show-StartupDialog $null }
                     'slow' { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
                     'bgitems' { Start-BgList $null }
+                    'dupes' { Start-DuplicateScan }
                     'browser' { Start-BrowserCheck $null }
                     'optimize' { Start-Optimize }
                     'appupdates' { Start-AppUpdatesList $null }
@@ -2324,7 +2327,7 @@ function Show-UninstallDialog($Issue) {
                 }
                 $t = New-Object System.Windows.Controls.StackPanel
                 Add-Child $t (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
-                $meta = @(); if ($a.Drive) { $meta += "Disque $($a.Drive)" }; if ($a.Publisher) { $meta += $a.Publisher }; if ($a.Size -gt 0) { $meta += (Format-Size $a.Size) }; if ($a.Date) { $meta += ("installé le " + $a.Date.ToString('dd/MM/yyyy')) }
+                $meta = @(); if ($a.Drive) { $meta += "Disque $($a.Drive)" }; if ($a.Publisher) { $meta += $a.Publisher }; if ($a.Size -gt 0) { $meta += (Format-Size $a.Size) }; if ($a.Date) { $meta += ("installé le " + $a.Date.ToString('dd/MM/yyyy')) }; if ($a.LastUsed) { $meta += ("utilisé le " + $a.LastUsed.ToString('dd/MM/yyyy')) }
                 if ($meta.Count) { Add-Child $t (New-Text ($meta -join '  ·  ') 12 '#8B93A7') }
                 if ($a.Location) { $lt = New-Text $a.Location 11 '#5D6478'; $lt.FontFamily = 'Cascadia Mono, Consolas'; $lt.TextTrimming = 'CharacterEllipsis'; $lt.TextWrapping = 'NoWrap'; $lt.ToolTip = $a.Location; Add-Child $t $lt }
                 elseif ($a.Kind -eq 'win32') { Add-Child $t (New-Text 'Emplacement non indiqué par le logiciel' 11 '#5D6478') }
@@ -2475,7 +2478,48 @@ function Show-SpaceDialog {
         'other'   { Start-SpaceScan }
         'recycle' { if (Confirm-Box "Vider définitivement la corbeille ? Les fichiers dedans ne pourront plus être récupérés.") { [void](Start-AeroxTask 'Clear-RecycleBinAll' 'Vidage de la corbeille') } }
         'oldinst' { Remove-OldInstallers }
+        'dupes'   { Start-DuplicateScan }
+        'bigfiles' {
+            $sel = @($script:BigChecks | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.File })
+            if ($sel.Count) { Remove-FilesToRecycle $sel 'gros fichier(s)' } else { [System.Windows.MessageBox]::Show("Coche d'abord les fichiers à mettre à la corbeille.", $AppName, 'OK', 'Information') | Out-Null }
+        }
+        'onedrive' {
+            if (Confirm-Box ("Garder le dossier OneDrive « {0} » uniquement en ligne ?`n`nTes fichiers restent dans OneDrive (rien n'est supprimé) et apparaissent toujours dans le dossier. Ils se téléchargent quand tu les ouvres : il faut Internet pour ça.`n`nPour garder un dossier sur le PC : clic droit dessus > « Toujours conserver sur cet appareil »." -f $script:SpaceArg)) {
+                [void](Start-AeroxTask ("Set-OneDriveOnlineOnly " + (ConvertTo-PsLiteral $script:SpaceArg)) 'OneDrive : fichiers uniquement en ligne')
+            }
+        }
+        'winspace' {
+            $sel = @($script:SpaceWinRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item })
+            if (-not $sel.Count) { return }
+            $ids = @($sel | ForEach-Object { if ($_.Arg) { "{0}:{1}" -f $_.Id, $_.Arg } else { $_.Id } })
+            $tot = [double](($sel | ForEach-Object { $_.S } | Measure-Object -Sum).Sum)
+            $msg = ("Libérer environ {0} ?`n`n{1}" -f (Format-Size $tot), ((@($sel | ForEach-Object { "•  " + $_.T }) -join "`n")))
+            if (@($sel | Where-Object { $_.Id -eq 'compact' }).Count) { $msg += "`n`nLa compression de Windows prend 10 à 20 minutes : laisse le PC allumé." }
+            if (@($sel | Where-Object { $_.Id -eq 'drivers' }).Count) { $msg += "`n`nUn point de restauration est créé avant de supprimer les anciens pilotes." }
+            $msg += "`n`nContinuer ?"
+            if (Confirm-Box $msg) {
+                $pre = if (@($sel | Where-Object { $_.Id -eq 'drivers' }).Count) { 'New-RestorePoint; ' } else { '' }
+                [void](Start-AeroxTask ($pre + "Invoke-WindowsSpace -Items " + (ConvertTo-PsList $ids)) 'Libération de la place gardée par Windows')
+            }
+        }
     }
+}
+# Met des fichiers à la corbeille (jamais supprimés directement), après confirmation
+function Remove-FilesToRecycle($Files, [string]$What) {
+    $files = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) })
+    if (-not $files.Count) { return }
+    $tot = [double](($files | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+    $list = (@($files | Select-Object -First 12 | ForEach-Object { "•  " + [IO.Path]::GetFileName($_.Path) + "  (" + (Format-Size $_.Size) + ")" }) -join "`n") + $(if ($files.Count -gt 12) { "`n… et $($files.Count - 12) autre(s)" } else { '' })
+    $bin = if ((Get-SessionUser).Other) { "Ils iront dans la corbeille du compte administrateur (celui dont le mot de passe a été tapé), pas dans la tienne." } else { "Ils restent récupérables dans la corbeille tant que tu ne la vides pas." }
+    if (-not (Confirm-Box ("Mettre ces {0} fichier(s) à la corbeille ({1}) ?`n`n{2}`n`n{3}" -f $files.Count, (Format-Size $tot), $list, $bin))) { return }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $ok = 0; $freed = 0.0
+    foreach ($f in $files) {
+        # AllDialogs : si un fichier est trop gros pour la corbeille, Windows demande avant de le supprimer définitivement
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'AllDialogs', 'SendToRecycleBin'); if (-not (Test-Path -LiteralPath $f.Path)) { $ok++; $freed += $f.Size } } catch {}
+    }
+    Write-UiLog ("🗑 {0} {1} mis à la corbeille ({2}). Vide la corbeille pour récupérer la place." -f $ok, $What, (Format-Size $freed))
+    if ($ok) { Add-Change -Kind 'info' -Title ("{0} {1} mis à la corbeille ({2})" -f $ok, $What, (Format-Size $freed)) -Detail "Récupérables depuis la corbeille tant qu'elle n'est pas vidée." }
 }
 
 # Choix du disque à analyser (s'il y en a plusieurs)
@@ -2507,6 +2551,27 @@ function Start-SpaceScan {
 # Pistes concrètes pour libérer de la place, triées par taille, avec l'action qui va avec
 function Add-SpaceAdvice($Body, $Scan, $Big) {
     $root = "$($Scan.Drive)\"
+    $script:SpaceWinRows = New-Object System.Collections.ArrayList; $script:BigChecks = New-Object System.Collections.ArrayList
+    # Place gardée par Windows : cases à cocher + un seul bouton
+    $win = @($Scan.Win | Where-Object { $_ })
+    if ($win.Count) {
+        $wt = [double](($win | ForEach-Object { $_.S } | Measure-Object -Sum).Sum)
+        $h = New-Text ("WINDOWS GARDE DE LA PLACE POUR LUI · ENVIRON {0} RÉCUPÉRABLES" -f (Format-Size $wt)) 11.5 '#B9A8FF' 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
+        foreach ($x in @($win | Sort-Object { - $_.S })) {
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            $hd = New-Object System.Windows.Controls.WrapPanel
+            Add-Child $hd (New-Text $x.T 14 '#FFFFFF' 'SemiBold')
+            Add-Child $hd (New-Pill ($(if ($x.Est) { '≈ ' } else { '' }) + (Format-Size $x.S)) '#B9A8FF' '#2A2350')
+            Add-Child $txt $hd
+            $d = New-Text $x.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $txt $d
+            $r = New-CheckRow ([bool]$x.Check) $txt $null
+            Add-Child $Body $r.Row
+            [void]$script:SpaceWinRows.Add(@{ Item = $x; Check = $r.Check })
+        }
+        $bw = New-DlgButton 'Libérer la sélection' 'PrimaryBtn'; $bw.HorizontalAlignment = 'Right'; $bw.Margin = Th 0 2 0 14
+        $bw.Add_Click({ $script:SpaceNext = 'winspace'; $script:SpaceWin.Close() })
+        Add-Child $Body $bw
+    }
     $tips = New-Object System.Collections.ArrayList
     $sz = { param($p) if ($script:SpaceSizes.ContainsKey($p)) { [double]$script:SpaceSizes[$p] } else { 0.0 } }
     $rb = & $sz ($root + '$Recycle.Bin')
@@ -2536,11 +2601,25 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
         $gl = ($games | ForEach-Object { "{0} ({1})" -f (Split-Path $_ -Leaf), (Format-Size $script:SpaceSizes[$_]) }) -join ' · '
         if ($gt -ge 5GB) { [void]$tips.Add(@{ S = $gt; T = "Jeux Steam les plus gros"; D = "$gl. Désinstalle depuis Steam ceux auxquels tu ne joues plus (tes sauvegardes restent sur Steam)."; B = 'Ouvrir Steam'; A = 'url'; P = 'steam://open/games' }) }
     }
+    foreach ($od in @($Scan.OneDrive | Where-Object { $_ })) {
+        [void]$tips.Add(@{ S = $od.Local; T = "OneDrive garde aussi tes fichiers sur le PC"; D = "Le dossier « $($od.Folder) » est en double : dans le cloud ET sur le disque. En le gardant « uniquement en ligne », la place est libérée ; tes fichiers restent dans OneDrive et s'ouvrent d'un clic (il faut Internet pour les ouvrir)."; B = 'Garder uniquement en ligne'; A = 'onedrive'; P = $od.Folder })
+    }
+    $fg = @($Scan.Forgotten | Where-Object { $_ })
+    if ($fg.Count) {
+        $ft0 = [double](($fg | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+        $fl = (@($fg | Select-Object -First 5 | ForEach-Object { "{0} ({1}, {2})" -f $_.Name, (Format-Size $_.Size), $(if ($_.LastUsed) { "dernière utilisation le " + (Format-Date $_.LastUsed) } else { 'pas lancé récemment' }) }) -join ' · ') + $(if ($fg.Count -gt 5) { " et $($fg.Count - 5) autre(s)" } else { '' })
+        $hasGame = @($fg | Where-Object { $_.Kind -eq 'game' }).Count -gt 0
+        [void]$tips.Add(@{ S = $ft0; T = "Jeux et logiciels pas utilisés depuis 3 mois"; D = "$fl." + $(if ($hasGame) { " Les jeux Steam se désinstallent depuis Steam (tes sauvegardes restent sur Steam)." } else { '' }); B = $(if ($hasGame) { 'Ouvrir Steam' } else { 'Voir les logiciels' }); A = $(if ($hasGame) { 'url' } else { 'apps' }); P = 'steam://open/games' })
+    }
+    foreach ($od in @($Scan.OtherDrives | Where-Object { $_ })) {
+        [void]$tips.Add(@{ S = 0; T = "Ton disque $($od.Drive) a $(Format-Size $od.Free) de libre"; D = "Déplace-y ce qui est gros et que tu n'ouvres pas tout le temps. Téléchargements, Vidéos, Images : clic droit sur le dossier > Propriétés > onglet « Emplacement » > « Déplacer… », choisis un dossier sur $($od.Drive). Jeux Steam : Steam > Paramètres > Stockage > ajoute $($od.Drive), puis « Déplacer » sur chaque jeu."; B = 'Ouvrir mes dossiers'; A = 'open'; P = (Get-SessionUser).Profile })
+    }
+    [void]$tips.Add(@{ S = 0; T = "Fichiers en double"; D = "Photos, vidéos, documents ou installateurs présents en plusieurs exemplaires dans tes dossiers (Bureau, Documents, Images, Vidéos, Musique, Téléchargements). Tu choisis lesquels supprimer, une copie est toujours gardée."; B = 'Chercher les doublons'; A = 'dupes' })
     $skip = '(?i)\\(windows|program files( \(x86\))?|programdata|\$recycle\.bin|system volume information|steamapps|epic games|riot games)\\|\\appdata\\local\\(packages|docker)|(pagefile|hiberfil|swapfile)\.sys$|\.vhdx?$'
-    $files = @($Big | Where-Object { $_ -and $_.Path -notmatch $skip } | Select-Object -First 6)
+    $files = @($Big | Where-Object { $_ -and $_.Path -notmatch $skip } | Select-Object -First 10)
     if ($files.Count) {
         $ft = [double](($files | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
-        if ($ft -ge 1GB) { [void]$tips.Add(@{ S = $ft; T = "Tes plus gros fichiers"; Files = $files; D = "Vidéos, images disque, sauvegardes… À garder, déplacer ou supprimer : c'est toi qui décides." }) }
+        if ($ft -ge 1GB) { [void]$tips.Add(@{ S = $ft; T = "Tes plus gros fichiers"; Files = $files; D = "Vidéos, images disque, sauvegardes… À garder, déplacer ou supprimer : c'est toi qui décides. Coche ceux à mettre à la corbeille (date = dernière modification)."; B = 'Mettre la sélection à la corbeille'; A = 'bigfiles' }) }
     }
     [void]$tips.Add(@{ S = 0; T = "Fichiers inutiles de Windows et des logiciels"; D = "Temporaires, caches des navigateurs, anciennes mises à jour, rapports de plantage : le nettoyage approfondi te montre la taille de chaque catégorie avant de supprimer."; B = 'Nettoyage approfondi'; A = 'clean' })
     [void]$tips.Add(@{ S = 0; T = "Logiciels installés"; D = "La liste de tes logiciels du plus gros au plus petit, avec ceux qui ne servent à rien repérés pour toi."; B = 'Voir les logiciels'; A = 'apps' })
@@ -2556,7 +2635,7 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
                 switch ($x.A) {
                     'open' { Start-Process explorer.exe ('"{0}"' -f $x.P) }
                     'url'  { [void](Open-Url $x.P) }
-                    default { $script:SpaceNext = $x.A; $script:SpaceWin.Close() }
+                    default { $script:SpaceNext = $x.A; $script:SpaceArg = $x.P; $script:SpaceWin.Close() }
                 }
             })
             [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
@@ -2572,6 +2651,11 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
             $fb = New-DlgButton 'Afficher' 'TextBtn'; $fb.Tag = $f.Path; [System.Windows.Controls.DockPanel]::SetDock($fb, 'Right')
             $fb.Add_Click({ Start-Process explorer.exe ('/select,"{0}"' -f [string]$this.Tag) })
             Add-Child $fr $fb
+            if ($f.Path -match '(?i)^[a-z]:\\users\\[^\\]+\\') {
+                $cb = New-Object System.Windows.Controls.CheckBox; $cb.VerticalAlignment = 'Center'; $cb.Margin = Th 0 0 8 0; $cb.Cursor = 'Hand'
+                [System.Windows.Controls.DockPanel]::SetDock($cb, 'Left'); Add-Child $fr $cb
+                [void]$script:BigChecks.Add(@{ File = $f; Check = $cb })
+            }
             Add-Child $fr (New-Text ("{0}  ·  {1}  ·  {2}" -f (Format-Size $f.Size), [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) 12.5 '#E6E9F2')
             $ft = New-Object System.Windows.Controls.StackPanel; Add-Child $ft $fr
             $fp = New-Text ([IO.Path]::GetDirectoryName($f.Path)) 11 '#5D6478'; Add-Child $ft $fp
@@ -2584,19 +2668,7 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
 
 # Vieux installateurs des Téléchargements : à la corbeille (récupérables), après confirmation
 function Remove-OldInstallers {
-    $old = @($sync.SpaceScan.OldInstallers | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) })
-    if (-not $old.Count) { return }
-    $tot = [double](($old | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
-    $list = (@($old | Select-Object -First 12 | ForEach-Object { "•  " + [IO.Path]::GetFileName($_.Path) + "  (" + (Format-Size $_.Size) + ")" }) -join "`n") + $(if ($old.Count -gt 12) { "`n… et $($old.Count - 12) autre(s)" } else { '' })
-    if (-not (Confirm-Box ("Mettre ces {0} fichier(s) à la corbeille ({1}) ?`n`n{2}`n`nIls restent récupérables dans la corbeille tant que tu ne la vides pas." -f $old.Count, (Format-Size $tot), $list))) { return }
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    $ok = 0; $freed = 0.0
-    foreach ($f in $old) {
-        # AllDialogs : si un fichier est trop gros pour la corbeille, Windows demande avant de le supprimer définitivement
-        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'AllDialogs', 'SendToRecycleBin'); if (-not (Test-Path -LiteralPath $f.Path)) { $ok++; $freed += $f.Size } } catch {}
-    }
-    Write-UiLog ("🗑 {0} vieux installateur(s) mis à la corbeille ({1}). Vide la corbeille pour récupérer la place." -f $ok, (Format-Size $freed))
-    if ($ok) { Add-Change -Kind 'info' -Title ("{0} vieux installateur(s) mis à la corbeille ({1})" -f $ok, (Format-Size $freed)) -Detail "Récupérables depuis la corbeille tant qu'elle n'est pas vidée." }
+    Remove-FilesToRecycle @($sync.SpaceScan.OldInstallers) 'vieux installateur(s)'
 }
 
 function Start-CleanAnalysis($Issue) {
@@ -2963,6 +3035,62 @@ function Show-BrowserDialog($Issue) {
     $fix = @($sel | ForEach-Object { $_.Fix })
     if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
     if (-not (Start-AeroxTask ("Repair-BrowserItems -Items " + (ConvertTo-PsList $fix)) ("Nettoyage des navigateurs ({0})" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
+}
+
+# ---------------------------------------------------------------- Fenêtre : fichiers en double
+function Start-DuplicateScan { [void](Start-AeroxTask 'Get-Duplicates' 'Recherche des fichiers en double' 'dupdialog') }
+function Show-DuplicatesDialog {
+    $groups = @($sync.Dupes.Groups | Where-Object { $_ })
+    if (-not $groups.Count) { [System.Windows.MessageBox]::Show("Aucun fichier en double trouvé dans tes dossiers (Bureau, Documents, Images, Vidéos, Musique, Téléchargements).", $AppName, 'OK', 'Information') | Out-Null; return }
+    $w = New-Dialog "$AppName : fichiers en double" 820
+    $script:DupWin = $w; $script:DupChoice = $null; $script:DupRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    $gain = [double](($groups | ForEach-Object { $_[0].Size * ($_.Count - 1) } | Measure-Object -Sum).Sum)
+    Add-Child $sp (New-Text ("Fichiers en double · {0} récupérables" -f (Format-Size $gain)) 18 '#FFFFFF' 'Bold')
+    $p = New-Text "Ces fichiers sont identiques au contenu près. Pour chacun, AEROX garde un exemplaire (celui qui n'est pas dans Téléchargements, sinon le plus ancien) et coche les copies. Tu peux changer les cases ; au moins un exemplaire est toujours gardé. Les copies vont à la corbeille." 13 '#A9B0C2'
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 470; $sv.Content = $list
+    Add-Child $sp $sv
+    $gi = 0
+    foreach ($g in $groups) {
+        $gi++
+        # Exemplaire gardé : hors Téléchargements, sans « copie / copy / (1) », le plus ancien, le chemin le plus court
+        $keep = @($g | Sort-Object @{ Expression = { $_.Path -match '(?i)\\(downloads|téléchargements)\\' } }, @{ Expression = { [IO.Path]::GetFileNameWithoutExtension($_.Path) -match '(?i)copie|copy|\(\d+\)$| - \d+$' } }, @{ Expression = { $_.Date } }, @{ Expression = { $_.Path.Length } })[0]
+        $h = New-Text ("{0}  ·  {1} exemplaires  ·  {2} chacun" -f [IO.Path]::GetFileName($keep.Path), $g.Count, (Format-Size $keep.Size)) 13 '#FFFFFF' 'SemiBold'
+        $h.Margin = Th 2 10 0 6; Add-Child $list $h
+        foreach ($f in $g) {
+            $isKeep = ($f.Path -eq $keep.Path)
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            Add-Child $txt (New-Text ([IO.Path]::GetDirectoryName($f.Path)) 12.5 $(if ($isKeep) { '#4ADE80' } else { '#E6E9F2' }))
+            Add-Child $txt (New-Text (("{0}  ·  modifié le {1}" -f [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) + $(if ($isKeep) { '  ·  gardé' } else { '' })) 11.5 '#6B7389')
+            $b = New-DlgButton 'Afficher' 'TextBtn'; $b.Tag = $f.Path; $b.Add_Click({ Start-Process explorer.exe ('/select,"{0}"' -f [string]$this.Tag) })
+            $r = New-CheckRow (-not $isKeep) $txt $b
+            $r.Check.Add_Click({ & $script:CountDup })
+            Add-Child $list $r.Row
+            [void]$script:DupRows.Add(@{ File = $f; Group = $gi; Check = $r.Check })
+        }
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bCancel = New-DlgButton 'Fermer' 'TextBtn'; $bCancel.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Mettre à la corbeille' 'PrimaryBtn'; $script:DupApply = $bApply
+    Add-Child $bar $bCancel; Add-Child $bar $bApply; Add-Child $sp $bar
+    $script:CountDup = {
+        $sel = @($script:DupRows | Where-Object { $_.Check.IsChecked })
+        $t = [double](($sel | ForEach-Object { $_.File.Size } | Measure-Object -Sum).Sum)
+        $script:DupApply.Content = $(if ($sel.Count) { "Mettre à la corbeille ({0} · {1})" -f $sel.Count, (Format-Size $t) } else { 'Mettre à la corbeille' }); $script:DupApply.IsEnabled = ($sel.Count -gt 0)
+    }
+    $bCancel.Add_Click({ $script:DupWin.Close() })
+    $bApply.Add_Click({
+        # Jamais tous les exemplaires d'un même fichier
+        $full = @($script:DupRows | Group-Object { $_.Group } | Where-Object { @($_.Group | Where-Object { -not $_.Check.IsChecked }).Count -eq 0 })
+        if ($full.Count) { [System.Windows.MessageBox]::Show("Pour {0} fichier(s), tous les exemplaires sont cochés : décoche au moins un exemplaire à garder." -f $full.Count, $AppName, 'OK', 'Warning') | Out-Null; return }
+        $script:DupChoice = @($script:DupRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.File }); $script:DupWin.Close()
+    })
+    & $script:CountDup
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    if (@($script:DupChoice).Count) { Remove-FilesToRecycle $script:DupChoice 'fichier(s) en double' }
 }
 
 function Start-AppUpdatesList($Issue) {

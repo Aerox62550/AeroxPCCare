@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.5.4
+﻿AEROX PC Care - v1.6.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -44,7 +44,13 @@ NETTOYAGE APPROFONDI
 Onglet Nettoyage > « Nettoyage approfondi » : une analyse affiche chaque catégorie
 avec sa taille (temporaires, caches, mises à jour, rapports de plantage, nettoyage
 Windows, anciens composants, Windows.old, veille prolongée...). Tu coches, ça nettoie.
-« Ce qui prend de la place » affiche un arbre des plus gros dossiers du disque.
+« Ce qui prend de la place » te dit quoi faire pour libérer de la place :
+place gardée par Windows (stockage réservé, veille prolongée, points de
+restauration, anciens pilotes, compression de Windows sur les petits disques),
+OneDrive gardé en double sur le PC, jeux et logiciels pas utilisés depuis
+3 mois, plus gros fichiers (à mettre à la corbeille), puis l'arbre des dossiers.
+« Fichiers en double » trouve les photos, vidéos et documents identiques ; un
+exemplaire est toujours gardé, les copies vont à la corbeille.
 
 MISES À JOUR AU CHOIX
 ---------------------

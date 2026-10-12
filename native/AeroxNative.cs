@@ -955,3 +955,101 @@ public static class AeroxJson {
         return e > 0 && Ws(s, e) == s.Length;
     }
 }
+
+// =====================================================================
+//  Fichiers : doublons et place gardée sur le PC par OneDrive
+// =====================================================================
+public static class AeroxFiles {
+    const int RecallOnData = 0x400000, RecallOnOpen = 0x40000, Offline = 0x1000;
+    static bool CloudOnly(FileSystemInfo f) { int a = (int)f.Attributes; return (a & (RecallOnData | RecallOnOpen | Offline)) != 0; }
+
+    // Taille des fichiers d'un dossier OneDrive réellement présents sur le PC (ceux « uniquement en ligne » ne comptent pas)
+    public static long LocalCloudSize(string root) {
+        AeroxNative.StopScan = false;
+        return LocalSize(root, 0);
+    }
+    static long LocalSize(string d, int depth) {
+        long t = 0;
+        if (depth > 40) return 0;
+        try {
+            foreach (FileSystemInfo fi in new DirectoryInfo(d).EnumerateFileSystemInfos()) {
+                if (AeroxNative.StopScan) return t;
+                try {
+                    if ((fi.Attributes & FileAttributes.Directory) != 0) t += LocalSize(fi.FullName, depth + 1);
+                    else if (!CloudOnly(fi)) t += ((FileInfo)fi).Length;
+                } catch { }
+            }
+        } catch { }
+        return t;
+    }
+
+    // Fichiers identiques (même taille puis même contenu) : "D|groupe|octets|date(ticks)|chemin"
+    // Les fichiers « uniquement en ligne » (OneDrive) sont ignorés : les lire les téléchargerait.
+    public static string[] FindDuplicates(string[] roots, long minSize, int maxGroups) {
+        AeroxNative.StopScan = false;
+        Dictionary<long, List<FileInfo>> bySize = new Dictionary<long, List<FileInfo>>();
+        HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string r in roots) { if (!string.IsNullOrEmpty(r) && Directory.Exists(r)) Collect(r, minSize, bySize, seen, 0); }
+        List<List<FileInfo>> groups = new List<List<FileInfo>>();
+        foreach (KeyValuePair<long, List<FileInfo>> kv in bySize) {
+            if (AeroxNative.StopScan) break;
+            if (kv.Value.Count < 2) continue;
+            // 1er tri rapide : début et fin du fichier ; puis contenu complet
+            foreach (List<FileInfo> g1 in Split(kv.Value, true)) {
+                foreach (List<FileInfo> g2 in Split(g1, false)) groups.Add(g2);
+            }
+        }
+        groups.Sort(delegate(List<FileInfo> a, List<FileInfo> b) { return (b[0].Length * (b.Count - 1)).CompareTo(a[0].Length * (a.Count - 1)); });
+        List<string> outp = new List<string>();
+        for (int i = 0; i < groups.Count && i < maxGroups; i++) {
+            foreach (FileInfo f in groups[i]) outp.Add("D|" + i + "|" + f.Length + "|" + f.LastWriteTimeUtc.Ticks + "|" + f.FullName);
+        }
+        return outp.ToArray();
+    }
+    static void Collect(string d, long minSize, Dictionary<long, List<FileInfo>> bySize, HashSet<string> seen, int depth) {
+        if (depth > 40 || AeroxNative.StopScan) return;
+        try {
+            foreach (FileSystemInfo fi in new DirectoryInfo(d).EnumerateFileSystemInfos()) {
+                if (AeroxNative.StopScan) return;
+                try {
+                    if ((fi.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    if ((fi.Attributes & FileAttributes.Directory) != 0) { Collect(fi.FullName, minSize, bySize, seen, depth + 1); continue; }
+                    if ((fi.Attributes & FileAttributes.System) != 0 || CloudOnly(fi)) continue;
+                    FileInfo f = (FileInfo)fi;
+                    if (f.Length < minSize || !seen.Add(f.FullName)) continue;
+                    List<FileInfo> l;
+                    if (!bySize.TryGetValue(f.Length, out l)) { l = new List<FileInfo>(); bySize[f.Length] = l; }
+                    l.Add(f);
+                } catch { }
+            }
+        } catch { }
+    }
+    static List<List<FileInfo>> Split(List<FileInfo> files, bool quick) {
+        Dictionary<string, List<FileInfo>> m = new Dictionary<string, List<FileInfo>>();
+        foreach (FileInfo f in files) {
+            if (AeroxNative.StopScan) break;
+            string h = Hash(f.FullName, quick);
+            if (h == null) continue;
+            List<FileInfo> l;
+            if (!m.TryGetValue(h, out l)) { l = new List<FileInfo>(); m[h] = l; }
+            l.Add(f);
+        }
+        List<List<FileInfo>> r = new List<List<FileInfo>>();
+        foreach (List<FileInfo> l in m.Values) if (l.Count > 1) r.Add(l);
+        return r;
+    }
+    static string Hash(string path, bool quick) {
+        try {
+            using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16))
+            using (System.Security.Cryptography.SHA1 sha = System.Security.Cryptography.SHA1.Create()) {
+                if (!quick) return BitConverter.ToString(sha.ComputeHash(fs));
+                const int part = 65536;
+                byte[] buf = new byte[part * 2];
+                int n = fs.Read(buf, 0, part);
+                if (fs.Length > part * 2) { fs.Seek(-part, SeekOrigin.End); n += fs.Read(buf, n, part); }
+                else if (fs.Length > n) { n += fs.Read(buf, n, (int)Math.Min(part, fs.Length - n)); }
+                return BitConverter.ToString(sha.ComputeHash(buf, 0, n));
+            }
+        } catch { return null; }
+    }
+}
