@@ -19,6 +19,7 @@ function Confirm-Box([string]$Text) { Write-Host "    (confirmation refusée aut
 function Smoke([string]$Name, [scriptblock]$Code) {
     Write-Host ("  … {0}" -f $Name)
     [Console]::Out.Flush()
+    try { [IO.File]::AppendAllText('C:\aerox\progress.txt', ("{0:HH:mm:ss} début : {1}`r`n" -f (Get-Date), $Name)) } catch {}
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $before = $sync.Errors.Count
     try { & $Code; $st = 'OK' }
@@ -28,6 +29,7 @@ function Smoke([string]$Name, [scriptblock]$Code) {
     while ($sync.Queue.TryDequeue([ref]$line)) { if ($line -match '⚠|❌|Erreur|erreur') { $warn += $line } }
     $errs = @($sync.Errors.ToArray() | Select-Object -Skip $before)
     Write-Host ("[{0,-5}] {1} ({2:n1} s)" -f $st, $Name, $sw.Elapsed.TotalSeconds)
+    try { [IO.File]::AppendAllText('C:\aerox\progress.txt', ("{0:HH:mm:ss} [{1}] {2} ({3:n1} s){4}`r`n" -f (Get-Date), $st, $Name, $sw.Elapsed.TotalSeconds, $(if ($errs.Count) { ' · erreurs : ' + (($errs | ForEach-Object { $_.Title }) -join ' | ') } else { '' }))) } catch {}
     foreach ($w in $warn | Select-Object -First 8) { Write-Host "        journal : $w" }
     foreach ($x in $errs) { Write-Host "        erreur affichée : $($x.Title) | $($x.Cause)" }
 }
@@ -46,6 +48,9 @@ if ($env:AEROX_SMOKE_PORTABLE) {
 }
 function Invoke-Smoke {
     $timer.Stop()
+    Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
+    Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
+    Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = @(Get-InstalledApps); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
@@ -134,7 +139,6 @@ function Invoke-SmokeActions {
     Smoke 'Dépannage : imprimante' { Repair-Printing }
     Smoke 'Dépannage : bureau figé' { Restart-Shell }
     Smoke 'Test de connexion' { Test-Internet }
-    Smoke 'Vérifier le disque' { Test-Disk }
     Smoke 'Point de restauration' { New-RestorePoint }
     Smoke 'Annulations depuis l historique' {
         $n = 0
