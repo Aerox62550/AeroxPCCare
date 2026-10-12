@@ -50,7 +50,7 @@ function Invoke-Smoke {
     $timer.Stop()
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
-    Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = @(Get-InstalledApps); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
+    Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
@@ -94,7 +94,7 @@ function Invoke-Smoke {
         if ($g.Count -ne 1) { throw "doublon de test non trouvé ($(@($sync.Dupes.Groups).Count) groupe(s))" }
     }
     Smoke 'Fenêtre : doublons' { Show-DuplicatesDialog }
-    Smoke 'Espace disque' { Get-SpaceUsage 'C:'; foreach ($x in @($sync.SpaceScan.Win)) { Write-Host ("        Windows : {0} ≈ {1} (coché={2})" -f $x.T, (Format-Size $x.S), $x.Check) }; foreach ($x in @($sync.SpaceScan.Forgotten | Select-Object -First 5)) { Write-Host ("        oublié : {0} {1}" -f $x.Name, (Format-Size $x.Size)) } }
+    Smoke 'Espace disque' { Get-SpaceUsage 'C:'; foreach ($x in @($sync.SpaceScan.Win)) { Write-Host ("        Windows : {0} ≈ {1} (coché={2})" -f $x.T, (Format-Size $x.S), $x.Check) }; foreach ($x in @($sync.SpaceScan.Forgotten | Select-Object -First 5)) { if ($x.Name -isnot [string]) { throw "liste des logiciels oubliés mal construite" }; Write-Host ("        oublié : {0} {1}" -f $x.Name, (Format-Size $x.Size)) } }
     Smoke 'Fenêtre : espace disque' { Show-SpaceDialog }
     Smoke 'Bilan avant/après' { $s = Get-PcSnapshot; Write-Host ("        démarrage={0}s, démarrage auto={1}, fond={2}" -f $s.BootSec, $s.Startup, $s.Procs) }
     Smoke 'Annulations autorisées' {
@@ -113,7 +113,7 @@ function Invoke-SmokeActions {
     Write-Host '== Actions (machine de test jetable)'
     Smoke 'Fichiers temporaires' { Clear-TempFiles }
     Smoke 'Nettoyage approfondi (sélection conseillée)' {
-        $ids = @($sync.CleanList | Where-Object { $_.Default -and $_.Id -notmatch '^(components|resetbase|winold|hiber)$' } | ForEach-Object { $_.Id })
+        $ids = @($sync.CleanList | Where-Object { $_.Default -and $_.Id -notmatch '^(components|resetbase|winold|hiber|windows)$' } | ForEach-Object { $_.Id })
         Write-Host "        catégories : $($ids -join ', ')"
         Invoke-DeepClean -Ids $ids
     }
