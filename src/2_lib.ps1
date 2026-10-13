@@ -1414,6 +1414,7 @@ function Get-WindowsSpaceItems {
                                 D = "Windows bloque environ 7 Go pour ses futures mises à jour. Sur un petit disque, mieux vaut récupérer cette place : les mises à jour continuent de s'installer normalement. Annulable." })
         }
     } catch {}
+    if ($sync.Cancel) { return $items.ToArray() }
     # 2. Fichier de veille prolongée : réduit au minimum (le démarrage rapide reste)
     try {
         $hf = New-Object IO.FileInfo (Join-Path $sd 'hiberfil.sys')
@@ -1440,6 +1441,7 @@ function Get-WindowsSpaceItems {
             }
         }
     } catch {}
+    if ($sync.Cancel) { return $items.ToArray() }
     # 4. Anciennes versions de pilotes gardées par Windows (jamais celle utilisée)
     try {
         $used = @{}; foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop)) { if ($d.InfName) { $used["$($d.InfName)".ToLower()] = $true } }
@@ -1463,7 +1465,7 @@ function Get-WindowsSpaceItems {
         }
     } catch {}
     # 5. Compression des fichiers de Windows (outil officiel CompactOS), seulement sur les petits disques
-    if ($small) {
+    if ($small -and -not $sync.Cancel) {
         try {
             $q = (& compact.exe /compactos:query 2>&1 | Out-String)
             if ($LASTEXITCODE -eq 0 -and $q -and $q -notmatch '(?i)\b(is in the compact state|est dans l.état compact|est à l.état compact|ist im komprimierten)') {
@@ -2931,16 +2933,18 @@ function Invoke-CleanMgr([string[]]$Handlers, [int]$Slot) {
         try { New-ItemProperty -Path $k.PSPath -Name $flag -Value $v -PropertyType DWord -Force -ErrorAction Stop | Out-Null } catch {}
     }
     $p = Start-Process -FilePath "$env:SystemRoot\System32\cleanmgr.exe" -ArgumentList "/sagerun:$Slot" -PassThru
-    # Jamais d'attente infinie : au-delà de 15 minutes (ou si on annule), Windows finit tout seul en arrière-plan
-    $t0 = Get-Date
+    # Jamais d'attente infinie : au-delà de 10 minutes (ou si on annule), Windows finit tout seul en arrière-plan
+    $t0 = Get-Date; $last = 0
     while (-not $p.WaitForExit(2000)) {
-        if ($sync.Cancel -or ((Get-Date) - $t0).TotalMinutes -ge 15) { Log "   • Le nettoyage de Windows continue en arrière-plan (il peut être long), AEROX passe à la suite."; break }
+        $min = [int][math]::Floor(((Get-Date) - $t0).TotalMinutes)
+        if ($sync.Cancel -or $min -ge 10) { Log "   • Le nettoyage de Windows continue tout seul en arrière-plan, AEROX passe à la suite."; break }
+        if ($min -gt $last) { $last = $min; Log ("   … nettoyage de Windows en cours ({0} min)" -f $min) }
     }
 }
 
 function Invoke-DeepClean([string[]]$Ids) {
     $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
-    if ($Ids -contains 'browser') {
+    if ($Ids -contains 'browser' -and -not $sync.Cancel) {
         Step "Cache des navigateurs"
         foreach ($b in Get-BrowserCacheDirs) {
             if (Get-Process -Name $b.Proc -ErrorAction SilentlyContinue) {
@@ -2952,35 +2956,35 @@ function Invoke-DeepClean([string[]]$Ids) {
             Clear-Paths $b.Dirs $b.Name
         }
     }
-    if ($Ids -contains 'apps') {
+    if ($Ids -contains 'apps' -and -not $sync.Cancel) {
         Step "Cache des applications"
         foreach ($a in Get-AppCacheDirs) {
             if (Get-Process -Name $a.Proc -ErrorAction SilentlyContinue) { Log "   • $($a.Name) est ouvert : ignoré (ferme-le et relance pour le nettoyer)"; continue }
             Clear-Paths $a.Dirs $a.Name
         }
     }
-    if ($Ids -contains 'temp') { Step "Fichiers temporaires"; Clear-Paths (Get-TempOnlyDirs) 'Fichiers temporaires' }
-    if ($Ids -contains 'shaders') { Step "Cache des shaders"; Clear-Paths (Get-ShaderCacheDirs) 'Cache des shaders' }
-    if ($Ids -contains 'errors') { Step "Rapports d'erreurs et de plantages"; Clear-Paths (Get-ErrorDirs) "Rapports d'erreurs" }
-    if ($Ids -contains 'wupdate') {
+    if ($Ids -contains 'temp' -and -not $sync.Cancel) { Step "Fichiers temporaires"; Clear-Paths (Get-TempOnlyDirs) 'Fichiers temporaires' }
+    if ($Ids -contains 'shaders' -and -not $sync.Cancel) { Step "Cache des shaders"; Clear-Paths (Get-ShaderCacheDirs) 'Cache des shaders' }
+    if ($Ids -contains 'errors' -and -not $sync.Cancel) { Step "Rapports d'erreurs et de plantages"; Clear-Paths (Get-ErrorDirs) "Rapports d'erreurs" }
+    if ($Ids -contains 'wupdate' -and -not $sync.Cancel) {
         Step "Fichiers de mises à jour Windows"
         Stop-Service -Name wuauserv, bits -Force -ErrorAction SilentlyContinue
         Clear-Paths @("$env:SystemRoot\SoftwareDistribution\Download") 'Mises à jour téléchargées'
         Start-Service -Name bits, wuauserv -ErrorAction SilentlyContinue
         if (Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue) { try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop | Out-Null; Log "   ✔ Cache d'optimisation de distribution vidé" } catch {} }
     }
-    if ($Ids -contains 'recycle') { Clear-RecycleBinAll }
-    if ($Ids -contains 'windows') {
+    if ($Ids -contains 'recycle' -and -not $sync.Cancel) { Clear-RecycleBinAll }
+    if ($Ids -contains 'windows' -and -not $sync.Cancel) {
         Step "Nettoyage de disque Windows (peut prendre plusieurs minutes)"
         try { Invoke-CleanMgr $script:CleanMgrSafe 7701; Log "   ✔ Nettoyage de disque Windows terminé" }
         catch { Add-TaskError -Title "Le nettoyage de disque Windows n'a pas pu se lancer" -Cause $_.Exception.Message -Bug $_ }
     }
-    if ($Ids -contains 'winold') {
+    if ($Ids -contains 'winold' -and -not $sync.Cancel) {
         Step "Suppression de l'ancienne version de Windows"
         try { Invoke-CleanMgr @('Previous Installations', 'Temporary Setup Files', 'Windows Upgrade Log Files') 7702; Log "   ✔ Ancienne version de Windows supprimée" }
         catch { Add-TaskError -Title "Windows.old n'a pas pu être supprimé" -Cause $_.Exception.Message -Bug $_ }
     }
-    if ($Ids -contains 'components' -or $Ids -contains 'resetbase') {
+    if (($Ids -contains 'components' -or $Ids -contains 'resetbase') -and -not $sync.Cancel) {
         Step "Anciens composants Windows (DISM, 5 à 20 minutes)"
         $dargs = @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
         if ($Ids -contains 'resetbase') { $dargs += '/ResetBase' }
@@ -2991,7 +2995,7 @@ function Invoke-DeepClean([string[]]$Ids) {
                 -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot'
         } else { Log "   ✔ Anciens composants Windows nettoyés" }
     }
-    if ($Ids -contains 'hiber') {
+    if ($Ids -contains 'hiber' -and -not $sync.Cancel) {
         Step "Désactivation de la veille prolongée"
         $null = Invoke-Native 'powercfg.exe' @('/hibernate', 'off')
         if (Test-Path -LiteralPath "$env:SystemDrive\hiberfil.sys") { Log "   • Le fichier disparaîtra au prochain redémarrage" } else { Log "   ✔ hiberfil.sys supprimé" }
@@ -3036,7 +3040,9 @@ function Get-SpaceUsage([string]$Drive = $env:SystemDrive) {
             if ($local -ge 1GB) { $scan.OneDrive += @{ Folder = $f; Local = $local } }
         }
     } catch {}
+    if ($sync.Cancel) { return }
     try { $scan.Forgotten = @(Get-ForgottenApps $Drive $lines) } catch {}
+    if ($sync.Cancel) { return }
     $sync.SpaceScan = $scan
     Log ("   ✔ Analyse terminée : {0} dossiers mesurés." -f @($lines | Where-Object { $_ -notmatch '^[FB]\|' }).Count)
 }

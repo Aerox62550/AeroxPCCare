@@ -63,10 +63,9 @@ public static class AeroxNative {
 
     // Tailles des dossiers jusqu'à une profondeur : "profondeur|octets|chemin" ; gros fichiers à la racine : "F|octets|chemin" ;
     // plus gros fichiers du disque (>= 500 Mo, 60 max) : "B|octets|date(ticks)|chemin" ; chaque jeu Steam est détaillé quelle que soit la profondeur.
-    public static volatile bool StopScan = false;
+    public static volatile bool StopScan = false;   // remis à false au lancement de chaque tâche (Start-AeroxTask)
     const long BigMin = 500L * 1024 * 1024;
     public static string[] ScanSizes(string root, int maxDepth) {
-        StopScan = false;
         List<string> outp = new List<string>();
         List<KeyValuePair<long, string>> big = new List<KeyValuePair<long, string>>();
         try {
@@ -965,7 +964,6 @@ public static class AeroxFiles {
 
     // Taille des fichiers d'un dossier OneDrive réellement présents sur le PC (ceux « uniquement en ligne » ne comptent pas)
     public static long LocalCloudSize(string root) {
-        AeroxNative.StopScan = false;
         return LocalSize(root, 0);
     }
     static long LocalSize(string d, int depth) {
@@ -986,7 +984,6 @@ public static class AeroxFiles {
     // Fichiers identiques (même taille puis même contenu) : "D|groupe|octets|date(ticks)|chemin"
     // Les fichiers « uniquement en ligne » (OneDrive) sont ignorés : les lire les téléchargerait.
     public static string[] FindDuplicates(string[] roots, long minSize, int maxGroups) {
-        AeroxNative.StopScan = false;
         Dictionary<long, List<FileInfo>> bySize = new Dictionary<long, List<FileInfo>>();
         HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (string r in roots) { if (!string.IsNullOrEmpty(r) && Directory.Exists(r)) Collect(r, minSize, bySize, seen, 0); }

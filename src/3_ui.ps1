@@ -852,7 +852,7 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
 $script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk)\b'
-$script:SoftCancel = '^(Update-SelectedApps|Update-Apps|Invoke-WindowsSpace|New-RestorePoint; Invoke-WindowsSpace)\b'
+$script:SoftCancel = '^(Update-SelectedApps|Update-Apps|Invoke-WindowsSpace|New-RestorePoint; Invoke-WindowsSpace|Invoke-DeepClean)\b'
 function Stop-AeroxTask {
     $job = $script:Job
     if (-not $job) { return }
@@ -874,6 +874,7 @@ function Stop-AeroxTask {
     $CancelBtn.IsEnabled = $false
     if ($hard -and -not $script:QueueRunning) {
         $CancelBtn.Content = 'Arrêt…'
+        $job.StopAt = Get-Date
         try { [AeroxNative]::StopScan = $true } catch {}
         try { [void]$job.PS.BeginStop($null, $null) } catch {}
         # Outils en ligne de commande lancés par l'analyse (lecture seule) : arrêtés aussi
@@ -903,6 +904,7 @@ function Start-AeroxTask([string]$Action, [string]$Label, [string]$OnDone = '') 
     $rs.SessionStateProxy.SetVariable('AppInfo', $AppInfo)
     $ps = [powershell]::Create(); $ps.Runspace = $rs; [void]$ps.AddScript($code)
     $sync.Cancel = $false
+    try { [AeroxNative]::StopScan = $false } catch {}
     $script:Job = @{ PS = $ps; RS = $rs; Handle = $ps.BeginInvoke(); Label = $Label; Action = $Action; Start = (Get-Date); OnDone = $OnDone }
     Set-Busy $true $Label
     return $true
@@ -915,6 +917,24 @@ function Start-Background([string]$Code) {
     [void]$ps.BeginInvoke()
 }
 
+# Une analyse arrêtée qui reste coincée dans un appel de Windows plus de 8 secondes : on rend la main tout de suite,
+# elle finit de s'arrêter toute seule en arrière-plan (elle ne fait que lire, rien n'est modifié)
+$script:Zombies = New-Object System.Collections.ArrayList
+function Abandon-Job {
+    $job = $script:Job
+    $script:Job = $null
+    [void]$script:Zombies.Add($job)
+    Flush-Queue
+    $sync.Errors.Clear()
+    $sync.Cancel = $false
+    Set-Busy $false
+    Write-UiLog ("⏹ Arrêté à ta demande : {0} (Windows termine sa dernière étape en arrière-plan, tu peux continuer)" -f $job.Label)
+    $script:FixQueue.Clear(); $script:QueueRunning = $false
+    if ($script:FixingIssue) { $script:FixingIssue.Status = 'open'; $script:FixingIssue = $null }
+    if ($job.Action -eq 'Invoke-Diagnostic') { $script:Scanning = $false }
+    if ($script:Wiz) { $script:Wiz = $null; Write-UiLog "⏹ Optimisation complète arrêtée à ta demande. Tu peux la relancer quand tu veux depuis l'accueil." }
+    try { Update-HomeStats; Update-DiagBadge; Refresh-Page } catch {}
+}
 function Complete-Job {
     $job = $script:Job
     $cancelled = [bool]$sync.Cancel
@@ -3692,7 +3712,9 @@ $timer.Add_Tick({
             $ElapsedText.Text = '{0:mm\:ss}' -f ((Get-Date) - $script:Job.Start)
             if ($script:Scanning -and $script:Cur -eq 'diag' -and $sync.ScanVer -ne $script:LastScanVer) { $script:LastScanVer = $sync.ScanVer; Refresh-Page }
             if ($script:Job.Handle.IsCompleted) { Complete-Job }
+            elseif ($script:Job.StopAt -and ((Get-Date) - $script:Job.StopAt).TotalSeconds -ge 8) { Abandon-Job }
         }
+        foreach ($z in @($script:Zombies | Where-Object { $_.Handle.IsCompleted })) { try { $z.PS.Dispose(); $z.RS.Close(); $z.RS.Dispose() } catch {}; [void]$script:Zombies.Remove($z) }
         if ($script:SysWaiting -and $sync.SysInfo) { $script:SysWaiting = $false; if ($script:Cur -eq 'system') { Refresh-Page } }
         if ($sync.UpdateInfo -and -not $script:UpdateShown) {
             $script:UpdateShown = $true
