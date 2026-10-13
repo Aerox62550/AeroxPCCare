@@ -2,6 +2,11 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche (1.8.0) : « Quoi de neuf »
+
+- Après une mise à jour, au premier lancement : fenêtre « Quoi de neuf dans la X ? » avec les nouveautés depuis la version d'avant, en mots simples (rien au tout premier lancement). Revoir : onglet Aide > « Quoi de neuf ? ».
+- À chaque nouvelle version : ajouter ses nouveautés en haut de $script:WhatsNew (src/3_ui.ps1).
+
 ## Publié en 1.7.2 : « Annuler » ne bloque plus jamais
 
 - Nettoyage approfondi : « Annuler » marche maintenant (arrêt après l'étape en cours) ; le nettoyage de Windows (cleanmgr) s'arrête tout de suite si on annule, affiche son avancement chaque minute et ne peut pas durer plus de 10 minutes. Avant : il pouvait rester bloqué sans fin et « Annuler » était refusé (rapport n°7, PC du frère de Sam).
