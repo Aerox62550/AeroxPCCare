@@ -234,7 +234,7 @@ $script:Settings = @{
     SpeedHistory = @()
     BetaChannel = $false
     PostOptimize = $false
-    InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''
+    InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''; LastSeenVersion = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
 }
 function ConvertTo-Hash($o) {
@@ -247,7 +247,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
@@ -569,6 +569,7 @@ $PageDefs = [ordered]@{
     @{ T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." }) }
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
     @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
+    @{ T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
     @{ T = "Donner mon avis"; Badge = "⭐"; B = "Donner mon avis"; UI = 'review'; D = "AEROX PC Care est gratuit : une note et un petit mot font plaisir au développeur et aident d'autres personnes à lui faire confiance. Ton avis est publié sur la page GitHub du logiciel." },
     @{ T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
     @{ T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
@@ -1155,6 +1156,7 @@ function Invoke-UiCommand($T) {
                 switch ($T.Def.UI) {
                     'report' { Show-BugReport '' }
                     'review' { Show-ReviewDialog }
+                    'whatsnew' { Show-WhatsNew '' }
                     'review-later' { $script:Settings.ReviewSnooze = (Get-Date).AddDays(14).ToString('s'); Save-Settings; Refresh-Page }
                     'review-never' { $script:Settings.ReviewNever = $true; Save-Settings; Refresh-Page }
                     'remotehelp' { Show-RemoteHelpDialog }
@@ -1874,6 +1876,50 @@ function Show-ReviewDialog {
     $w.Content = $sp
     [void]$w.ShowDialog()
     Refresh-Page
+}
+
+# ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
+# Une entrée par version, en mots simples (la plus récente en premier)
+$script:WhatsNew = [ordered]@{
+    '1.8.0' = @("« Quoi de neuf » : cette fenêtre s'affiche après chaque mise à jour pour te montrer les nouveautés (onglet Aide pour la revoir).")
+    '1.7.2' = @("« Annuler » marche maintenant à tout moment, même pendant le nettoyage approfondi.", "Le nettoyage de Windows ne peut plus bloquer AEROX : il affiche son avancement et s'arrête au bout de 10 minutes au plus.")
+    '1.7.0' = @("Donne ton avis (onglet Aide) : une note et un petit commentaire, publiés sur la page du logiciel. Ça fait plaisir et ça aide d'autres personnes à lui faire confiance ⭐")
+    '1.6.0' = @("« Ce qui prend de la place » libère ce que Windows garde pour lui : stockage réservé, veille prolongée, points de restauration, anciens pilotes (souvent 10 à 20 Go sur un petit disque).", "Nouveau : « Fichiers en double » (photos, vidéos, documents), un exemplaire est toujours gardé.", "Conseils : OneDrive en double sur le PC, jeux et logiciels pas utilisés depuis 3 mois, plus gros fichiers à mettre à la corbeille.")
+    '1.5.0' = @("« Pubs et fausses alertes de virus » (onglet Réparation) : bloque les sites qui envoient des notifications de pub et repère les extensions douteuses.", "Dépannages rapides : pas de son, micro, webcam, imprimante, bureau figé.", "Version portable sur clé USB, pour dépanner plusieurs PC sans rien installer.")
+}
+function Compare-AppVersion([string]$A, [string]$B) { try { return ([version]$A).CompareTo([version]$B) } catch { return 0 } }
+# Au démarrage : nouveautés depuis la dernière version vue (rien au tout premier lancement)
+function Show-WhatsNewIfUpdated {
+    $last = "$($script:Settings.LastSeenVersion)"
+    if ($last -eq $AppVersion) { return }
+    $first = (-not $last) -and ([int]$script:Settings.Launches -le 1)
+    $script:Settings.LastSeenVersion = $AppVersion; Save-Settings
+    if ($first -or ($last -and (Compare-AppVersion $AppVersion $last) -le 0)) { return }
+    Show-WhatsNew $last
+}
+function Show-WhatsNew([string]$Since) {
+    $vers = @($script:WhatsNew.Keys | Where-Object { (Compare-AppVersion $_ $AppVersion) -le 0 -and (-not $Since -or (Compare-AppVersion $_ $Since) -gt 0) })
+    if (-not $Since) { $vers = @($vers | Select-Object -First 4) }
+    if (-not $vers.Count) { return }
+    $w = New-Dialog "$AppName : quoi de neuf ?" 600
+    $script:NewWin = $w
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text $(if ($Since) { "Quoi de neuf dans la $AppVersion ?" } else { "Quoi de neuf ?" }) 18 '#FFFFFF' 'Bold')
+    $p = New-Text "AEROX PC Care s'améliore grâce à vos retours et vos rapports de bug. Merci !" 13 '#A9B0C2'; $p.Margin = Th 0 6 0 10; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 420; $sv.Content = $list
+    Add-Child $sp $sv
+    foreach ($v in $vers) {
+        $h = New-Text ("VERSION {0}" -f $v) 11.5 '#B9A8FF' 'Bold'; $h.Margin = Th 2 10 0 6; Add-Child $list $h
+        foreach ($line in $script:WhatsNew[$v]) {
+            $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 9 12 9; $card.Margin = Th 0 0 0 6
+            $card.Child = (New-Text ("•  " + $line) 13 '#E6E9F2'); Add-Child $list $card
+        }
+    }
+    $b = New-DlgButton 'Super !' 'PrimaryBtn'; $b.HorizontalAlignment = 'Right'; $b.Margin = Th 0 14 0 0
+    $b.Add_Click({ $script:NewWin.Close() }); Add-Child $sp $b
+    $w.Content = $sp
+    [void]$w.ShowDialog()
 }
 
 function Show-RemoteHelpDialog {
@@ -3756,6 +3802,7 @@ $window.Add_ContentRendered({
     if ($script:OvStarted) { return }
     $script:OvStarted = $true
     if ($script:Settings.Overlay.Visible) { try { Show-Overlay $true } catch { Write-Bug -Context 'Overlay au démarrage' -ErrorRecord $_ } }
+    try { Show-WhatsNewIfUpdated } catch { Write-Bug -Context 'Quoi de neuf' -ErrorRecord $_ }
     if ($script:Settings.PostOptimize) {
         $script:Settings.PostOptimize = $false; Save-Settings
         Write-UiLog "Bilan après l'optimisation complète : diagnostic en cours…"
