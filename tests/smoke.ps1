@@ -10,11 +10,31 @@ $script:SmokeFail = New-Object System.Collections.ArrayList
 $script:SmokeBugFile = Join-Path $LogDir 'bugs.jsonl'
 $script:SmokeBug0 = 0; if (Test-Path $script:SmokeBugFile) { $script:SmokeBug0 = @(Get-Content $script:SmokeBugFile).Count }
 function Confirm-Box([string]$Text) { Write-Host "    (confirmation refusée automatiquement : $($Text.Split("`n")[0]))"; return $false }
-# Toute fenêtre ouverte est fermée dès qu'elle est affichée
+# Captures d'écran de chaque page et de chaque fenêtre (pour vérifier le rendu réel à chaque version)
+$script:ShotDir = 'C:\aerox\captures'; $script:ShotN = 0
+try { New-Item -ItemType Directory -Force -Path $script:ShotDir | Out-Null } catch {}
+function Save-Shot($El, [string]$Name, $Bg) {
+    try {
+        $El.UpdateLayout()
+        $w = [math]::Ceiling($El.ActualWidth); $h = [math]::Min(9000, [math]::Ceiling($El.ActualHeight))
+        if ($w -lt 10 -or $h -lt 10) { return }
+        $dv = New-Object System.Windows.Media.DrawingVisual; $dc = $dv.RenderOpen()
+        $r = New-Object System.Windows.Rect(0, 0, $w, $h)
+        $dc.DrawRectangle($Bg, $null, $r)
+        $vb = New-Object System.Windows.Media.VisualBrush($El); $vb.Stretch = 'None'; $vb.AlignmentX = 'Left'; $vb.AlignmentY = 'Top'
+        $dc.DrawRectangle($vb, $null, (New-Object System.Windows.Rect(0, 0, $El.ActualWidth, $El.ActualHeight))); $dc.Close()
+        $bmp = New-Object System.Windows.Media.Imaging.RenderTargetBitmap([int]$w, [int]$h, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32); $bmp.Render($dv)
+        $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder; $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($bmp))
+        $script:ShotN++
+        $f = Join-Path $script:ShotDir ("{0:00}-{1}.png" -f $script:ShotN, ($Name -replace '[^\w-]+', '_'))
+        $fs = [IO.File]::Create($f); $enc.Save($fs); $fs.Close()
+    } catch { Write-Host "        (capture $Name impossible : $($_.Exception.Message))" }
+}
+# Toute fenêtre ouverte est capturée puis fermée dès qu'elle est affichée
 [System.Windows.EventManager]::RegisterClassHandler([System.Windows.Window], [System.Windows.FrameworkElement]::LoadedEvent, [System.Windows.RoutedEventHandler]{
     param($s, $e)
     if ($s -eq $window) { return }
-    [void]$s.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ApplicationIdle, [Action[object]]{ param($w) try { $w.Close() } catch {} }, $s)
+    [void]$s.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ApplicationIdle, [Action[object]]{ param($w) try { if ($w.Content -is [System.Windows.UIElement] -and $w.Title -notlike '*Overlay*') { Save-Shot $w.Content ('fenetre-' + ($w.Title -replace '^.*?:\s*', '')) $w.Background } } catch {}; try { $w.Close() } catch {} }, $s)
 })
 function Smoke([string]$Name, [scriptblock]$Code) {
     Write-Host ("  … {0}" -f $Name)
@@ -49,6 +69,7 @@ if ($env:AEROX_SMOKE_PORTABLE) {
 function Get-SmokeMem { $p = Get-Process -Id $PID; return ("mémoire utilisée {0:N0} Mo (privée {1:N0} Mo)" -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB)) }
 function Invoke-Smoke {
     $timer.Stop()
+    $script:NoAnim = $true   # pas d'animation d'apparition : les captures doivent montrer la page entière
     Write-Host ("== Démarrage jusqu'à la fenêtre affichée : {0:N1} s · {1}" -f ((Get-Date) - (Get-Process -Id $PID).StartTime).TotalSeconds, (Get-SmokeMem))
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
@@ -119,6 +140,7 @@ function Invoke-Smoke {
         } finally { $script:Settings.Gaming.Tray = $false; $script:InTray = $false; Update-TrayIcon }
     }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
+    foreach ($t in 'live', 'overlay', 'jeux') { $script:GameTab = $t; Smoke-Page 'monitor' }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
     Smoke 'Diagnostic complet' { Invoke-Diagnostic; $script:Diag = $sync.Diag; $script:OpenSteps = @{}; Update-Bilan }
@@ -173,6 +195,12 @@ function Invoke-Smoke {
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
     Smoke 'Fenêtre : avis' { Show-ReviewDialog; Write-Host ("        invitation sur l'accueil : {0}" -f (Test-ReviewInvite)) }
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
+    Smoke 'Captures des pages' {
+        Show-Page 'home'; Save-Shot $window.Content 'fenetre-complete' $window.Background
+        foreach ($k in 'home', 'diag', 'clean', 'update', 'repair', 'perf', 'system', 'help') { Show-Page $k; Save-Shot $PageHost ("page-" + $k) $window.Background }
+        foreach ($t in 'jeux', 'live', 'overlay') { $script:GameTab = $t; Show-Page 'home'; Show-Page 'monitor'; Save-Shot $PageHost ("page-gaming-" + $t) $window.Background }
+        Write-Host ("        {0} captures" -f @(Get-ChildItem $script:ShotDir -Filter *.png -ErrorAction SilentlyContinue).Count)
+    }
 }
 
 # Actions réelles : uniquement sur la machine de test jetable de GitHub (AEROX_SMOKE_ACTIONS=1)

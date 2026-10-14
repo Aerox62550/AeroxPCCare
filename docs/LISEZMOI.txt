@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v2.0.2
+﻿AEROX PC Care - v2.1.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -97,7 +97,7 @@ l'activer sont affichées, et « Redémarrer dans le BIOS » y emmène directeme
 
 ALERTE SURCHAUFFE
 -----------------
-Onglet Gaming > Overlay : choisis un seuil pour le processeur et la carte graphique.
+Onglet Gaming > Overlay en jeu : choisis un seuil pour le processeur et la carte graphique.
 Au-dessus, la ligne clignote en rouge dans l'overlay et c'est noté dans le journal.
 
 AIDE À DISTANCE
