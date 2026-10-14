@@ -30,13 +30,20 @@ static class Program {
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
     // Une seule fenêtre du logiciel à la fois : si elle est déjà ouverte, on la ramène au premier plan
-    static bool AlreadyRunning() {
+    // En mode discret (lancé avec Windows), on ne ramène rien au premier plan
+    static bool AlreadyRunning(bool show) {
         try {
             System.Threading.Mutex m = System.Threading.Mutex.OpenExisting(@"Local\AeroxPCCare_Instance");
             m.Close();
         } catch (System.Threading.WaitHandleCannotBeOpenedException) { return false; }
         catch (UnauthorizedAccessException) { }
         catch { return false; }
+        if (!show) return true;
+        // Logiciel caché dans la zone de notification : on lui demande de se réafficher
+        try {
+            EventWaitHandle ev = EventWaitHandle.OpenExisting(@"Local\AeroxPCCare_Ouvrir", System.Security.AccessControl.EventWaitHandleRights.Modify | System.Security.AccessControl.EventWaitHandleRights.Synchronize);
+            ev.Set(); ev.Close();
+        } catch { }
         try {
             IntPtr h = FindWindow(null, Title);
             if (h != IntPtr.Zero) { if (IsIconic(h)) ShowWindow(h, 9); SetForegroundWindow(h); }
@@ -58,13 +65,15 @@ static class Program {
     [STAThread]
     static int Main(string[] args) {
         if (args.Length >= 3 && args[0] == "--capteurs") return Sensors.Run(args[1], args[2]);
+        // « --discret » : lancé avec Windows, caché dans la zone de notification (carnet de jeu)
+        bool discreet = args.Length >= 1 && args[0] == "--discret";
         AeroxSplash splash = null;
         try { SetProcessDPIAware(); } catch { }
         try {
-            if (AlreadyRunning()) return 0;
+            if (AlreadyRunning(!discreet)) return 0;
             if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator)) {
                 try {
-                    ProcessStartInfo psi = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location);
+                    ProcessStartInfo psi = new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, discreet ? "--discret" : "");
                     psi.UseShellExecute = true; psi.Verb = "runas";
                     Process.Start(psi);
                 } catch {
@@ -76,11 +85,11 @@ static class Program {
             string dir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
             bool created;
             instance = new System.Threading.Mutex(true, @"Local\AeroxPCCare_Instance", out created);
-            if (!created) { AlreadyRunning(); return 0; }
+            if (!created) { AlreadyRunning(!discreet); return 0; }
 
             // Écran de chargement tout de suite, le temps que le logiciel démarre
             splash = new AeroxSplash();
-            splash.Show(Path.Combine(dir, "aerox.ico"));
+            if (!discreet) splash.Show(Path.Combine(dir, "aerox.ico"));
 
             string script = Path.Combine(dir, "AeroxPCCare.ps1");
             if (!File.Exists(script)) {
@@ -110,6 +119,7 @@ static class Program {
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxRoot", dir });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxLauncher", Assembly.GetExecutingAssembly().Location });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxSplash", splash });
+            ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxDiscreet", discreet });
 
             splash.SetProgress(25, "Vérification des droits…");
             object ps = FindMethod(psType, "Create", 0).Invoke(null, null);

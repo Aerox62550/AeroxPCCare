@@ -51,6 +51,60 @@ function Invoke-Smoke {
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
     Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
+    # ---- Gaming : carnet de performances par jeu (pas de vrai jeu sur la machine de test : parties simulées)
+    Smoke 'Gaming : reconnaissance des jeux' {
+        $ok = @{ 'C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe' = 'Fortnite'; 'C:\Riot Games\VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe' = 'VALORANT'; 'D:\SteamLibrary\steamapps\common\Call of Duty HQ\cod.exe' = 'Call of Duty HQ'; 'C:\Program Files (x86)\Overwatch\_retail_\Overwatch.exe' = 'Overwatch' }
+        foreach ($p in $ok.Keys) { $g = Get-GameFromPath $p; if (-not $g -or $g.Name -ne $ok[$p]) { throw "jeu non reconnu : $p" } }
+        foreach ($p in 'C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteLauncher.exe', 'C:\Riot Games\Riot Client\RiotClientServices.exe', 'C:\Program Files\Google\Chrome\Application\chrome.exe') { if (Get-GameFromPath $p) { throw "pris pour un jeu à tort : $p" } }
+        $fg = [AeroxGame]::Foreground(); Write-Host "        premier plan : $fg"
+        $me = [AeroxGame]::ProcessPath($PID)
+        if (-not [AeroxGame]::Alive($PID, $me)) { throw "AEROX vu comme fermé" }
+        if ([AeroxGame]::Alive($PID, 'C:\autre.exe')) { throw "numéro réutilisé non détecté" }
+        if ([AeroxGame]::Alive(999999, '')) { throw "programme inexistant vu comme ouvert" }
+        Invoke-GameWatch   # ne doit rien lancer (pas de jeu au premier plan)
+        if ($script:GameSess) { throw "partie détectée sans jeu : $($script:GameSess.Name)" }
+    }
+    Smoke 'Gaming : partie simulée' {
+        if (-not $script:Fps) { $script:Fps = New-Object AeroxFps }
+        $script:Fps.BeginSession(4242)
+        $script:Fps.Feed('Application,ProcessID,SwapChainAddress,Runtime,SyncInterval,PresentFlags,Dropped,TimeInSeconds,msInPresentAPI,msBetweenPresents')
+        $rnd = New-Object Random 7
+        for ($i = 0; $i -lt 30000; $i++) { $ms = 8 + $rnd.NextDouble(); if ($i % 3000 -eq 2999) { $ms = 70 }; $script:Fps.Feed(("JeuTest.exe,4242,0x0,DXGI,0,0,0,0,0.1,{0}" -f $ms.ToString('F3', [Globalization.CultureInfo]::InvariantCulture))) }
+        $fl = New-Object 'System.Collections.Generic.List[double]'; for ($i = 0; $i -lt 300; $i++) { $fl.Add(110 + $rnd.Next(-12, 12)) }
+        $script:GameSess = @{ Pid = 4242; Path = 'C:\Jeux\JeuTest\JeuTest.exe'; Name = 'Jeu de test AEROX'; Store = 'Test'; Key = 'jeu-de-test-aerox'; Start = (Get-Date).AddMinutes(-42)
+            N = 300; Fps = $fl; CpuL = 40.0 * 300; GpuL = 96.0 * 300; Core = 70.0 * 300; NL = 300; NGpu = 300; NCore = 300; CpuT = 74.0; GpuT = 70.0; GpuHot = 82.0; Vram = 60.0; Ram = 65.0 }
+        $sync.GameCtx = @{ Gpu = 'Carte de test'; Driver = '1.0'; Hz = 144; MaxHz = 144 }
+        Remove-Item -LiteralPath (Get-GameFile 'jeu-de-test-aerox') -Force -ErrorAction SilentlyContinue
+        Stop-GameSession
+        $g = Read-GameFile 'jeu-de-test-aerox'
+        if (-not $g -or @($g.Sessions).Count -ne 1) { throw "partie non enregistrée" }
+        $r = @($g.Sessions)[0]
+        Write-Host ("        " + $script:LastGame.Text)
+        if ([math]::Abs([double]$r.Fps - 117.3) -gt 2) { throw "FPS moyen faux : $($r.Fps)" }
+        if ([int]$r.Stut -lt 8) { throw "saccades non comptées : $($r.Stut)" }
+        if ($r.Verdict -ne 'gpu') { throw "verdict faux : $($r.Verdict)" }
+        if ($script:LastGame.Text -notmatch 'FPS de moyenne' -or $script:LastGame.Text -notmatch 'carte graphique') { throw "résumé incomplet" }
+        if (-not ($script:Tray -and $script:Tray.Visible)) { throw "pas de notification de fin de partie" }
+        # Deux autres parties pour la fiche (meilleure / pire, courbe)
+        foreach ($x in @(@(92.0, 55, 88, 93), @(124.0, 60, 70, 60))) {
+            $S = @{ Start = (Get-Date).AddMinutes(-30); Fps = $fl; CpuL = 50.0; NL = 1; GpuL = [double]$x[1]; NGpu = 1; Core = 92.0; NCore = 1; CpuT = 80.0; GpuT = [double]$x[2]; Ram = [double]$x[3] }
+            Save-GameRecord 'jeu-de-test-aerox' 'Jeu de test AEROX' 'C:\Jeux\JeuTest\JeuTest.exe' 'Test' (New-GameRecord $S @(100000, 1800, $x[0], ($x[0] * 0.7), ($x[0] * 0.5), 3) @(100, 110, 90) (Get-Date) @{ Hz = 60; MaxHz = 144 })
+        }
+        if (@((Read-GameFile 'jeu-de-test-aerox').Sessions).Count -ne 3) { throw "3 parties attendues" }
+    }
+    Smoke 'Fenêtre : fiche du jeu' { Show-GameDialog 'jeu-de-test-aerox' }
+    Smoke 'Gaming : zone de notification' {
+        $script:Settings.Gaming.Tray = $true
+        try {
+            $h = Get-MainHandle
+            $window.Close()   # la croix cache AEROX au lieu de le fermer
+            if (-not $script:InTray -or [AeroxGame]::Visible($h)) { throw "la croix n'a pas caché AEROX" }
+            $ev = [System.Threading.EventWaitHandle]::OpenExisting('Local\AeroxPCCare_Ouvrir'); [void]$ev.Set(); $ev.Close()
+            if (-not $script:ShowEvent.WaitOne(0)) { throw "le signal de réouverture n'arrive pas" }
+            Show-MainWindow 'monitor'
+            if ($script:InTray -or -not [AeroxGame]::Visible($h)) { throw "AEROX ne se réaffiche pas" }
+        } finally { $script:Settings.Gaming.Tray = $false; $script:InTray = $false; Update-TrayIcon }
+    }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
@@ -123,6 +177,15 @@ function Invoke-SmokeActions {
         $ids = @($sync.SpaceScan.Win | Where-Object { $_.Id -ne 'compact' } | ForEach-Object { if ($_.Arg) { "{0}:{1}" -f $_.Id, $_.Arg } else { $_.Id } })
         Write-Host "        éléments : $($ids -join ', ')"
         if ($ids.Count) { Invoke-WindowsSpace -Items $ids }
+    }
+    Smoke 'Gaming : lancement avec Windows' {
+        $AeroxLauncher = Join-Path $AppRoot 'AeroxPCCare.exe'   # le test tourne sans le lanceur
+        Set-AutoStart $true
+        $t = Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop
+        if ("$(@($t.Actions)[0].Arguments)" -ne '--discret' -or "$($t.Principal.RunLevel)" -ne 'Highest') { throw "tâche mal créée : $(@($t.Actions)[0].Arguments) / $($t.Principal.RunLevel)" }
+        Set-AutoStart $false
+        if (Test-AutoStart) { throw "tâche toujours là" }
+        Write-Host '        créée puis retirée : OK'
     }
     Smoke 'Mode performances' { Set-HighPerformance; Set-BalancedPower }
     Smoke 'Assistant stockage' { Enable-StorageSense; if (-not (Get-StorageSenseOn)) { throw 'pas activé' }; Disable-StorageSense }

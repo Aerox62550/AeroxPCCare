@@ -23,8 +23,10 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 - **Réparations** : connexion Internet, fichiers de Windows (DISM + SFC), disque, Windows Update bloqué.
 - **Performances** : programmes au démarrage appli par appli, mode performances, effets visuels,
   logiciels inutiles à désinstaller (avec l'explication et le disque où ils se trouvent).
-- **Moniteur** : températures, utilisation CPU / GPU, VRAM, RAM et **FPS** de n'importe quel jeu,
-  avec un **overlay** déplaçable et une **alerte surchauffe**.
+- **Gaming** : chaque jeu est reconnu tout seul et **chaque partie est notée** (FPS moyens, 1 % low,
+  saccades, températures) avec un résumé à la fin et une **fiche par jeu** : évolution partie après partie,
+  ce qui limite le jeu (processeur, carte graphique, limite de FPS) et quoi faire. Sans injection : aucun
+  risque avec les anti-triche. Plus les mesures en direct, un **overlay** déplaçable et une **alerte surchauffe**.
 - **Test de débit Internet** (ping, réception, envoi) avec l'explication du résultat.
 - **Mon PC (BIOS)** : version et âge du BIOS, TPM, Secure Boot, UEFI, compatibilité Windows 11.
 - **Aide à distance** avec Assistance rapide de Microsoft, et un rapport du PC à envoyer.

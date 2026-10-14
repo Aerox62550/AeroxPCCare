@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v1.9.0
+﻿AEROX PC Care - v2.0.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -57,9 +57,23 @@ MISES À JOUR AU CHOIX
 Onglet Mises à jour > « Choisir les mises à jour » : coche ce que tu veux mettre à
 jour, « Ignorer » met un logiciel de côté (mémorisé, même pour « Tout mettre à jour »).
 
-MONITEUR ET OVERLAY
--------------------
-Onglet Moniteur : températures, utilisation CPU / GPU, VRAM, RAM et FPS en direct.
+GAMING : CARNET DE PERFORMANCES PAR JEU
+---------------------------------------
+Onglet Gaming : AEROX reconnaît tes jeux tout seul (Steam, Epic, Riot, Battle.net, EA,
+Ubisoft, GOG, Xbox, ou tout jeu en plein écran) et note chaque partie de 3 minutes ou
+plus : FPS moyens, 1 % low, saccades, températures, et ce qui limite le jeu (processeur,
+carte graphique ou limite de FPS). À la fin : un résumé en une ligne (notification +
+dans AEROX) et une fiche par jeu avec l'évolution partie après partie et quoi faire.
+Rien n'est injecté dans les jeux (PresentMon d'Intel) : aucun risque avec les anti-triche.
+AEROX doit être ouvert pendant la partie. Options (onglet Gaming > Suivi automatique) :
+  - garder AEROX près de l'horloge quand tu le fermes (clic droit sur l'icône > Quitter)
+  - le lancer avec Windows en mode discret (le seul programme qu'AEROX ajoute au
+    démarrage, et seulement si tu l'actives)
+Les fiches sont dans le dossier « jeux » des journaux d'AEROX.
+
+MESURES EN DIRECT ET OVERLAY
+----------------------------
+Onglet Gaming : températures, utilisation CPU / GPU, VRAM, RAM et FPS en direct.
 Les composants de mesure s'installent en un clic (sources officielles) :
   - LibreHardwareMonitor (températures), licence MPL-2.0
   - Pilote PawnIO (température du processeur)
@@ -83,7 +97,7 @@ l'activer sont affichées, et « Redémarrer dans le BIOS » y emmène directeme
 
 ALERTE SURCHAUFFE
 -----------------
-Onglet Moniteur > Overlay : choisis un seuil pour le processeur et la carte graphique.
+Onglet Gaming > Overlay : choisis un seuil pour le processeur et la carte graphique.
 Au-dessus, la ligne clignote en rouge dans l'overlay et c'est noté dans le journal.
 
 AIDE À DISTANCE

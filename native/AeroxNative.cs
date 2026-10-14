@@ -221,6 +221,12 @@ public class AeroxFps {
     Dictionary<int, string> names = new Dictionary<int, string>();
     int cApp = -1, cPid = -1, cMs = -1;
     Stopwatch sw = Stopwatch.StartNew();
+    // Partie en cours (carnet de jeu) : toutes les images du jeu suivi, du début à la fin
+    int sPid = 0;
+    long sFrames = 0; int sStut = 0;
+    double sMs = 0, sClock = 0, sEma = 0;
+    int[] sHist = new int[2001];               // temps d'image par pas de 0,1 ms (dernière case : 200 ms et plus)
+    List<double> minMs = new List<double>(); List<int> minN = new List<int>();
     public string LastError = "";
     public bool Running { get { try { return proc != null && !proc.HasExited; } catch { return false; } } }
 
@@ -263,6 +269,7 @@ public class AeroxFps {
             List<double[]> lst;
             if (!frames.TryGetValue(pid, out lst)) { lst = new List<double[]>(); frames[pid] = lst; }
             lst.Add(new double[] { now, ms });
+            if (pid == sPid && sPid != 0) SessionAdd(ms);
             if (cApp >= 0 && cApp < p.Length) names[pid] = p[cApp];
             if (lst.Count > 4000) lst.RemoveRange(0, lst.Count - 3000);
         }
@@ -288,12 +295,123 @@ public class AeroxFps {
     }
     public string AppName(int pid) { lock (lk) { string n; return names.TryGetValue(pid, out n) ? n : ""; } }
 
+    public void BeginSession(int pid) {
+        lock (lk) {
+            sPid = pid; sFrames = 0; sStut = 0; sMs = 0; sClock = 0; sEma = 0;
+            Array.Clear(sHist, 0, sHist.Length); minMs.Clear(); minN.Clear();
+        }
+    }
+    public void EndSession() { lock (lk) { sPid = 0; } }
+    public int SessionPid { get { return sPid; } }
+
+    // Horloge du jeu = somme des temps d'image (identique au temps réel pendant que le jeu tourne)
+    void SessionAdd(double ms) {
+        sClock += ms;
+        if (ms > 1000) return;                  // écran de chargement ou jeu en pause : pas une image jouée
+        sFrames++; sMs += ms;
+        int b = (int)Math.Round(ms * 10); if (b > 2000) b = 2000; sHist[b]++;
+        // Saccade : une image nettement plus longue que les précédentes (après 15 s, le temps que le jeu charge)
+        if (sClock > 15000 && sEma > 0 && ms > Math.Max(2.5 * sEma, sEma + 20)) sStut++;
+        sEma = sEma <= 0 ? ms : sEma * 0.95 + ms * 0.05;
+        int mi = (int)(sClock / 60000);
+        if (mi > 1440) mi = 1440;
+        while (minMs.Count <= mi) { minMs.Add(0); minN.Add(0); }
+        minMs[mi] += ms; minN[mi]++;
+    }
+    double SessionPct(double q) {
+        long target = (long)Math.Ceiling(sFrames * q), acc = 0;
+        for (int i = 0; i < sHist.Length; i++) { acc += sHist[i]; if (acc >= target) return Math.Max(0.1, i / 10.0); }
+        return 200;
+    }
+    // [images, secondes de jeu, FPS moyen, 1 % low, 0,1 % low, saccades]
+    public double[] SessionStats() {
+        lock (lk) {
+            if (sFrames == 0 || sMs <= 0) return new double[] { 0, sClock / 1000.0, 0, 0, 0, 0 };
+            return new double[] { sFrames, sClock / 1000.0, 1000.0 * sFrames / sMs, 1000.0 / SessionPct(0.99), 1000.0 / SessionPct(0.999), sStut };
+        }
+    }
+    // FPS moyen de chaque minute de la partie (0 = pas d'image cette minute-là)
+    public double[] SessionMinutes() {
+        lock (lk) {
+            double[] r = new double[minMs.Count];
+            for (int i = 0; i < r.Length; i++) r[i] = (minN[i] > 0 && minMs[i] > 0) ? 1000.0 * minN[i] / minMs[i] : 0;
+            return r;
+        }
+    }
+
     public void Stop() {
         try { if (proc != null && !proc.HasExited) proc.Kill(); } catch { }
         proc = null;
         lock (lk) { frames.Clear(); names.Clear(); }
         cApp = -1; cPid = -1; cMs = -1;
     }
+}
+
+// Jeux : programme au premier plan (plein écran ou non), chemin du programme, programme toujours ouvert
+public static class AeroxGame {
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder sb, ref int size);
+    [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr h, uint ms);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    const uint QUERY_LIMITED = 0x1000, SYNCHRONIZE = 0x100000;
+
+    static string ImagePath(IntPtr h) {
+        StringBuilder sb = new StringBuilder(1024); int n = sb.Capacity;
+        return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString(0, n) : "";
+    }
+    public static string ProcessPath(int pid) {
+        IntPtr h = OpenProcess(QUERY_LIMITED, false, pid);
+        if (h == IntPtr.Zero) return "";
+        try { return ImagePath(h); } finally { CloseHandle(h); }
+    }
+
+    // « pid|chemin|1 si la fenêtre couvre tout son écran|classe de la fenêtre » ; vide si rien
+    public static string Foreground() {
+        try {
+            IntPtr w = GetForegroundWindow(); if (w == IntPtr.Zero) return "";
+            uint pid; GetWindowThreadProcessId(w, out pid); if (pid == 0) return "";
+            StringBuilder cls = new StringBuilder(256); GetClassName(w, cls, 256);
+            bool full = false; RECT r;
+            if (GetWindowRect(w, out r)) {
+                MONITORINFO mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+                IntPtr m = MonitorFromWindow(w, 2);
+                if (m != IntPtr.Zero && GetMonitorInfo(m, ref mi))
+                    full = r.L <= mi.rcMonitor.L && r.T <= mi.rcMonitor.T && r.R >= mi.rcMonitor.R && r.B >= mi.rcMonitor.B;
+            }
+            return pid + "|" + ProcessPath((int)pid) + "|" + (full ? "1" : "0") + "|" + cls.ToString();
+        } catch { return ""; }
+    }
+
+    // Le programme tourne-t-il encore ? (même numéro ET même chemin : Windows réutilise les numéros)
+    public static bool Alive(int pid, string path) {
+        if (pid <= 0) return false;
+        IntPtr h = OpenProcess(QUERY_LIMITED | SYNCHRONIZE, false, pid);
+        if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 5;   // accès refusé (anti-triche) : il est encore là
+        try {
+            if (WaitForSingleObject(h, 0) == 0) return false;
+            if (!string.IsNullOrEmpty(path)) {
+                string p = ImagePath(h);
+                if (p.Length > 0 && !string.Equals(p, path, StringComparison.OrdinalIgnoreCase)) return false;
+            }
+            return true;
+        } finally { CloseHandle(h); }
+    }
+
+    // Fenêtre principale cachée dans la zone de notification, puis réaffichée
+    public static void Hide(IntPtr h) { if (h != IntPtr.Zero) ShowWindow(h, 0); }
+    public static void Show(IntPtr h) { if (h == IntPtr.Zero) return; ShowWindow(h, 5); ShowWindow(h, 9); SetForegroundWindow(h); }
+    public static bool Visible(IntPtr h) { return h != IntPtr.Zero && IsWindowVisible(h); }
 }
 
 // Téléchargement d'un paquet NuGet officiel (nuget.org) et de ses dépendances, DLL pour .NET Framework
