@@ -46,8 +46,10 @@ if ($env:AEROX_SMOKE_PORTABLE) {
     if (-not $Portable -or $LogDir -notlike "*\donnees\*") { Write-Host "ÉCHEC : mode portable non détecté"; exit 1 }
     Write-Host "OK : mode portable détecté, données sur la clé"; exit 0
 }
+function Get-SmokeMem { $p = Get-Process -Id $PID; return ("mémoire utilisée {0:N0} Mo (privée {1:N0} Mo)" -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB)) }
 function Invoke-Smoke {
     $timer.Stop()
+    Write-Host ("== Démarrage jusqu'à la fenêtre affichée : {0:N1} s · {1}" -f ((Get-Date) - (Get-Process -Id $PID).StartTime).TotalSeconds, (Get-SmokeMem))
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
     Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
@@ -102,12 +104,18 @@ function Invoke-Smoke {
         $script:Settings.Gaming.Tray = $true
         try {
             $h = Get-MainHandle
+            Write-Host ("        fenêtre ouverte : " + (Get-SmokeMem))
             $window.Close()   # la croix cache AEROX au lieu de le fermer
             if (-not $script:InTray -or [AeroxGame]::Visible($h)) { throw "la croix n'a pas caché AEROX" }
+            Optimize-TrayMemory
+            if ($PageHost.Children.Count) { throw "la page n'a pas été libérée en mode discret" }
+            Show-Page 'diag'; if ($PageHost.Children.Count) { throw "une page a été construite alors qu'AEROX est caché" }
+            Write-Host ("        caché près de l'horloge : " + (Get-SmokeMem))
             $ev = [System.Threading.EventWaitHandle]::OpenExisting('Local\AeroxPCCare_Ouvrir'); [void]$ev.Set(); $ev.Close()
             if (-not $script:ShowEvent.WaitOne(0)) { throw "le signal de réouverture n'arrive pas" }
             Show-MainWindow 'monitor'
             if ($script:InTray -or -not [AeroxGame]::Visible($h)) { throw "AEROX ne se réaffiche pas" }
+            if (-not $PageHost.Children.Count -or $script:Cur -ne 'monitor') { throw "la page n'est pas reconstruite à la réouverture" }
         } finally { $script:Settings.Gaming.Tray = $false; $script:InTray = $false; Update-TrayIcon }
     }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
