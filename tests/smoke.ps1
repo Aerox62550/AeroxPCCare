@@ -69,6 +69,7 @@ if ($env:AEROX_SMOKE_PORTABLE) {
 function Get-SmokeMem { $p = Get-Process -Id $PID; return ("mémoire utilisée {0:N0} Mo (privée {1:N0} Mo)" -f ($p.WorkingSet64 / 1MB), ($p.PrivateMemorySize64 / 1MB)) }
 function Invoke-Smoke {
     $timer.Stop()
+    $script:NoAnim = $true   # pas d'animation d'apparition : les captures doivent montrer la page entière
     Write-Host ("== Démarrage jusqu'à la fenêtre affichée : {0:N1} s · {1}" -f ((Get-Date) - (Get-Process -Id $PID).StartTime).TotalSeconds, (Get-SmokeMem))
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
@@ -139,6 +140,7 @@ function Invoke-Smoke {
         } finally { $script:Settings.Gaming.Tray = $false; $script:InTray = $false; Update-TrayIcon }
     }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
+    foreach ($t in 'live', 'overlay', 'jeux') { $script:GameTab = $t; Smoke-Page 'monitor' }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
     Smoke 'Diagnostic complet' { Invoke-Diagnostic; $script:Diag = $sync.Diag; $script:OpenSteps = @{}; Update-Bilan }
@@ -195,7 +197,8 @@ function Invoke-Smoke {
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
     Smoke 'Captures des pages' {
         Show-Page 'home'; Save-Shot $window.Content 'fenetre-complete' $window.Background
-        foreach ($k in 'home', 'diag', 'clean', 'update', 'repair', 'perf', 'monitor', 'system', 'help') { Show-Page $k; Save-Shot $PageHost ("page-" + $k) $window.Background }
+        foreach ($k in 'home', 'diag', 'clean', 'update', 'repair', 'perf', 'system', 'help') { Show-Page $k; Save-Shot $PageHost ("page-" + $k) $window.Background }
+        foreach ($t in 'jeux', 'live', 'overlay') { $script:GameTab = $t; Show-Page 'home'; Show-Page 'monitor'; Save-Shot $PageHost ("page-gaming-" + $t) $window.Background }
         Write-Host ("        {0} captures" -f @(Get-ChildItem $script:ShotDir -Filter *.png -ErrorAction SilentlyContinue).Count)
     }
 }

@@ -2,6 +2,15 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.0 : interface (à valider par Sam)
+
+- Icône pour chaque carte d'action (police d'icônes de Windows Segoe MDL2, rien à télécharger), carte qui s'éclaire au survol.
+- Apparition douce des pages (fondu + léger glissement, 0,2 s).
+- Petits textes gris plus clairs (#6B7389 → #7A8399, #5D6478 → #6E768B) pour la lisibilité.
+- Accueil : carte « État de ton PC » en avant (dégradé violet, anneau plus grand, titre plus gros).
+- Gaming : 3 sous-onglets « Mes jeux » (partie en cours, mes jeux, suivi automatique), « En direct » (mesures + composants), « Overlay en jeu ».
+- Test automatique : captures d'écran de chaque page et fenêtre poussées sur la branche « captures » (pour vérifier le rendu réel à chaque version).
+
 ## Publié en 2.0.2 : mémoire en mode discret
 
 - Demande de Sam : consommer le moins de RAM possible quand AEROX tourne caché, sans conséquence. Caché près de l'horloge : la page affichée est libérée (reconstruite à la réouverture, avant d'afficher la fenêtre), ramasse-miettes .NET, puis la mémoire inutilisée est rendue à Windows (SetProcessWorkingSetSize). Fait 2 s après la mise en veille, 45 s après une partie (mesures arrêtées), puis toutes les 15 min ; jamais pendant une partie ni pendant une opération. Résultats d'analyse, journal et réglages gardés.
