@@ -782,6 +782,8 @@ function Build-StaticPage([string]$Key) {
 }
 
 function Show-Page([string]$Key) {
+    # Caché près de l'horloge : la page sera construite à la réouverture (économise la mémoire)
+    if ($script:InTray) { $script:Cur = $Key; return }
     $same = ($Key -eq $script:Cur); $offset = $Scroll.VerticalOffset
     $script:Cur = $Key
     $script:PageButtons.Clear()
@@ -1928,6 +1930,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.0.2' = @("Caché près de l'horloge, AEROX consomme beaucoup moins de mémoire : il libère son affichage et rend à Windows la mémoire inutilisée. Tout revient instantanément quand tu le rouvres.")
     '2.0.1' = @("Gaming : Roblox est reconnu même en fenêtre (pas seulement en plein écran).", "Gaming : analyse plus juste. Quand ni le processeur ni la carte graphique ne sont à fond, AEROX dit que c'est le jeu qui fixe le rythme (Roblox, Minecraft…) au lieu d'accuser le processeur, et il te dit quand tu as déjà plus de FPS que ton écran n'en affiche.")
     '2.0.0' = @("Nouvel onglet Gaming (à la place de « Moniteur ») : AEROX reconnaît tes jeux tout seul et note chaque partie (FPS moyens, 1 % low, saccades, températures).", "À la fin de la partie : un résumé en une ligne (notification + dans AEROX), et une fiche par jeu avec l'évolution partie après partie, ce qui limite le jeu (processeur, carte graphique, limite de FPS) et quoi faire.", "Option : garder AEROX près de l'horloge quand tu le fermes, et le lancer avec Windows en mode discret pour ne rater aucune partie. Rien n'est injecté dans les jeux : aucun risque avec les anti-triche.")
     '1.9.0' = @("Après chaque réparation, AEROX vérifie que le problème est vraiment réglé. Sinon, il te le dit et t'explique quoi faire.", "Pilotes : plus de boucle « mets à jour » quand tu as déjà installé la dernière version proposée pour ta carte, et un pilote que Windows repropose sans arrêt est signalé au lieu d'être réinstallé.")
@@ -3761,7 +3764,13 @@ function Invoke-MonitorTick {
     $hot = [AeroxHotkey]::Presses
     if ($hot -ne $script:OvHotPrev) { $script:OvHotPrev = $hot; Show-Overlay (-not ($script:Ov -and $script:Ov.IsVisible)); if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page } }
     $script:TickN++
-    if ($script:TickN % 20 -eq 0) { try { Invoke-GameWatch } catch { Write-Bug -Context 'Gaming : détection du jeu' -ErrorRecord $_ } }
+    if ($script:TickN % 20 -eq 0) {
+        try { Invoke-GameWatch } catch { Write-Bug -Context 'Gaming : détection du jeu' -ErrorRecord $_ }
+        # Mode discret sans partie en cours : mémoire rendue à Windows à la mise en veille, après une partie, puis toutes les 15 minutes
+        if ($script:InTray -and -not $script:GameSess -and -not $script:GameProbe -and -not $script:Job -and (($script:TrimDue -and (Get-Date) -ge $script:TrimDue) -or ($script:LastTrim -and ((Get-Date) - $script:LastTrim).TotalMinutes -ge 15))) {
+            try { Optimize-TrayMemory } catch { Write-Bug -Context 'Mode discret : mémoire' -ErrorRecord $_ }
+        }
+    }
     if ($script:TickN % 6 -ne 0) { return }
     if (Test-MonitorNeeded) {
         $script:MonIdle = 0
@@ -3786,7 +3795,7 @@ $script:GameDir = Join-Path $LogDir 'jeux'
 $script:GameMinMinutes = 3
 $script:LastGame = $null
 $script:PmCache = @{ Path = $null; At = [datetime]::MinValue }
-$script:Tray = $null; $script:InTray = $false; $script:QuitNow = $false; $script:BalloonKey = ''; $script:DeferredStart = $false
+$script:Tray = $null; $script:InTray = $false; $script:QuitNow = $false; $script:BalloonKey = ''; $script:DeferredStart = $false; $script:TrimDue = $null; $script:LastTrim = $null
 $script:AutoTaskName = 'AEROX PC Care (mode discret)'
 # Dossiers des boutiques de jeux : le nom du jeu est le dossier juste après
 $script:GameRoots = @(
@@ -3931,6 +3940,7 @@ function Stop-GameSession {
     $txt = Format-GameSummary $s.Name $rec
     Write-UiLog $txt
     $script:LastGame = @{ Key = $s.Key; Text = $txt; At = Get-Date }
+    if ($script:InTray) { $script:TrimDue = (Get-Date).AddSeconds(45) }   # après l'arrêt des mesures
     try { Show-TrayBalloon 'Fin de partie' $txt $s.Key } catch { Write-Bug -Context 'Notification de fin de partie' -ErrorRecord $_ -Type 'erreur' }
     if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page }
 }
@@ -4150,6 +4160,7 @@ function Get-MainHandle { return (New-Object System.Windows.Interop.WindowIntero
 function Hide-ToTray([bool]$Tip = $true) {
     Initialize-Tray; $script:Tray.Visible = $true
     [AeroxGame]::Hide((Get-MainHandle)); $script:InTray = $true
+    $script:TrimDue = (Get-Date).AddSeconds(2)
     if ($Tip -and -not $script:Settings.Gaming.TrayTip) {
         $script:Settings.Gaming.TrayTip = $true; Save-Settings
         $script:Tray.ShowBalloonTip(8000, 'AEROX PC Care reste ouvert', "Il note tes parties en silence, ici près de l'horloge. Clic droit sur l'icône > Quitter pour le fermer complètement.", [System.Windows.Forms.ToolTipIcon]::Info)
@@ -4163,11 +4174,22 @@ function Show-MainWindow([string]$Page) {
         $window.Left = $wa.Left + [math]::Max(0, ($wa.Width - $window.ActualWidth) / 2); $window.Top = $wa.Top + [math]::Max(0, ($wa.Height - $window.ActualHeight) / 2)
     }
     if ($window.WindowState -eq 'Minimized') { $window.WindowState = 'Normal' }
-    [AeroxGame]::Show((Get-MainHandle)); try { [void]$window.Activate() } catch {}
     $script:InTray = $false
+    # La page est reconstruite avant d'afficher la fenêtre (elle a été libérée en mode discret)
+    if ($Page) { Go-Page $Page } else { Refresh-Page }
+    [AeroxGame]::Show((Get-MainHandle)); try { [void]$window.Activate() } catch {}
     Update-TrayIcon
-    if ($Page) { Go-Page $Page } elseif ($script:Cur -eq 'monitor') { Refresh-Page }
     if ($script:DeferredStart) { $script:DeferredStart = $false; Invoke-StartupExtras }
+}
+# Mode discret : libère la page affichée et rend la mémoire inutilisée à Windows.
+# Rien n'est perdu : résultats d'analyse, journal et réglages restent ; la page se reconstruit à la réouverture.
+function Optimize-TrayMemory {
+    $script:TrimDue = $null
+    if (-not $script:InTray) { return }
+    try { $PageHost.Children.Clear(); $script:PageButtons.Clear(); $script:MonUi = $null } catch {}
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); [GC]::Collect()
+    [AeroxGame]::TrimMemory()
+    $script:LastTrim = Get-Date
 }
 function Exit-Aerox { $script:QuitNow = $true; if ($script:InTray) { Show-MainWindow '' }; $window.Close(); $script:QuitNow = $false }
 

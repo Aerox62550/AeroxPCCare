@@ -412,6 +412,11 @@ public static class AeroxGame {
     public static void Hide(IntPtr h) { if (h != IntPtr.Zero) ShowWindow(h, 0); }
     public static void Show(IntPtr h) { if (h == IntPtr.Zero) return; ShowWindow(h, 5); ShowWindow(h, 9); SetForegroundWindow(h); }
     public static bool Visible(IntPtr h) { return h != IntPtr.Zero && IsWindowVisible(h); }
+
+    // Mode discret : rend à Windows la mémoire dont AEROX ne se sert plus (elle revient toute seule si besoin)
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool SetProcessWorkingSetSize(IntPtr h, IntPtr min, IntPtr max);
+    public static void TrimMemory() { try { SetProcessWorkingSetSize(GetCurrentProcess(), new IntPtr(-1), new IntPtr(-1)); } catch { } }
 }
 
 // Téléchargement d'un paquet NuGet officiel (nuget.org) et de ses dépendances, DLL pour .NET Framework
