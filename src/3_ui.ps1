@@ -1928,6 +1928,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.0.1' = @("Gaming : Roblox est reconnu même en fenêtre (pas seulement en plein écran).", "Gaming : analyse plus juste. Quand ni le processeur ni la carte graphique ne sont à fond, AEROX dit que c'est le jeu qui fixe le rythme (Roblox, Minecraft…) au lieu d'accuser le processeur, et il te dit quand tu as déjà plus de FPS que ton écran n'en affiche.")
     '2.0.0' = @("Nouvel onglet Gaming (à la place de « Moniteur ») : AEROX reconnaît tes jeux tout seul et note chaque partie (FPS moyens, 1 % low, saccades, températures).", "À la fin de la partie : un résumé en une ligne (notification + dans AEROX), et une fiche par jeu avec l'évolution partie après partie, ce qui limite le jeu (processeur, carte graphique, limite de FPS) et quoi faire.", "Option : garder AEROX près de l'horloge quand tu le fermes, et le lancer avec Windows en mode discret pour ne rater aucune partie. Rien n'est injecté dans les jeux : aucun risque avec les anti-triche.")
     '1.9.0' = @("Après chaque réparation, AEROX vérifie que le problème est vraiment réglé. Sinon, il te le dit et t'explique quoi faire.", "Pilotes : plus de boucle « mets à jour » quand tu as déjà installé la dernière version proposée pour ta carte, et un pilote que Windows repropose sans arrêt est signalé au lieu d'être réinstallé.")
     '1.8.0' = @("« Quoi de neuf » : cette fenêtre s'affiche après chaque mise à jour pour te montrer les nouveautés (onglet Aide pour la revoir).")
@@ -3798,7 +3799,9 @@ $script:GameRoots = @(
     @('\\GOG Games\\([^\\]+)\\', 'GOG'),
     @('\\XboxGames\\([^\\]+)\\', 'Xbox'),
     @('\\Rockstar Games\\([^\\]+)\\', 'Rockstar'),
-    @('\\([^\\]+)\\_(?:retail|classic|classic_era|ptr|beta)_\\', 'Battle.net')
+    @('\\([^\\]+)\\_(?:retail|classic|classic_era|ptr|beta)_\\', 'Battle.net'),
+    @('\\Roblox\\Versions\\[^\\]+\\RobloxPlayerBeta\.exe$', 'Roblox', 'Roblox'),
+    @('\\Minecraft Launcher\\|\\\.minecraft\\', 'Minecraft', 'Minecraft (Java)')
 )
 $script:GameRootSkip = '(?i)^(Launcher|Riot Client|Epic Online Services|DirectXRedist|DirectX|Steamworks Shared|Social Club|Rockstar Games Launcher|EA Desktop|EA app|Battle\.net|Ubisoft Connect|GalaxyClient|Steam|Common Redist|_CommonRedist|Steam Controller Configs|SteamVR)$'
 $script:GameExeSkip = '(?i)(launcher|crash|setup|unins|redist|dxsetup|easyanticheat|battleye|beservice|prereq|updater|helper|cefprocess|webhelper|overlay|bootstrap|install|anticheat|vanguard|dedicated|server)'
@@ -3827,6 +3830,7 @@ function Get-GameFromPath([string]$Path) {
     foreach ($r in $script:GameRoots) {
         $m = [regex]::Match($Path, $r[0], 'IgnoreCase')
         if ($m.Success) {
+            if ($r.Count -ge 3) { return @{ Name = $r[2]; Store = $r[1] } }   # nom fixe (Roblox…)
             $n = $m.Groups[1].Value
             if ($n -match $script:GameRootSkip) { return $null }
             return @{ Name = (Format-GameName $n); Store = $r[1] }
@@ -3947,6 +3951,7 @@ function New-GameRecord($S, $St, $Mins, [datetime]$End, $Ctx) {
     if ($S.NL) { $r.CpuL = [int][math]::Round($S.CpuL / $S.NL) }
     if ($S.NGpu) { $r.GpuL = [int][math]::Round($S.GpuL / $S.NGpu) }
     if ($S.NCore) { $r.Core = [int][math]::Round($S.Core / $S.NCore) }
+    $r.N = [int]$S.N
     if ($S.Fps -and $S.Fps.Count -ge 30) {
         $a = @($S.Fps); $mean = ($a | Measure-Object -Average).Average
         $var = 0.0; foreach ($x in $a) { $var += ($x - $mean) * ($x - $mean) }
@@ -3971,10 +3976,18 @@ function Test-FpsCap([double]$Med, [int]$Hz) {
 # Ce qui limite le jeu pendant la partie
 function Get-GameVerdict($R) {
     $gl = Get-RecValue $R 'GpuL'; $cv = Get-RecValue $R 'Cv'; $core = Get-RecValue $R 'Core'; $cl = Get-RecValue $R 'CpuL'
-    if ($null -ne (Get-RecValue $R 'Fps') -and $null -ne $cv -and $cv -le 0.035 -and ($null -eq $gl -or $gl -lt 85) -and (Test-FpsCap ([double](Get-RecValue $R 'Med')) ([int](Get-RecValue $R 'Hz')))) { return @{ Id = 'cap'; Cap = [int][math]::Round([double](Get-RecValue $R 'Med')) } }
+    $hasFps = $null -ne (Get-RecValue $R 'Fps')
+    $onCap = $hasFps -and $null -ne $cv -and (Test-FpsCap ([double](Get-RecValue $R 'Med')) ([int](Get-RecValue $R 'Hz')))
+    # FPS très stables sur une limite, ou carte graphique peu utilisée avec des FPS posés sur une limite courante
+    if ($onCap -and ($null -eq $gl -or $gl -lt 85) -and ($cv -le 0.035 -or ($null -ne $gl -and $gl -lt 70 -and $cv -le 0.08))) { return @{ Id = 'cap'; Cap = [int][math]::Round([double](Get-RecValue $R 'Med')) } }
     if ($null -eq $gl) { return @{ Id = '' } }
+    # Pas assez de mesures pendant qu'on jouait vraiment (jeu au premier plan) : pas de conclusion plutôt qu'une conclusion fausse
+    $n = Get-RecValue $R 'N'; if ($null -ne $n -and [int]$n -lt 60) { return @{ Id = '' } }
     if ($gl -ge 85) { return @{ Id = 'gpu' } }
-    if (($null -ne $core -and $core -ge 85) -or ($null -ne $cl -and $cl -ge 80) -or $gl -lt 70) { return @{ Id = 'cpu' } }
+    # Processeur vraiment saturé ET carte graphique qui attend (sinon, on n'accuse pas le processeur)
+    if (($null -ne $core -and $core -ge 90 -and $gl -lt 75) -or ($null -ne $cl -and $cl -ge 80 -and $gl -lt 85)) { return @{ Id = 'cpu' } }
+    # Ni l'un ni l'autre à fond : c'est le jeu qui fixe le rythme (moteur sur 1-2 cœurs, limite d'images…)
+    if ($gl -lt 70) { return @{ Id = 'engine' } }
     return @{ Id = 'mixed' }
 }
 function Get-GameFlags($R) {
@@ -3999,6 +4012,7 @@ function Get-VerdictLabel($R) {
     switch ("$(Get-RecValue $R 'Verdict')") {
         'gpu' { return 'limité par la carte graphique' }
         'cpu' { return 'limité par le processeur' }
+        'engine' { return 'limité par le jeu lui-même' }
         'cap' { return ("plafonné à {0} FPS" -f (Get-RecValue $R 'Cap')) }
         'mixed' { return 'processeur et carte graphique équilibrés' }
     }
@@ -4026,6 +4040,8 @@ function Read-GameFile([string]$Key) {
         $g = ConvertTo-Hash ([IO.File]::ReadAllText($f, [Text.Encoding]::UTF8) | ConvertFrom-Json)
         if ($g -isnot [hashtable]) { return $null }
         $g.Sessions = @($g.Sessions | Where-Object { $_ -is [hashtable] })
+        # Verdict recalculé à chaque lecture : une analyse améliorée s'applique aussi aux anciennes parties
+        foreach ($x in $g.Sessions) { try { $v = Get-GameVerdict $x; $x.Verdict = $v.Id; if ($v.Cap) { $x.Cap = $v.Cap } else { $x.Remove('Cap') } } catch {} }
         if (-not $g.Key) { $g.Key = $Key }
         return $g
     } catch { Write-Bug -Context "Fiche du jeu $Key" -ErrorRecord $_ -Type 'erreur'; return $null }
@@ -4061,7 +4077,12 @@ function Get-GameList {
 function Get-GameAdvice($R) {
     $out = New-Object System.Collections.ArrayList
     $gl = Get-RecValue $R 'GpuL'; $hz = [int](Get-RecValue $R 'Hz'); $mx = [int](Get-RecValue $R 'MaxHz')
-    switch ("$(Get-RecValue $R 'Verdict')") {
+    $fps = Get-RecValue $R 'Fps'; $vd = "$(Get-RecValue $R 'Verdict')"
+    # Plus d'images que l'écran n'en affiche : rien à gagner côté PC
+    if ($null -ne $fps -and $hz -gt 0 -and [double]$fps -ge $hz * 0.97 -and $vd -in 'cpu', 'engine', 'mixed') {
+        [void]$out.Add(@{ C = '#4ADE80'; T = ("Déjà plus de FPS que ton écran n'en affiche"); D = ("{0} FPS en moyenne pour un écran à {1} Hz : l'écran ne montre que {1} images par seconde, le reste ne se voit pas. Rien à améliorer côté PC pour ce jeu." -f [int][math]::Round([double]$fps), $hz) })
+    }
+    switch ($vd) {
         'gpu' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Limité par la carte graphique : c''est normal'; D = ("Ta carte graphique tourne à fond ({0} % en moyenne) : rien n'est gâché, c'est le cas idéal. Pour gagner des FPS : active DLSS, FSR ou XeSS en mode « Qualité », ou baisse les réglages les plus lourds (ombres, nuages, ray tracing). Un pilote graphique à jour aide aussi." -f $gl); B = 'Vérifier mon pilote graphique'; Ui = 'drivers' }) }
         'cpu' { [void]$out.Add(@{ C = '#FFB547'; T = 'Limité par le processeur'; D = ("La carte graphique attend le processeur : elle n'est utilisée qu'à {0} %. Ferme ce qui tourne en fond pendant que tu joues (navigateur, enregistrement, logiciels de LED…) et vérifie le mode performances. Bonne nouvelle : tu peux monter la qualité graphique, ça ne coûtera presque pas de FPS. Certains jeux (stratégie, MMO, simulation) sont limités par le processeur quoi qu'il arrive." -f $gl); B = 'Voir ce qui tourne en fond'; Ui = 'bgitems'; B2 = 'Optimisations'; Ui2 = 'page-perf' }) }
         'cap' {
@@ -4070,8 +4091,12 @@ function Get-GameAdvice($R) {
             elseif ($hz -gt 0 -and $cap -lt $hz - 12) { [void]$out.Add(@{ C = '#FFB547'; T = ("Bridé à {0} FPS" -f $cap); D = ("Le jeu reste bloqué à {0} FPS alors que ton écran monte à {1} Hz. Dans les options du jeu, cherche « Limite d'images / Max FPS » ou « V-Sync » et monte la limite à {1} pour profiter de ton écran." -f $cap, $hz) }) }
             else { [void]$out.Add(@{ C = '#8B93A7'; T = ("Plafonné à {0} FPS" -f $cap); D = "Le jeu est limité par V-Sync ou une limite d'images : les FPS ne bougent presque pas. Si c'est voulu (moins de bruit et de chaleur), c'est très bien." }) }
         }
+        'engine' { [void]$out.Add(@{ C = '#8B93A7'; T = 'Limité par le jeu lui-même'; D = ("Ni ton processeur ni ta carte graphique (utilisée à {0} %) ne sont à fond : c'est le jeu qui fixe le rythme. Son moteur n'utilise souvent qu'un ou deux cœurs du processeur, ou il a une limite d'images dans ses options (« Max FPS », « Fréquence d'images maximale »). Très courant avec Roblox, Minecraft, les jeux compétitifs ou anciens : ce n'est pas un défaut du PC." -f $gl) }) }
         'mixed' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Bien équilibré'; D = "Ni le processeur ni la carte graphique ne bloquent franchement : le PC est bien réglé pour ce jeu." }) }
-        default { if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Analyse incomplète'; D = "Installe le module de températures (en bas de l'onglet Gaming) pour savoir ce qui limite ce jeu." }) } }
+        default {
+            if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "L'utilisation de la carte graphique n'a pas pu être lue : installe le module de températures (en bas de l'onglet Gaming) pour savoir ce qui limite ce jeu. AEROX préfère ne rien affirmer sans mesure." }) }
+            else { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "Pas assez de mesures pendant que le jeu était au premier plan pour conclure sans risque de se tromper. La prochaine partie le dira." }) }
+        }
     }
     $flags = @(Get-RecValue $R 'Flags')
     if ($flags -contains 'hot-gpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Carte graphique très chaude ({0} °C)" -f (Get-RecValue $R 'GpuT')); D = "Trop chaude, elle ralentit pour se protéger : moins de FPS. Dépoussière le PC (bombe d'air sec, PC éteint), dégage les grilles d'aération, et pour un portable pose-le sur une surface dure." }) }
@@ -4192,7 +4217,7 @@ function Set-GamingOption([string]$What) {
 # ---------------------------------------------------------------- Page Gaming : mes jeux
 function New-VerdictPill($R) {
     $id = "$(Get-RecValue $R 'Verdict')"
-    $t = switch ($id) { 'gpu' { @('carte graphique', '#9FE8B5', '#173326') } 'cpu' { @('processeur', '#FFD08A', '#3A2A12') } 'cap' { @(("plafonné {0}" -f (Get-RecValue $R 'Cap')), '#C3CAD9', '#232838') } 'mixed' { @('équilibré', '#9FE8B5', '#173326') } default { $null } }
+    $t = switch ($id) { 'gpu' { @('carte graphique', '#9FE8B5', '#173326') } 'cpu' { @('processeur', '#FFD08A', '#3A2A12') } 'cap' { @(("plafonné {0}" -f (Get-RecValue $R 'Cap')), '#C3CAD9', '#232838') } 'engine' { @('moteur du jeu', '#C3CAD9', '#232838') } 'mixed' { @('équilibré', '#9FE8B5', '#173326') } default { $null } }
     if (-not $t) { return $null }
     return (New-Pill $t[0] $t[1] $t[2])
 }
@@ -4366,6 +4391,13 @@ function Show-GameDialog([string]$Key) {
     $ref = $last
     $vs = @($ses | Select-Object -Last 5 | Where-Object { $_.Verdict } | Group-Object { $_.Verdict } | Sort-Object Count -Descending)
     if ($vs.Count -and $vs[0].Name -ne "$($last.Verdict)") { $ref = @($vs[0].Group)[-1] }
+    # Les mesures sur lesquelles repose le verdict, pour que chacun puisse vérifier
+    $ev = @()
+    if ($null -ne $ref.GpuL) { $ev += ("carte graphique {0} %" -f $ref.GpuL) }
+    if ($null -ne $ref.CpuL) { $ev += ("processeur {0} %" -f $ref.CpuL) }
+    if ($null -ne $ref.Core) { $ev += ("cœur le plus chargé {0} %" -f $ref.Core) }
+    if ($null -ne $ref.Fps -and $ref.Hz) { $ev += ("{0} FPS pour un écran à {1} Hz" -f [int][math]::Round([double]$ref.Fps), $ref.Hz) }
+    if ($ev.Count) { $t = New-Text ("Utilisation moyenne mesurée pendant la partie : " + ($ev -join ' · ')) 12 '#8B93A7'; $t.Margin = Th 0 0 0 8; Add-Child $sp $t }
     $adv = @(Get-GameAdvice $ref)
     if ($ref -ne $last) { foreach ($a in @(Get-GameAdvice $last)) { if ($a.T -notin @($adv | ForEach-Object { $_.T }) -and $a.C -ne '#4ADE80') { $adv += $a } } }
     foreach ($a in $adv) {
