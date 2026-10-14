@@ -127,6 +127,17 @@ function Invoke-SmokeActions {
     Smoke 'Mode performances' { Set-HighPerformance; Set-BalancedPower }
     Smoke 'Assistant stockage' { Enable-StorageSense; if (-not (Get-StorageSenseOn)) { throw 'pas activé' }; Disable-StorageSense }
     Smoke 'Puissance du processeur' { Set-CpuMaxState 90 }
+    Smoke 'Vérification après réparation' {
+        # Problème créé exprès (processeur bridé à 90 %), vérifié présent, réparé, puis vérifié réglé
+        $q = $null; while ($sync.Verify.TryDequeue([ref]$q)) {}
+        Test-IssueGone 'Performances' 'cpumax'; [void]$sync.Verify.TryDequeue([ref]$q)
+        if ($q -notlike 'cpumax|still|*') { throw "le problème créé exprès n'est pas détecté : $q" }
+        Set-CpuMaxState 100
+        Test-IssueGone 'Performances' 'cpumax'; [void]$sync.Verify.TryDequeue([ref]$q)
+        if ($q -notlike 'cpumax|gone|*') { throw "après réparation, le problème est encore vu : $q" }
+        Write-Host '        détecté avant, réglé après : OK'
+        Set-CpuMaxState 90   # remis pour tester ensuite l'annulation depuis l'historique
+    }
     Smoke 'Programme au démarrage' {
         $e = @(Get-StartupEntries | Where-Object { $_.Enabled }) | Select-Object -First 1
         if ($e) { Set-StartupApps -Disable @($e.Id); if (@(Get-StartupEntries | Where-Object { $_.Id -eq $e.Id -and -not $_.Enabled }).Count -ne 1) { throw "« $($e.Name) » toujours actif" } } else { Write-Host '        (aucun programme au démarrage)' }
