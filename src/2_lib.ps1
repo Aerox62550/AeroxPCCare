@@ -2267,6 +2267,19 @@ function Get-NvidiaLatest([string]$GpuName, [bool]$Laptop) {
     return @{ Version = "$($pick.Version)"; Date = $date; Url = "$($pick.DownloadURL)" }
 }
 
+# Versions des pilotes graphiques vues aux diagnostics précédents : si la version change, la personne vient de le mettre à jour
+# (souvent la dernière dispo pour une carte ancienne, même si elle a plus d'un an) : on n'insiste plus tant qu'elle ne change pas.
+function Test-GpuJustUpdated([string]$Name, [string]$Version) {
+    $f = Join-Path $AppInfo.LogDir 'pilotes_graphiques.txt'
+    $map = @{}
+    try { foreach ($l in @(Get-Content -LiteralPath $f -Encoding UTF8 -ErrorAction Stop)) { $p = $l.Split('|'); if ($p.Count -ge 3) { $map[$p[0]] = @{ V = $p[1]; Up = ($p[2] -eq '1') } } } } catch {}
+    $r = $map[$Name]
+    $up = $false
+    if ($r) { $up = $r.Up -or ($r.V -ne $Version); if ($r.V -ne $Version) { $r.V = $Version; $r.Up = $true } }
+    else { $map[$Name] = @{ V = $Version; Up = $false } }
+    try { [IO.File]::WriteAllLines($f, [string[]]@($map.Keys | ForEach-Object { "{0}|{1}|{2}" -f ($_ -replace '\|', '/'), $map[$_].V, $(if ($map[$_].Up) { '1' } else { '0' }) }), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+    return $up
+}
 function Get-GpuDrivers {
     $laptop = $false
     try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
@@ -2319,8 +2332,12 @@ function Test-Drivers {
             } else { Add-Ok ("Pilote NVIDIA à jour : {0}{1}" -f $o.Version, $(if ($o.Status -eq 'old') { " (la {0} vient de sortir{1})" -f $o.Latest.Version, $rel } else { '' })) }
             continue
         }
+        if ($o.Status -eq 'old' -and $o.Date -and (Test-GpuJustUpdated $o.Name $o.Version)) {
+            Add-Ok ("Pilote graphique mis à jour : {0} (version {1}, la plus récente proposée pour cette carte)" -f $o.Name, $o.Version)
+            continue
+        }
         if ($o.Status -eq 'old' -and $o.Date) {
-            $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
+            $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.", "Si l'outil officiel te dit que ton pilote est déjà le plus récent : ta carte n'a plus de mise à jour, clique sur « Ne plus signaler ».") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
             Add-Issue -Id ('gpu-' + ($o.Name -replace '[^A-Za-z0-9]', '')) -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
                 -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
                 -FixLabel $(if ($fix) { "Télécharger le pilote officiel" } else { "Vérifier les pilotes" }) -FixAction $fix -UiFix $(if ($fix) { '' } else { 'drivers' }) -OpenOnly:([bool]$fix) -Steps $steps
@@ -2333,7 +2350,7 @@ function Test-Drivers {
         Add-Issue -Id 'devices' -Sev 'warn' -Title "$($bad.Count) périphérique(s) ont un problème de pilote" -Detail $desc `
             -Cause "Windows n'a pas de pilote fonctionnel pour ces éléments (pilote manquant, abîmé ou incompatible)." -Effect "L'élément concerné peut ne pas marcher (son, Wi-Fi, Bluetooth, USB...)." `
             -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
-            -Steps @("Clique sur « Vérifier les pilotes » : AEROX cherche les pilotes proposés par Windows et tu choisis lesquels installer.", "Sinon, télécharge le pilote sur le site du fabricant de ton PC ou de ta carte mère.", "Pour voir le détail : clic droit sur Démarrer > Gestionnaire de périphériques.")
+            -Steps @("Clique sur « Vérifier les pilotes » : AEROX cherche les pilotes proposés par Windows et tu choisis lesquels installer.", "Si le problème revient après le redémarrage, Windows n'a pas le bon pilote : prends-le sur le site du fabricant de ton PC ou de ta carte mère (rubrique Support, avec le modèle exact).", "Pour voir le détail : clic droit sur Démarrer > Gestionnaire de périphériques.")
     } else { Add-Ok "Tous les périphériques ont un pilote qui fonctionne" }
 }
 
@@ -2511,6 +2528,32 @@ function Test-Temperatures {
             $issue = $true
         } else { Add-Ok "Carte graphique à $t °C, température normale" }
     }
+}
+
+# Vérification après une réparation : refait seulement le contrôle de la catégorie du problème
+function Get-DiagCheckFn([string]$Cat) {
+    $m = @{ 'Stockage' = 'Test-Storage'; 'Mémoire' = 'Test-Memory'; 'Système' = 'Test-SystemState'; 'Stabilité' = 'Test-Stability'; 'Mises à jour' = 'Test-Updates'
+            'Pilotes' = 'Test-Drivers'; 'Écrans' = 'Test-Display'; 'Sécurité' = 'Test-Security'; 'Réseau' = 'Test-Network'; 'Démarrage' = 'Test-Startup'; 'Logiciels' = 'Test-Bloatware'
+            'Santé du disque' = 'Test-DiskHealth'; 'Températures' = 'Test-Temperatures'; 'Performances' = 'Test-Performance'; 'En fond' = 'Test-BgItems'; 'Navigateurs' = 'Test-Browsers'; 'Batterie' = 'Test-Battery' }
+    if ($m.ContainsKey($Cat)) { return $m[$Cat] }
+    return ''
+}
+# Résultat dans $sync.Verify : "Id|gone" (réglé), "Id|still|nouveau détail" (toujours là) ou "Id|unknown"
+function Test-IssueGone([string]$Cat, [string]$Id) {
+    $res = 'unknown'; $detail = ''
+    $fn = Get-DiagCheckFn $Cat
+    if ($fn -and $Id) {
+        $script:Issues = New-Object System.Collections.ArrayList
+        $script:OkList = New-Object System.Collections.ArrayList
+        $script:IgnoredList = New-Object System.Collections.ArrayList
+        $script:CurrentCat = $Cat
+        try {
+            & $fn
+            $still = @($script:Issues | Where-Object { $_.Id -eq $Id }) | Select-Object -First 1
+            if ($still) { $res = 'still'; $detail = ("{0}{1}" -f $still.Title, $(if ($still.Detail) { " · $($still.Detail)" } else { '' })) -replace '\|', '/' } else { $res = 'gone' }
+        } catch {}
+    }
+    $sync.Verify.Enqueue(("{0}|{1}|{2}" -f $Id, $res, $detail))
 }
 
 function Invoke-Diagnostic {
@@ -3298,6 +3341,10 @@ function Get-DriverReport {
             $date = $null; try { $date = [datetime]$u.DriverVerDate } catch {}
             [void]$wu.Add(@{ Id = "$($u.Identity.UpdateID)"; Title = "$($u.Title)"; Class = $cls; Maker = "$($u.DriverManufacturer)"; Date = $date; Size = [double]$u.MaxDownloadSize; Display = ($cls -match '(?i)^display$') })
         }
+        # Déjà installés une fois par AEROX mais reproposés par Windows : le réinstaller ne change rien
+        $done = @{}
+        try { foreach ($l in @(Get-Content -LiteralPath (Join-Path $AppInfo.LogDir 'pilotes_installes.txt') -Encoding UTF8 -ErrorAction Stop)) { $p = $l.Split('|'); if ($p.Count -ge 2) { $done[$p[0]] = $p[1] } } } catch {}
+        foreach ($w in $wu) { if ($done.ContainsKey($w.Id)) { $w.Repeat = $true; $w.DoneAt = $done[$w.Id] } }
         $rep.Wu = $wu.ToArray()
         Log ("     {0} pilote(s) proposé(s)" -f $rep.Wu.Count)
     } catch {
@@ -3341,7 +3388,10 @@ function Install-DriverUpdates([string[]]$Ids) {
         if ($rc.ResultCode -eq 4 -or $rc.ResultCode -eq 5) {
             Add-TaskError -Title "Le pilote « $t » ne s'est pas installé" -Code ('0x{0:X8}' -f $rc.HResult) -Cause "Windows a refusé ce pilote (souvent : un pilote plus adapté est déjà en place, ou il faut redémarrer avant)." `
                 -Effect "Ce pilote reste dans son ancienne version. Le reste n'est pas touché." -Steps @("Redémarre le PC puis relance la vérification des pilotes.", "Si ça recommence, prends ce pilote sur le site du fabricant de ton PC ou de ta carte mère.")
-        } else { [void]$ok.Add($t); Log ("   ✔ Installé : {0}" -f $t) }
+        } else {
+            [void]$ok.Add($t); Log ("   ✔ Installé : {0}" -f $t)
+            try { [IO.File]::AppendAllText((Join-Path $AppInfo.LogDir 'pilotes_installes.txt'), ("{0}|{1}|{2}`r`n" -f $coll.Item($i).Identity.UpdateID, (Get-Date).ToString('s'), ($t -replace '\|', '/')), (New-Object System.Text.UTF8Encoding($false))) } catch {}
+        }
     }
     if ($ok.Count) {
         Add-Change -Kind 'info' -Title ("{0} pilote(s) installé(s) depuis Windows Update" -f $ok.Count) -Detail ((@($ok) -join ' · ') + ". Pour revenir en arrière : point de restauration créé juste avant (bouton « Restauration du système »).")

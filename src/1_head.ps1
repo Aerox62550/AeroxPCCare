@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '1.8.0'
+$AppVersion = '1.9.0'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -71,6 +71,7 @@ $AppInfo = [hashtable]::Synchronized(@{ Name = $AppName; Version = $AppVersion; 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{
     Queue      = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
+    Verify     = New-Object 'System.Collections.Concurrent.ConcurrentQueue[string]'
     Progress   = -1.0
     NeedReboot = $false
     Errors     = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))

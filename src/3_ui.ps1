@@ -468,7 +468,7 @@ function New-StatusDot([string]$State) {
 
 # ---------------------------------------------------------------- Cartes de problème (diagnostic + erreurs)
 function New-IssueCard($I, [switch]$IsError) {
-    $done = $I.Status -eq 'done'; $fixing = $I.Status -eq 'fixing'
+    $done = $I.Status -eq 'done'; $fixing = $I.Status -in 'fixing', 'verifying'
     $sev = if ($IsError) { 'crit' } else { $I.Sev }
     $card = New-CardBorder $(if (-not $done -and $sev -eq 'crit') { '#4A2229' } else { '#232838' })
     $card.Padding = Th 18 16 18 16; $card.Margin = Th 0 0 0 10
@@ -499,7 +499,7 @@ function New-IssueCard($I, [switch]$IsError) {
         if ($I.Effect) { Add-Child $sp (New-Rich 'Conséquence' $I.Effect '') }
         $acts = New-Object System.Windows.Controls.WrapPanel; $acts.Margin = Th 0 10 0 0
         $hint = $null
-        if ($fixing) { Add-Child $acts (New-Text "Réparation en cours…" 13 '#B9A8FF' 'SemiBold') }
+        if ($fixing) { Add-Child $acts (New-Text $(if ($I.Status -eq 'verifying') { "Vérification que c'est bien réglé…" } else { "Réparation en cours…" }) 13 '#B9A8FF' 'SemiBold') }
         else {
             if ($I.FixLabel) {
                 $b = New-Button $I.FixLabel 'FixBtn' @{ Kind = $(if ($IsError) { 'errfix' } else { 'fix' }); Issue = $I }; $b.Margin = Th 0 0 8 0; Add-Child $acts $b
@@ -518,6 +518,10 @@ function New-IssueCard($I, [switch]$IsError) {
             if (-not $IsError -and $I.Id -and $I.Cat -ne 'Sécurité') {
                 $bi = New-Button 'Ne plus signaler' 'TextBtn' @{ Kind = 'ignore'; Issue = $I } $false; $bi.Margin = Th 8 0 0 0; Add-Child $acts $bi
             }
+        }
+        if ($I.VerifyFailed -and -not $done -and -not $fixing) {
+            $vf = New-Text "⚠ La réparation automatique a été faite mais le problème est toujours là : suis les étapes « Voir comment faire », ou envoie un rapport de bug pour que ce soit amélioré." 12.5 '#FFB547'
+            $vf.Margin = Th 0 8 0 0; Add-Child $sp $vf
         }
         if ($acts.Children.Count) { Add-Child $sp $acts }
         if ($I.Steps -and $script:OpenSteps[$I.Title]) {
@@ -918,6 +922,37 @@ function Start-Background([string]$Code) {
     [void]$ps.BeginInvoke()
 }
 
+# ---------------------------------------------------------------- Vérification après chaque réparation
+# Le problème n'est marqué « réglé » que si le contrôle de sa catégorie ne le trouve plus.
+# (Pas pour les problèmes où l'on choisit soi-même quoi faire : programmes au démarrage, logiciels…)
+function Start-IssueCheck($I) {
+    if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
+    $I.VerifyAt = Get-Date
+    Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
+    return $true
+}
+function Receive-IssueChecks {
+    $line = $null; $changed = $false
+    while ($sync.Verify.TryDequeue([ref]$line)) {
+        $p = $line.Split('|', 3)
+        $i = @($script:Diag.Issues | Where-Object { $_.Id -eq $p[0] -and $_.Status -eq 'verifying' }) | Select-Object -First 1
+        if (-not $i) { continue }
+        $changed = $true
+        if ($p[1] -eq 'still') {
+            $i.Status = 'open'; $i.VerifyFailed = $true
+            Write-UiLog ("⚠ Vérifié : « {0} » est toujours là, la réparation n'a pas suffi. Regarde « Voir comment faire » ou envoie un rapport de bug." -f $i.Title)
+        } else {
+            $i.Status = 'done'
+            Write-UiLog $(if ($p[1] -eq 'gone') { "✅ Vérifié : « $($i.Title) » est réglé." } else { "✅ Corrigé : $($i.Title)" })
+        }
+    }
+    # Sécurité : une vérification sans réponse au bout de 3 minutes compte comme faite
+    if ($script:Diag) {
+        foreach ($i in @($script:Diag.Issues | Where-Object { $_.Status -eq 'verifying' -and $_.VerifyAt -and ((Get-Date) - $_.VerifyAt).TotalMinutes -ge 3 })) { $i.Status = 'done'; $changed = $true; Write-UiLog ("✅ Corrigé : " + $i.Title) }
+    }
+    if ($changed) { Update-DiagBadge; Update-HomeStats; if ($script:Cur -in 'diag', 'home') { Refresh-Page } }
+}
+
 # Une analyse arrêtée qui reste coincée dans un appel de Windows plus de 8 secondes : on rend la main tout de suite,
 # elle finit de s'arrêter toute seule en arrière-plan (elle ne fait que lire, rien n'est modifié)
 $script:Zombies = New-Object System.Collections.ArrayList
@@ -981,8 +1016,12 @@ function Complete-Job {
             $script:FixingIssue.Status = 'open'
             Write-UiLog ("→ Page ouverte pour « {0} ». Une fois fait, relance le diagnostic pour vérifier." -f $script:FixingIssue.Title)
         } else {
-            $script:FixingIssue.Status = $(if ($errs.Count) { 'open' } else { 'done' })
-            if (-not $errs.Count) { Write-UiLog ("✅ Corrigé : " + $script:FixingIssue.Title) }
+            $fi = $script:FixingIssue
+            $fi.VerifyFailed = $false
+            if ($errs.Count) { $fi.Status = 'open' }
+            elseif ($sync.NeedReboot) { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : {0} (effectif après le redémarrage)" -f $fi.Title) }
+            elseif (Start-IssueCheck $fi) { $fi.Status = 'verifying'; Write-UiLog ("🔎 Vérification : {0}…" -f $fi.Title) }
+            else { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : " + $fi.Title) }
         }
         $script:FixingIssue = $null
     }
@@ -1881,6 +1920,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '1.9.0' = @("Après chaque réparation, AEROX vérifie que le problème est vraiment réglé. Sinon, il te le dit et t'explique quoi faire.", "Pilotes : plus de boucle « mets à jour » quand tu as déjà installé la dernière version proposée pour ta carte, et un pilote que Windows repropose sans arrêt est signalé au lieu d'être réinstallé.")
     '1.8.0' = @("« Quoi de neuf » : cette fenêtre s'affiche après chaque mise à jour pour te montrer les nouveautés (onglet Aide pour la revoir).")
     '1.7.2' = @("« Annuler » marche maintenant à tout moment, même pendant le nettoyage approfondi.", "Le nettoyage de Windows ne peut plus bloquer AEROX : il affiche son avancement et s'arrête au bout de 10 minutes au plus.")
     '1.7.0' = @("Donne ton avis (onglet Aide) : une note et un petit commentaire, publiés sur la page du logiciel. Ça fait plaisir et ça aide d'autres personnes à lui faire confiance ⭐")
@@ -2898,7 +2938,8 @@ function Show-DriverDialog($Issue) {
         Add-Child $txt (New-Text $u.Title 13.5 '#FFFFFF' 'SemiBold')
         $meta = @(); if ($u.Maker) { $meta += $u.Maker }; if ($u.Class) { $meta += $u.Class }; if ($u.Date) { $meta += "pilote du " + (Format-Date $u.Date) }; if ($u.Size -gt 0) { $meta += (Format-Size $u.Size) }
         if ($meta.Count) { Add-Child $txt (New-Text ($meta -join '  ·  ') 12 '#8B93A7') }
-        $r = New-CheckRow $true $txt $null
+        if ($u.Repeat) { $rt = New-Text ("Déjà installé par AEROX le {0}, mais Windows le propose encore : le réinstaller ne changera rien (un pilote équivalent est souvent déjà en place)." -f (Format-Date $u.DoneAt)) 12 '#FFB547'; $rt.Margin = Th 0 3 0 0; Add-Child $txt $rt }
+        $r = New-CheckRow (-not $u.Repeat) $txt $null
         $r.Check.Add_Click({ & $script:CountDrv })
         Add-Child $list $r.Row
         [void]$script:DrvRows.Add(@{ U = $u; Check = $r.Check })
@@ -3760,6 +3801,7 @@ $timer.Add_Tick({
             if ($script:Job.Handle.IsCompleted) { Complete-Job }
             elseif ($script:Job.StopAt -and ((Get-Date) - $script:Job.StopAt).TotalSeconds -ge 8) { Abandon-Job }
         }
+        try { Receive-IssueChecks } catch { Write-Bug -Context 'Vérification après réparation' -ErrorRecord $_ }
         foreach ($z in @($script:Zombies | Where-Object { $_.Handle.IsCompleted })) { try { $z.PS.Dispose(); $z.RS.Close(); $z.RS.Dispose() } catch {}; [void]$script:Zombies.Remove($z) }
         if ($script:SysWaiting -and $sync.SysInfo) { $script:SysWaiting = $false; if ($script:Cur -eq 'system') { Refresh-Page } }
         if ($sync.UpdateInfo -and -not $script:UpdateShown) {

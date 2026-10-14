@@ -2,6 +2,13 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche (1.9.0) : fiabilité
+
+- Vérification après chaque réparation automatique : AEROX refait le contrôle de la catégorie en arrière-plan (« Vérification que c'est bien réglé… ») ; réglé → « ✅ Vérifié » ; toujours là → le problème reste ouvert avec un message « la réparation n'a pas suffi ». Pas de vérification quand un redémarrage est nécessaire, ni pour les choix faits par la personne (démarrage, logiciels…).
+- Pilote graphique AMD/Intel : si sa version change entre deux diagnostics (mise à jour faite), plus d'alerte « pilote ancien » tant qu'elle ne change pas (carte ancienne dont le dernier pilote a plus d'un an : la boucle chez le frère de Sam).
+- Pilotes Windows Update : un pilote déjà installé par AEROX et reproposé par Windows est signalé et décoché d'office (installer à nouveau ne change rien).
+- Test automatique : un problème créé exprès (processeur bridé) doit être détecté, réparé, puis vérifié réglé.
+
 ## Publié en 1.8.0 : « Quoi de neuf »
 
 - Après une mise à jour, au premier lancement : fenêtre « Quoi de neuf dans la X ? » avec les nouveautés depuis la version d'avant, en mots simples (rien au tout premier lancement). Revoir : onglet Aide > « Quoi de neuf ? ».
