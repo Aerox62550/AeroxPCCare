@@ -32,6 +32,8 @@ jobs:
     needs: construire
     runs-on: windows-latest
     timeout-minutes: 50
+    permissions:
+      contents: write   # uniquement pour ranger les captures d'écran sur la branche « captures »
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -106,3 +108,17 @@ jobs:
           $env:AEROX_SMOKE_PORTABLE = '1'
           & powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File "$p\AeroxPCCare_test.ps1"
           exit $LASTEXITCODE
+
+      - name: Captures d'écran (branche « captures »)
+        if: always()
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $d = 'C:\aerox\captures'
+          if (-not (Test-Path "$d\*.png")) { Write-Host 'Aucune capture'; exit 0 }
+          Set-Location $d
+          git init -q; git checkout -q -b captures
+          git add -A; git -c user.name=aerox-ci -c user.email=ci@aerox.local commit -q -m "Captures $env:GITHUB_SHA"
+          git push -q -f "https://x-access-token:$env:GH_TOKEN@github.com/$env:GITHUB_REPOSITORY.git" captures
+          Write-Host "Captures envoyées : $(@(Get-ChildItem *.png).Count)"
