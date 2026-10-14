@@ -103,7 +103,7 @@ Function CheckRunning
       Goto retry
     ${EndIf}
     ${If} $2 != ""
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." /SD IDCANCEL IDRETRY retry
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer.$\r$\n(S'il est caché près de l'horloge : clic droit sur son icône > Quitter.)" /SD IDCANCEL IDRETRY retry
       Abort
     ${EndIf}
 FunctionEnd
@@ -122,7 +122,7 @@ Function un.CheckRunning
       ${UnStrStr} $2 $1 "${OLDEXE}"
     ${EndIf}
     ${If} $2 != ""
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer." /SD IDCANCEL IDRETRY retry
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${APPNAME} est ouvert.$\r$\n$\r$\nFerme-le, puis clique sur Réessayer.$\r$\n(S'il est caché près de l'horloge : clic droit sur son icône > Quitter.)" /SD IDCANCEL IDRETRY retry
       Abort
     ${EndIf}
 FunctionEnd
@@ -236,6 +236,9 @@ Section "Uninstall"
   RMDir "$INSTDIR\maj"
   RMDir "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTKEY}"
+  ; Lancement avec Windows en mode discret (option de l'onglet Gaming)
+  nsExec::Exec 'schtasks.exe /Delete /TN "AEROX PC Care (mode discret)" /F'
+  Pop $0
 
   ; Journaux, réglages et outils téléchargés (températures, FPS) : au choix
   SetShellVarContext current

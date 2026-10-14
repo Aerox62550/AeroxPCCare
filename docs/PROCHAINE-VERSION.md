@@ -2,6 +2,17 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.0.0 : Gaming, carnet de performances par jeu (version 1)
+
+- Onglet « Moniteur » renommé « Gaming ». En haut : partie en cours / dernière partie, « Mes jeux » (une ligne par jeu : FPS de la dernière partie, verdict, nombre de parties), « Suivi automatique », puis les mesures en direct, les composants et l'overlay comme avant.
+- Détection automatique toutes les 3 s du programme au premier plan : jeux des boutiques reconnus par leur dossier (steamapps\common, Epic Games, Riot Games, _retail_ de Battle.net, EA, Ubisoft, GOG, XboxGames, Rockstar) ; autre programme en plein écran = jeu seulement s'il affiche au moins 20 images/s pendant quelques secondes (navigateurs, lecteurs vidéo, bureautique, Discord, OBS… exclus). Lanceurs, anti-triche, rapports de plantage jamais pris pour des jeux.
+- Mesure de la partie : toutes les images du jeu via PresentMon (FPS moyen, 1 % low, 0,1 % low, saccades = image > 2,5× la moyenne récente et > +20 ms, FPS minute par minute) + une mesure par seconde des capteurs (températures max, utilisation moyenne CPU / GPU / cœur le plus chargé, VRAM et RAM max), seulement quand le jeu est au premier plan.
+- Fin de partie (jeu fermé, au moins 3 minutes) : résumé d'une ligne dans le journal + notification Windows (clic = fiche du jeu). Fichier par jeu dans « jeux » (200 dernières parties), avec pilote graphique et fréquence de l'écran notés pour la version 2.
+- Verdict : plafonné (FPS très stables sur une limite courante / V-Sync / Reflex), carte graphique (≥ 85 %), processeur (cœur max ≥ 85 % ou CPU ≥ 80 % ou GPU < 70 %), équilibré. Alertes : surchauffe (seuils de l'overlay), VRAM ≥ 95 %, RAM ≥ 90 %, saccades ≥ 30/h, écran sous sa fréquence max.
+- Fiche du jeu : chiffres clés, courbe partie après partie (FPS + 1 % low), dernière partie minute par minute, « ce qui limite ce jeu et quoi faire » (boutons vers les fonctions existantes : pilotes, programmes en fond, « Pourquoi mon PC rame », Optimisations, fréquence de l'écran), meilleure / pire partie et pourquoi, 10 dernières parties, « Ce n'est pas un jeu », « Effacer l'historique ».
+- Mode discret (options, désactivées par défaut) : la croix cache AEROX dans la zone de notification (clic droit > Quitter) ; lancement avec Windows par une tâche planifiée « AEROX PC Care (mode discret) » (droits admin sans demande, démarre 45 s après l'ouverture de session, caché). Pas en version portable ni avec le mot de passe d'un autre compte. Relancer AEROX (raccourci) réaffiche la fenêtre.
+- Version 2 à faire : objectifs de FPS par jeu, tendances, alertes utiles (FPS en baisse depuis un pilote, GPU chaud toute la semaine, Discord gourmand), effet des changements entre deux parties, contrôles XMP/EXPO et carte graphique intégrée sur portable dans le diagnostic « Performances ».
+
 ## Publié en 1.9.0 : fiabilité
 
 - Vérification après chaque réparation automatique : AEROX refait le contrôle de la catégorie en arrière-plan (« Vérification que c'est bien réglé… ») ; réglé → « ✅ Vérifié » ; toujours là → le problème reste ouvert avec un message « la réparation n'a pas suffi ». Pas de vérification quand un redémarrage est nécessaire, ni pour les choix faits par la personne (démarrage, logiciels…).

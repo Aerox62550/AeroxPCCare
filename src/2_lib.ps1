@@ -2223,6 +2223,17 @@ function Get-Displays {
     }
     return $list.ToArray()
 }
+# Contexte d'une partie (carnet de jeu) : carte graphique, version du pilote, fréquence de l'écran
+function Get-GameContext {
+    $c = @{ Gpu = ''; Driver = ''; Hz = 0; MaxHz = 0 }
+    try {
+        $g = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox|parallels|qxl|red hat|citrix|dameware|mirage' })
+        $best = $g | Sort-Object @{ E = { if ($_.Name -match '(?i)nvidia|radeon rx|radeon pro|arc ') { 0 } else { 1 } } }, @{ E = { - [double]$_.AdapterRAM } } | Select-Object -First 1
+        if ($best) { $c.Gpu = "$($best.Name)".Trim(); $c.Driver = "$($best.DriverVersion)" }
+    } catch {}
+    try { $d = @(Get-Displays) | Where-Object { $_.Primary } | Select-Object -First 1; if ($d) { $c.Hz = [int]$d.Hz; $c.MaxHz = [int]$d.MaxHz } } catch {}
+    $sync.GameCtx = $c
+}
 function Test-DisplayHzLow($d) { return ($d.MaxHz -ge 100 -and ($d.MaxHz - $d.Hz) -ge 20) }
 function Test-Display {
     foreach ($d in @(Get-Displays)) {

@@ -120,7 +120,7 @@ Set-SplashStep 66 'Création de l''interface…'
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE945;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Performances"/></StackPanel>
           </RadioButton>
           <RadioButton x:Name="NavMonitor" Style="{StaticResource NavBtn}" GroupName="nav">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Moniteur"/></StackPanel>
+            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Gaming"/></StackPanel>
           </RadioButton>
           <RadioButton x:Name="NavSystem" Style="{StaticResource NavBtn}" GroupName="nav">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7F4;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Mon PC (BIOS)"/></StackPanel>
@@ -236,6 +236,7 @@ $script:Settings = @{
     PostOptimize = $false
     InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''; LastSeenVersion = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
+    Gaming = @{ Track = $true; Tray = $false; TrayTip = $false; Ignore = @() }
 }
 function ConvertTo-Hash($o) {
     if ($null -eq $o) { return $null }
@@ -249,6 +250,7 @@ function Load-Settings {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
             foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
+            if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
         }
@@ -258,6 +260,7 @@ function Load-Settings {
     $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_ -is [hashtable] -and $_.Id })
     $script:Settings.SpeedHistory = @($script:Settings.SpeedHistory | Where-Object { $_ -is [hashtable] })
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
+    $script:Settings.Gaming.Ignore = @($script:Settings.Gaming.Ignore | Where-Object { $_ })
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
@@ -1228,6 +1231,10 @@ function Invoke-UiCommand($T) {
                             [void](Start-AeroxTask 'Install-PawnIO' 'Installation du pilote PawnIO' 'tools')
                         }
                     }
+                    'game-track' { Set-GamingOption 'track' }
+                    'game-tray' { Set-GamingOption 'tray' }
+                    'game-autostart' { Set-GamingOption 'autostart' }
+                    'game-sheet' { Show-GameDialog $T.Def.Key }
                     'ov-toggle' { Show-Overlay (-not ($script:Ov -and $script:Ov.IsVisible)); Refresh-Page }
                     'ov-edit' { Set-OverlayEdit (-not $script:OvEdit); Refresh-Page }
                     'ov-corner' { Set-OverlayCorner $T.Def.Corner }
@@ -1385,6 +1392,7 @@ function Complete-SelfUpdate {
         Start-Process -FilePath $setup -ArgumentList '/S', '/UPDATE'
         Write-UiLog "Installation de la nouvelle version..."
         $script:SelfUpdating = $true
+        $script:QuitNow = $true   # même en mode discret, AEROX doit vraiment se fermer pour se mettre à jour
         $window.Close()
     } catch {
         Write-Bug -Context 'Mise à jour du logiciel' -ErrorRecord $_
@@ -1920,6 +1928,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.0.0' = @("Nouvel onglet Gaming (à la place de « Moniteur ») : AEROX reconnaît tes jeux tout seul et note chaque partie (FPS moyens, 1 % low, saccades, températures).", "À la fin de la partie : un résumé en une ligne (notification + dans AEROX), et une fiche par jeu avec l'évolution partie après partie, ce qui limite le jeu (processeur, carte graphique, limite de FPS) et quoi faire.", "Option : garder AEROX près de l'horloge quand tu le fermes, et le lancer avec Windows en mode discret pour ne rater aucune partie. Rien n'est injecté dans les jeux : aucun risque avec les anti-triche.")
     '1.9.0' = @("Après chaque réparation, AEROX vérifie que le problème est vraiment réglé. Sinon, il te le dit et t'explique quoi faire.", "Pilotes : plus de boucle « mets à jour » quand tu as déjà installé la dernière version proposée pour ta carte, et un pilote que Windows repropose sans arrêt est signalé au lieu d'être réinstallé.")
     '1.8.0' = @("« Quoi de neuf » : cette fenêtre s'affiche après chaque mise à jour pour te montrer les nouveautés (onglet Aide pour la revoir).")
     '1.7.2' = @("« Annuler » marche maintenant à tout moment, même pendant le nettoyage approfondi.", "Le nettoyage de Windows ne peut plus bloquer AEROX : il affiche son avancement et s'arrête au bout de 10 minutes au plus.")
@@ -3369,6 +3378,10 @@ while (-not $sync.SensStop) {
                 if ($t -eq 'Cpu') {
                     $x = Pick $sens 'Temperature' @('Core (Tctl/Tdie)', 'CPU Package', 'Package', 'Core (Tdie)', 'Core (Tctl)', 'Core Average', 'Core Max'); if ($x) { $v['cpu.temp'] = $x }
                     $x = Pick $sens 'Load' @('CPU Total'); if ($null -ne $x) { $v['cpu.load'] = $x }
+                    # Cœur le plus chargé : un jeu limité par le processeur sature souvent 1 ou 2 cœurs, pas tout le processeur
+                    $x = Pick $sens 'Load' @('CPU Core Max')
+                    if ($null -eq $x) { $cm = @($sens | Where-Object { $_.SensorType -eq 'Load' -and $_.Name -match '^CPU Core #\d+' } | ForEach-Object { [double]$_.Value }); if ($cm.Count) { $x = ($cm | Measure-Object -Maximum).Maximum } }
+                    if ($null -ne $x) { $v['cpu.coremax'] = $x }
                     $x = Pick $sens 'Power' @('Package', 'CPU Package'); if ($x) { $v['cpu.power'] = $x }
                     $cl = @($sens | Where-Object { $_.SensorType -eq 'Clock' -and $_.Name -match '^Core #\d+' -and $_.Value })
                     if ($cl.Count) { $v['cpu.clock'] = ($cl | ForEach-Object { [double]$_.Value } | Measure-Object -Average).Average }
@@ -3444,7 +3457,7 @@ function Start-FpsCounter {
 function Stop-FpsCounter { if ($script:Fps) { try { $script:Fps.Stop() } catch {} } }
 function Stop-Monitoring { Stop-FpsCounter; Stop-Sensors }
 
-function Test-MonitorNeeded { return ($script:Cur -eq 'monitor' -or ($script:Ov -and $script:Ov.IsVisible)) }
+function Test-MonitorNeeded { return (($script:Cur -eq 'monitor' -and -not $script:InTray) -or ($script:Ov -and $script:Ov.IsVisible) -or $script:GameSess -or $script:GameProbe) }
 
 # Collecte : capteurs + FPS du jeu au premier plan
 function Update-LiveData {
@@ -3635,6 +3648,10 @@ function Update-MonitorUi {
     $u.Fps.Big.Text = Format-Val $v['fps'] '{0:N0}' ''
     $u.Fps.L1.Text = "1 % low " + (Format-Val $v['low'] '{0:N0}' '')
     $u.Fps.L2.Text = "Temps d'image " + (Format-Val $v['frametime'] '{0:N1}' ' ms')
+    if ($u.Sess -and $script:GameSess) {
+        $r = $null; if ($script:Fps -and $script:Fps.Running) { $r = $script:Fps.Get([int]$script:GameSess.Pid) }
+        $u.Sess.Text = (Format-GameTime ((Get-Date) - $script:GameSess.Start).TotalMinutes) + $(if ($r) { "  ·  {0:N0} FPS en ce moment" -f $r[0] } else { '' })
+    }
 }
 
 function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, [string]$Ui) {
@@ -3652,9 +3669,11 @@ function Build-MonitorPage {
     Start-Sensors; Start-FpsCounter
     $script:ToolSt = Get-ToolStatus
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Moniteur" "Températures, utilisation et FPS en direct. L'overlay affiche ces infos par-dessus tes jeux, à l'endroit et à la taille que tu veux."
-    $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 4
+    Build-Header $sp "Gaming" "AEROX reconnaît tes jeux tout seul et note chaque partie : FPS, saccades, températures, et ce qui limite le jeu. Plus les mesures en direct et l'overlay par-dessus tes jeux."
     $u = @{ Cpu = (New-MonTile 'PROCESSEUR'); Gpu = (New-MonTile 'CARTE GRAPHIQUE'); Ram = (New-MonTile 'MÉMOIRE'); Fps = (New-MonTile 'FPS') }
+    try { Add-GamingSections $sp $u } catch { Write-Bug -Context 'Gaming : mes jeux' -ErrorRecord $_ }
+    Add-Child $sp (New-Section 'En direct')
+    $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 4
     foreach ($k in 'Cpu', 'Gpu', 'Ram', 'Fps') { Add-Child $ug $u[$k].Box }
     Add-Child $sp $ug
     if ($sync.SensError) { $e = New-Text ("Capteurs : " + $sync.SensError) 12 '#FFB547'; $e.Margin = Th 0 0 0 8; Add-Child $sp $e }
@@ -3739,18 +3758,688 @@ function Build-MonitorPage {
 # Appelé par la boucle de l'interface (toutes les 150 ms)
 function Invoke-MonitorTick {
     $hot = [AeroxHotkey]::Presses
-    if ($hot -ne $script:OvHotPrev) { $script:OvHotPrev = $hot; Show-Overlay (-not ($script:Ov -and $script:Ov.IsVisible)); if ($script:Cur -eq 'monitor') { Refresh-Page } }
+    if ($hot -ne $script:OvHotPrev) { $script:OvHotPrev = $hot; Show-Overlay (-not ($script:Ov -and $script:Ov.IsVisible)); if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page } }
     $script:TickN++
+    if ($script:TickN % 20 -eq 0) { try { Invoke-GameWatch } catch { Write-Bug -Context 'Gaming : détection du jeu' -ErrorRecord $_ } }
     if ($script:TickN % 6 -ne 0) { return }
     if (Test-MonitorNeeded) {
         $script:MonIdle = 0
         Update-LiveData
         Update-OverheatAlert
-        if ($script:Cur -eq 'monitor') { Update-MonitorUi }
+        if ($script:GameSess) { try { Add-GameSample } catch { Write-Bug -Context 'Gaming : mesure de la partie' -ErrorRecord $_ } }
+        if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Update-MonitorUi }
         Update-OverlayValues
     } else {
         $script:MonIdle++
         if ($script:MonIdle -eq 20 -and ($script:SensPS -or ($script:Fps -and $script:Fps.Running))) { Stop-Monitoring }
+    }
+}
+
+# =====================================================================
+#  GAMING : carnet de performances par jeu
+#  Le jeu est détecté tout seul, chaque partie est mesurée en silence (PresentMon + capteurs,
+#  rien n'est injecté dans le jeu), puis résumée et rangée dans la fiche du jeu.
+# =====================================================================
+$script:GameSess = $null; $script:GameProbe = $null; $script:GameSkip = @{}
+$script:GameDir = Join-Path $LogDir 'jeux'
+$script:GameMinMinutes = 3
+$script:LastGame = $null
+$script:PmCache = @{ Path = $null; At = [datetime]::MinValue }
+$script:Tray = $null; $script:InTray = $false; $script:QuitNow = $false; $script:BalloonKey = ''; $script:DeferredStart = $false
+$script:AutoTaskName = 'AEROX PC Care (mode discret)'
+# Dossiers des boutiques de jeux : le nom du jeu est le dossier juste après
+$script:GameRoots = @(
+    @('\\steamapps\\common\\([^\\]+)\\', 'Steam'),
+    @('\\Epic Games\\([^\\]+)\\', 'Epic Games'),
+    @('\\Riot Games\\([^\\]+)\\', 'Riot'),
+    @('\\(?:EA Games|Origin Games|Electronic Arts)\\([^\\]+)\\', 'EA'),
+    @('\\Ubisoft Game Launcher\\games\\([^\\]+)\\', 'Ubisoft'),
+    @('\\GOG Galaxy\\Games\\([^\\]+)\\', 'GOG'),
+    @('\\GOG Games\\([^\\]+)\\', 'GOG'),
+    @('\\XboxGames\\([^\\]+)\\', 'Xbox'),
+    @('\\Rockstar Games\\([^\\]+)\\', 'Rockstar'),
+    @('\\([^\\]+)\\_(?:retail|classic|classic_era|ptr|beta)_\\', 'Battle.net')
+)
+$script:GameRootSkip = '(?i)^(Launcher|Riot Client|Epic Online Services|DirectXRedist|DirectX|Steamworks Shared|Social Club|Rockstar Games Launcher|EA Desktop|EA app|Battle\.net|Ubisoft Connect|GalaxyClient|Steam|Common Redist|_CommonRedist|Steam Controller Configs|SteamVR)$'
+$script:GameExeSkip = '(?i)(launcher|crash|setup|unins|redist|dxsetup|easyanticheat|battleye|beservice|prereq|updater|helper|cefprocess|webhelper|overlay|bootstrap|install|anticheat|vanguard|dedicated|server)'
+# Programmes souvent en plein écran qui ne sont pas des jeux (vidéo, navigateur, bureautique, diffusion…)
+$script:NotGames = '(?i)^(chrome|msedge|firefox|opera|opera_gx|brave|vivaldi|iexplore|arc|vlc|mpc-hc|mpc-hc64|mpc-be|mpc-be64|potplayer|potplayer64|potplayermini|potplayermini64|wmplayer|video\.ui|microsoft\.media\.player|kodi|plex|plex media player|spotify|netflix|powerpnt|winword|excel|onenote|acrord32|acrobat|obs64|obs32|obs|discord|teams|ms-teams|zoom|slack|skype|mstsc|anydesk|teamviewer|parsecd|rustdesk|explorer|applicationframehost|searchhost|searchapp|startmenuexperiencehost|shellexperiencehost|lockapp|steam|steamwebhelper|epicgameslauncher|battle\.net|riotclientservices|riotclientux|eadesktop|upc|galaxyclient|nvidia app|nvcontainer|nvidia overlay|amdrsserv|radeonsoftware|photoshop|lightroom|premiere|afterfx|resolve|blender|unity|unrealeditor|code|devenv|powershell|pwsh|windowsterminal|cmd|conhost|taskmgr|aeroxpccare|presentmon.*)$'
+$script:GameClassSkip = '^(Progman|WorkerW|Shell_TrayWnd|Shell_SecondaryTrayWnd|Windows\.UI\.Core\.CoreWindow|ApplicationFrameWindow|ConsoleWindowClass|CASCADIA_HOSTING_WINDOW_CLASS|XamlExplorerHostIslandWindow)$'
+
+function Get-PresentMonCached {
+    $age = ((Get-Date) - $script:PmCache.At).TotalSeconds
+    if (($script:PmCache.Path -and $age -lt 600) -or (-not $script:PmCache.Path -and $age -lt 60)) { return $script:PmCache.Path }
+    $script:PmCache = @{ Path = (Find-PresentMon); At = Get-Date }
+    return $script:PmCache.Path
+}
+function Get-GameKey([string]$Name) {
+    $k = ($Name.ToLowerInvariant() -replace '[^\p{L}\p{Nd}]+', '-').Trim('-')
+    if ($k.Length -gt 60) { $k = $k.Substring(0, 60).Trim('-') }
+    if (-not $k) { $k = 'jeu' }
+    return $k
+}
+function Format-GameName([string]$Name) { return (($Name -replace '[_]+', ' ' -replace '[®™©]', '' -replace '\s+', ' ').Trim()) }
+# Jeu installé par une boutique (Steam, Epic, Riot, Battle.net…) : @{ Name; Store } ou $null
+function Get-GameFromPath([string]$Path) {
+    if (-not $Path) { return $null }
+    $exe = [IO.Path]::GetFileNameWithoutExtension($Path)
+    if ($exe -match $script:GameExeSkip) { return $null }
+    foreach ($r in $script:GameRoots) {
+        $m = [regex]::Match($Path, $r[0], 'IgnoreCase')
+        if ($m.Success) {
+            $n = $m.Groups[1].Value
+            if ($n -match $script:GameRootSkip) { return $null }
+            return @{ Name = (Format-GameName $n); Store = $r[1] }
+        }
+    }
+    return $null
+}
+# Autre jeu : nom du produit inscrit dans le programme, sinon son dossier
+function Get-GameNameGeneric([string]$Path) {
+    if ([IO.Path]::GetFileNameWithoutExtension($Path) -match '(?i)^javaw?$') { return 'Minecraft (Java)' }
+    try {
+        $vi = [Diagnostics.FileVersionInfo]::GetVersionInfo($Path)
+        foreach ($n in @($vi.ProductName, $vi.FileDescription)) {
+            $n = Format-GameName "$n"
+            if ($n -and $n.Length -le 60 -and $n -notmatch '(?i)^(unreal|unity|game|launcher|bootstrap|application|win64|shipping|client|direct3d|opengl|vulkan)\b') { return $n }
+        }
+    } catch {}
+    $d = Split-Path $Path -Parent
+    while ($d -and (Split-Path $d -Leaf) -match '(?i)^(bin|bin64|binaries|win64|win32|x64|x86|retail|game|client|shipping|live|release)$') { $d = Split-Path $d -Parent }
+    if ($d -and (Split-Path $d -Leaf) -notmatch '(?i)^(program files.*|games|jeux|[a-z]:\\?)$') { return (Format-GameName (Split-Path $d -Leaf)) }
+    return (Format-GameName ([IO.Path]::GetFileNameWithoutExtension($Path)))
+}
+
+# Toutes les 3 secondes : un jeu au premier plan ? la partie en cours est-elle finie ?
+function Invoke-GameWatch {
+    $g = $script:Settings.Gaming
+    if (-not $g.Track) { if ($script:GameSess) { Stop-GameSession }; $script:GameProbe = $null; return }
+    if ($script:GameSess) {
+        if (-not [AeroxGame]::Alive([int]$script:GameSess.Pid, [string]$script:GameSess.Path)) { Stop-GameSession }
+        return
+    }
+    if ($script:GameProbe) {
+        $p = $script:GameProbe
+        if (-not [AeroxGame]::Alive([int]$p.Pid, [string]$p.Path)) { $script:GameProbe = $null; return }
+        $r = $null; if ($script:Fps -and $script:Fps.Running) { $r = $script:Fps.Get([int]$p.Pid) }
+        if ($r -and $r[0] -ge 20) { $p.Hits++; if ($p.Hits -ge 3) { $script:GameProbe = $null; Start-GameSession $p.Pid $p.Path $p.Name 'plein écran' } ; return }
+        if (((Get-Date) - $p.Since).TotalSeconds -ge 20) { $script:GameSkip["$($p.Pid)|$($p.Path)"] = $true; $script:GameProbe = $null }
+        return
+    }
+    $f = ("$([AeroxGame]::Foreground())").Split('|')
+    if ($f.Count -lt 4) { return }
+    $gpid = 0; [void][int]::TryParse($f[0], [ref]$gpid); $path = $f[1]
+    if (-not $gpid -or $gpid -eq $PID -or -not $path) { return }
+    $sk = "$gpid|$path"
+    if ($script:GameSkip.ContainsKey($sk)) { return }
+    if ($script:GameSkip.Count -gt 500) { $script:GameSkip.Clear() }
+    if (@($g.Ignore) -contains $path.ToLowerInvariant()) { $script:GameSkip[$sk] = $true; return }
+    $id = Get-GameFromPath $path
+    if ($id) { Start-GameSession $gpid $path $id.Name $id.Store; return }
+    # Autre programme en plein écran : on vérifie d'abord qu'il affiche des images comme un jeu
+    if ($f[2] -ne '1' -or $f[3] -match $script:GameClassSkip) { return }
+    $exe = [IO.Path]::GetFileNameWithoutExtension($path)
+    if ($exe -match $script:NotGames -or $exe -match $script:GameExeSkip -or $path -like "$env:windir\*") { $script:GameSkip[$sk] = $true; return }
+    if (-not (Get-PresentMonCached)) { return }
+    Start-FpsCounter
+    $script:GameProbe = @{ Pid = $gpid; Path = $path; Name = (Get-GameNameGeneric $path); Since = Get-Date; Hits = 0 }
+}
+
+function Start-GameSession([int]$GamePid, [string]$Path, [string]$Name, [string]$Store) {
+    $script:GameSess = @{ Pid = $GamePid; Path = $Path; Name = $Name; Store = $Store; Key = (Get-GameKey $Name); Start = Get-Date
+        N = 0; Fps = (New-Object 'System.Collections.Generic.List[double]'); CpuL = 0.0; GpuL = 0.0; Core = 0.0; NL = 0; NGpu = 0; NCore = 0
+        CpuT = $null; GpuT = $null; GpuHot = $null; Vram = $null; Ram = $null }
+    $sync.GameCtx = $null
+    try { Start-Background 'Get-GameContext' } catch {}
+    Start-Sensors
+    if (Get-PresentMonCached) { Start-FpsCounter; if ($script:Fps) { $script:Fps.BeginSession($GamePid) } }
+    Write-UiLog ("🎮 Partie détectée : {0}. AEROX note les performances en silence (rien n'est injecté dans le jeu)." -f $Name)
+    if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page }
+}
+
+# Une mesure par seconde pendant la partie
+function Add-GameSample {
+    $s = $script:GameSess; if (-not $s) { return }
+    $v = $script:Live
+    foreach ($k in @(@('cpu.temp', 'CpuT'), @('gpu.temp', 'GpuT'), @('gpu.hot', 'GpuHot'), @('ram.load', 'Ram'))) {
+        $x = $v[$k[0]]; if ($null -ne $x -and ($null -eq $s[$k[1]] -or [double]$x -gt $s[$k[1]])) { $s[$k[1]] = [double]$x }
+    }
+    if ($null -ne $v['gpu.vram'] -and $v['gpu.vramtotal']) { $x = 100.0 * $v['gpu.vram'] / $v['gpu.vramtotal']; if ($null -eq $s.Vram -or $x -gt $s.Vram) { $s.Vram = $x } }
+    # Utilisation : seulement quand on joue vraiment (jeu au premier plan et qui affiche des images)
+    $fpsOn = [bool]($script:Fps -and $script:Fps.Running)
+    $r = $null; if ($fpsOn) { $r = $script:Fps.Get([int]$s.Pid) }
+    if ([AeroxNative]::ForegroundPid() -ne $s.Pid -or ($fpsOn -and -not $r)) { return }
+    if ($r -and $s.Fps.Count -lt 30000) { $s.Fps.Add([double]$r[0]) }
+    if ($null -ne $v['cpu.load']) { $s.CpuL += [double]$v['cpu.load']; $s.NL++ }
+    if ($null -ne $v['gpu.load']) { $s.GpuL += [double]$v['gpu.load']; $s.NGpu++ }
+    if ($null -ne $v['cpu.coremax']) { $s.Core += [double]$v['cpu.coremax']; $s.NCore++ }
+    $s.N++
+}
+
+function Stop-GameSession {
+    $s = $script:GameSess; if (-not $s) { return }
+    $script:GameSess = $null
+    $st = $null; $mins = @()
+    if ($script:Fps) { try { if ($script:Fps.SessionPid -eq $s.Pid) { $st = $script:Fps.SessionStats(); $mins = @($script:Fps.SessionMinutes()) }; $script:Fps.EndSession() } catch {} }
+    $rec = New-GameRecord $s $st $mins (Get-Date) $sync.GameCtx
+    if (-not $rec) { Write-UiLog ("🎮 Fin de {0} : partie de moins de {1} minutes, pas notée." -f $s.Name, $script:GameMinMinutes); return }
+    Save-GameRecord $s.Key $s.Name $s.Path $s.Store $rec
+    $txt = Format-GameSummary $s.Name $rec
+    Write-UiLog $txt
+    $script:LastGame = @{ Key = $s.Key; Text = $txt; At = Get-Date }
+    try { Show-TrayBalloon 'Fin de partie' $txt $s.Key } catch { Write-Bug -Context 'Notification de fin de partie' -ErrorRecord $_ -Type 'erreur' }
+    if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page }
+}
+
+function Get-Median($Values) { $a = @($Values | Sort-Object); if (-not $a.Count) { return $null }; return [double]$a[[int][math]::Floor($a.Count / 2)] }
+# Résultat d'une partie, rangé dans la fiche du jeu
+function New-GameRecord($S, $St, $Mins, [datetime]$End, $Ctx) {
+    $min = ($End - $S.Start).TotalMinutes
+    if ($min -lt $script:GameMinMinutes) { return $null }
+    $r = [ordered]@{ Start = $S.Start.ToString('s'); Min = [math]::Round($min, 1); App = $AppVersion }
+    if ($St -and $St[0] -ge 300) {
+        $r.Fps = [math]::Round($St[2], 1); $r.Low1 = [math]::Round($St[3], 1); $r.Low01 = [math]::Round($St[4], 1); $r.Stut = [int]$St[5]; $r.Frames = [long]$St[0]
+    }
+    $c = @($Mins | ForEach-Object { [int][math]::Round([double]$_) })
+    if ($c.Count -gt 240) { $step = $c.Count / 240.0; $c = @(for ($i = 0; $i -lt 240; $i++) { $c[[int][math]::Floor($i * $step)] }) }
+    if ($c.Count -ge 2) { $r.Curve = $c }
+    foreach ($k in 'CpuT', 'GpuT', 'GpuHot', 'Vram', 'Ram') { if ($null -ne $S[$k]) { $r[$k] = [int][math]::Round($S[$k]) } }
+    if ($S.NL) { $r.CpuL = [int][math]::Round($S.CpuL / $S.NL) }
+    if ($S.NGpu) { $r.GpuL = [int][math]::Round($S.GpuL / $S.NGpu) }
+    if ($S.NCore) { $r.Core = [int][math]::Round($S.Core / $S.NCore) }
+    if ($S.Fps -and $S.Fps.Count -ge 30) {
+        $a = @($S.Fps); $mean = ($a | Measure-Object -Average).Average
+        $var = 0.0; foreach ($x in $a) { $var += ($x - $mean) * ($x - $mean) }
+        $r.Med = [math]::Round((Get-Median $a), 1)
+        if ($mean -gt 0) { $r.Cv = [math]::Round([math]::Sqrt($var / $a.Count) / $mean, 3) }
+    }
+    if ($Ctx) { foreach ($k in 'Gpu', 'Driver', 'Hz', 'MaxHz') { if ($Ctx[$k]) { $r[$k] = $Ctx[$k] } } }
+    $v = Get-GameVerdict $r
+    $r.Verdict = $v.Id; if ($v.Cap) { $r.Cap = $v.Cap }
+    $r.Flags = @(Get-GameFlags $r)
+    return $r
+}
+function Get-RecValue($R, [string]$K) { if ($R -is [System.Collections.IDictionary]) { if ($R.Contains($K)) { return $R[$K] } else { return $null } }; return $R.$K }
+# FPS très stables autour d'une limite courante (V-Sync, limite du jeu, G-Sync / Reflex juste sous la fréquence de l'écran)
+function Test-FpsCap([double]$Med, [int]$Hz) {
+    if ($Med -le 0) { return $false }
+    $caps = @(30, 72, 75, 144, 165, 175) + @(for ($i = 5; $i -le 40; $i++) { $i * 10 })
+    if ($Hz -gt 0) { $caps += @($Hz, ($Hz - 3), ($Hz - 4), [math]::Round(3600.0 * $Hz / (3600 + $Hz))) }
+    foreach ($c in $caps) { if ([math]::Abs($Med - $c) -le [math]::Max(1.5, $c * 0.02)) { return $true } }
+    return $false
+}
+# Ce qui limite le jeu pendant la partie
+function Get-GameVerdict($R) {
+    $gl = Get-RecValue $R 'GpuL'; $cv = Get-RecValue $R 'Cv'; $core = Get-RecValue $R 'Core'; $cl = Get-RecValue $R 'CpuL'
+    if ($null -ne (Get-RecValue $R 'Fps') -and $null -ne $cv -and $cv -le 0.035 -and ($null -eq $gl -or $gl -lt 85) -and (Test-FpsCap ([double](Get-RecValue $R 'Med')) ([int](Get-RecValue $R 'Hz')))) { return @{ Id = 'cap'; Cap = [int][math]::Round([double](Get-RecValue $R 'Med')) } }
+    if ($null -eq $gl) { return @{ Id = '' } }
+    if ($gl -ge 85) { return @{ Id = 'gpu' } }
+    if (($null -ne $core -and $core -ge 85) -or ($null -ne $cl -and $cl -ge 80) -or $gl -lt 70) { return @{ Id = 'cpu' } }
+    return @{ Id = 'mixed' }
+}
+function Get-GameFlags($R) {
+    $f = @()
+    $o = $script:Settings.Overlay
+    if ($null -ne (Get-RecValue $R 'GpuT') -and (Get-RecValue $R 'GpuT') -ge [double]$o.AlertGpu) { $f += 'hot-gpu' }
+    if ($null -ne (Get-RecValue $R 'CpuT') -and (Get-RecValue $R 'CpuT') -ge [double]$o.AlertCpu) { $f += 'hot-cpu' }
+    if ($null -ne (Get-RecValue $R 'Vram') -and (Get-RecValue $R 'Vram') -ge 95) { $f += 'vram' }
+    if ($null -ne (Get-RecValue $R 'Ram') -and (Get-RecValue $R 'Ram') -ge 90) { $f += 'ram' }
+    $st = Get-RecValue $R 'Stut'; $mn = [double](Get-RecValue $R 'Min')
+    if ($null -ne $st -and $st -ge 5 -and $mn -gt 0 -and ($st * 60.0 / $mn) -ge 30) { $f += 'stutter' }
+    $hz = [int](Get-RecValue $R 'Hz'); $mx = [int](Get-RecValue $R 'MaxHz')
+    if ($hz -gt 0 -and $mx -ge 100 -and ($mx - $hz) -ge 20) { $f += 'hz' }
+    return $f
+}
+function Format-GameTime([double]$Min) {
+    if ($Min -lt 60) { return ("{0} min" -f [int][math]::Round($Min)) }
+    $h = [int][math]::Floor($Min / 60); $m = [int][math]::Round($Min - $h * 60); if ($m -eq 60) { $h++; $m = 0 }
+    return ("{0} h {1:00}" -f $h, $m)
+}
+function Get-VerdictLabel($R) {
+    switch ("$(Get-RecValue $R 'Verdict')") {
+        'gpu' { return 'limité par la carte graphique' }
+        'cpu' { return 'limité par le processeur' }
+        'cap' { return ("plafonné à {0} FPS" -f (Get-RecValue $R 'Cap')) }
+        'mixed' { return 'processeur et carte graphique équilibrés' }
+    }
+    return ''
+}
+# Résumé d'une ligne : « 🎮 Warzone · 1 h 12 · 118 FPS de moyenne · 1 % low 79 · 4 saccades · limité par la carte graphique · GPU 71 °C max »
+function Format-GameSummary([string]$Name, $R) {
+    $p = @("🎮 $Name", (Format-GameTime ([double](Get-RecValue $R 'Min'))))
+    if ($null -ne (Get-RecValue $R 'Fps')) {
+        $p += ("{0} FPS de moyenne" -f [int][math]::Round([double](Get-RecValue $R 'Fps')))
+        $p += ("1 % low {0}" -f [int][math]::Round([double](Get-RecValue $R 'Low1')))
+        $n = [int](Get-RecValue $R 'Stut'); $p += $(if ($n -eq 0) { 'aucune saccade' } elseif ($n -eq 1) { '1 saccade' } else { "$n saccades" })
+    }
+    $vl = Get-VerdictLabel $R; if ($vl) { $p += $vl }
+    if ($null -ne (Get-RecValue $R 'GpuT')) { $p += ("GPU {0} °C max" -f (Get-RecValue $R 'GpuT')) } elseif ($null -ne (Get-RecValue $R 'CpuT')) { $p += ("CPU {0} °C max" -f (Get-RecValue $R 'CpuT')) }
+    return ($p -join ' · ')
+}
+
+# ---------------------------------------------------------------- Fiches (un fichier par jeu dans « jeux »)
+function Get-GameFile([string]$Key) { return (Join-Path $script:GameDir ($Key + '.json')) }
+function Read-GameFile([string]$Key) {
+    $f = Get-GameFile $Key
+    if (-not (Test-Path -LiteralPath $f)) { return $null }
+    try {
+        $g = ConvertTo-Hash ([IO.File]::ReadAllText($f, [Text.Encoding]::UTF8) | ConvertFrom-Json)
+        if ($g -isnot [hashtable]) { return $null }
+        $g.Sessions = @($g.Sessions | Where-Object { $_ -is [hashtable] })
+        if (-not $g.Key) { $g.Key = $Key }
+        return $g
+    } catch { Write-Bug -Context "Fiche du jeu $Key" -ErrorRecord $_ -Type 'erreur'; return $null }
+}
+function Save-GameFile($G) {
+    New-Item -ItemType Directory -Force -Path $script:GameDir | Out-Null
+    $json = $G | ConvertTo-Json -Depth 6 -Compress
+    $f = Get-GameFile $G.Key; $tmp = "$f.tmp"
+    [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
+    Move-Item -LiteralPath $tmp -Destination $f -Force
+}
+function Save-GameRecord([string]$Key, [string]$Name, [string]$Path, [string]$Store, $Rec) {
+    $g = Read-GameFile $Key
+    if (-not $g) { $g = @{ Key = $Key; Name = $Name; Sessions = @() } }
+    $g.Name = $Name; $g.Path = $Path; if ($Store) { $g.Store = $Store }
+    $g.Sessions = @(@($g.Sessions) + @($Rec) | Select-Object -Last 200)
+    Save-GameFile $g
+}
+function Get-GameList {
+    $list = New-Object System.Collections.ArrayList
+    foreach ($f in @(Get-ChildItem -LiteralPath $script:GameDir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $g = Read-GameFile ([IO.Path]::GetFileNameWithoutExtension($f.Name))
+        if (-not $g -or -not @($g.Sessions).Count) { continue }
+        $last = @($g.Sessions)[-1]
+        $g.Last = $last; $g.LastAt = ConvertTo-DateSafe $last.Start
+        $g.TotalMin = (@($g.Sessions) | ForEach-Object { [double]$_.Min } | Measure-Object -Sum).Sum
+        [void]$list.Add($g)
+    }
+    return @($list | Sort-Object { $_.LastAt } -Descending)
+}
+
+# ---------------------------------------------------------------- Conseils (boutons = fonctions qui existent déjà)
+function Get-GameAdvice($R) {
+    $out = New-Object System.Collections.ArrayList
+    $gl = Get-RecValue $R 'GpuL'; $hz = [int](Get-RecValue $R 'Hz'); $mx = [int](Get-RecValue $R 'MaxHz')
+    switch ("$(Get-RecValue $R 'Verdict')") {
+        'gpu' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Limité par la carte graphique : c''est normal'; D = ("Ta carte graphique tourne à fond ({0} % en moyenne) : rien n'est gâché, c'est le cas idéal. Pour gagner des FPS : active DLSS, FSR ou XeSS en mode « Qualité », ou baisse les réglages les plus lourds (ombres, nuages, ray tracing). Un pilote graphique à jour aide aussi." -f $gl); B = 'Vérifier mon pilote graphique'; Ui = 'drivers' }) }
+        'cpu' { [void]$out.Add(@{ C = '#FFB547'; T = 'Limité par le processeur'; D = ("La carte graphique attend le processeur : elle n'est utilisée qu'à {0} %. Ferme ce qui tourne en fond pendant que tu joues (navigateur, enregistrement, logiciels de LED…) et vérifie le mode performances. Bonne nouvelle : tu peux monter la qualité graphique, ça ne coûtera presque pas de FPS. Certains jeux (stratégie, MMO, simulation) sont limités par le processeur quoi qu'il arrive." -f $gl); B = 'Voir ce qui tourne en fond'; Ui = 'bgitems'; B2 = 'Optimisations'; Ui2 = 'page-perf' }) }
+        'cap' {
+            $cap = [int](Get-RecValue $R 'Cap')
+            if ($hz -gt 0 -and $cap -ge $hz - 12 -and $cap -le $hz + 2) { [void]$out.Add(@{ C = '#4ADE80'; T = ("Calé sur ton écran ({0} FPS)" -f $cap); D = ("Le jeu suit la fréquence de ton écran ({0} Hz) : c'est parfait, l'image est fluide et sans déchirure. Plus de FPS ne servirait à rien sur cet écran." -f $hz) }) }
+            elseif ($hz -gt 0 -and $cap -lt $hz - 12) { [void]$out.Add(@{ C = '#FFB547'; T = ("Bridé à {0} FPS" -f $cap); D = ("Le jeu reste bloqué à {0} FPS alors que ton écran monte à {1} Hz. Dans les options du jeu, cherche « Limite d'images / Max FPS » ou « V-Sync » et monte la limite à {1} pour profiter de ton écran." -f $cap, $hz) }) }
+            else { [void]$out.Add(@{ C = '#8B93A7'; T = ("Plafonné à {0} FPS" -f $cap); D = "Le jeu est limité par V-Sync ou une limite d'images : les FPS ne bougent presque pas. Si c'est voulu (moins de bruit et de chaleur), c'est très bien." }) }
+        }
+        'mixed' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Bien équilibré'; D = "Ni le processeur ni la carte graphique ne bloquent franchement : le PC est bien réglé pour ce jeu." }) }
+        default { if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Analyse incomplète'; D = "Installe le module de températures (en bas de l'onglet Gaming) pour savoir ce qui limite ce jeu." }) } }
+    }
+    $flags = @(Get-RecValue $R 'Flags')
+    if ($flags -contains 'hot-gpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Carte graphique très chaude ({0} °C)" -f (Get-RecValue $R 'GpuT')); D = "Trop chaude, elle ralentit pour se protéger : moins de FPS. Dépoussière le PC (bombe d'air sec, PC éteint), dégage les grilles d'aération, et pour un portable pose-le sur une surface dure." }) }
+    if ($flags -contains 'hot-cpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Processeur très chaud ({0} °C)" -f (Get-RecValue $R 'CpuT')); D = "Trop chaud, il ralentit pour se protéger. Dépoussière le ventilateur et le radiateur ; si le PC a plusieurs années, la pâte thermique est peut-être sèche (à refaire par un réparateur)." }) }
+    if ($flags -contains 'vram') { [void]$out.Add(@{ C = '#FFB547'; T = ("Mémoire de la carte graphique pleine ({0} %)" -f (Get-RecValue $R 'Vram')); D = "Quand elle déborde, le jeu va chercher ses images dans la mémoire du PC : c'est la cause n°1 des saccades. Baisse la qualité des textures d'un cran." }) }
+    if ($flags -contains 'ram') { [void]$out.Add(@{ C = '#FFB547'; T = ("Mémoire vive presque pleine ({0} %)" -f (Get-RecValue $R 'Ram')); D = "Windows doit se servir du disque à la place : saccades et chargements lents. Ferme le navigateur et les logiciels inutiles avant de jouer."; B = 'Pourquoi mon PC rame ?'; Ui = 'slow' }) }
+    if ($flags -contains 'stutter') { [void]$out.Add(@{ C = '#FFB547'; T = ("Beaucoup de saccades ({0})" -f (Get-RecValue $R 'Stut')); D = "Une saccade, c'est une image qui met nettement plus de temps que les autres : un petit gel. Souvent normal sur les premières parties après une mise à jour (le jeu prépare ses « shaders »). Si ça continue : mémoire trop pleine, programme en fond qui se réveille ou pilote graphique ancien." }) }
+    if ($flags -contains 'hz') { [void]$out.Add(@{ C = '#FFB547'; T = ("Ton écran tourne à {0} Hz au lieu de {1} Hz" -f $hz, $mx); D = ("Tu ne vois que {0} images par seconde, même si le jeu en calcule plus." -f $hz); B = ("Passer à {0} Hz" -f $mx); Ui = 'display-fix' }) }
+    return $out.ToArray()
+}
+# Pourquoi la pire partie a été moins bonne que la meilleure
+function Get-GameWhy($Worst, $Best) {
+    $w = @()
+    if ($null -ne $Worst.GpuT -and $null -ne $Best.GpuT -and ($Worst.GpuT - $Best.GpuT) -ge 8) { $w += ("carte graphique plus chaude ({0} °C contre {1} °C)" -f $Worst.GpuT, $Best.GpuT) }
+    if ($null -ne $Worst.Ram -and $Worst.Ram -ge 90 -and ($null -eq $Best.Ram -or $Best.Ram -lt 85)) { $w += ("mémoire vive pleine ({0} %)" -f $Worst.Ram) }
+    if ($null -ne $Worst.Vram -and $Worst.Vram -ge 95 -and ($null -eq $Best.Vram -or $Best.Vram -lt 90)) { $w += ("mémoire de la carte graphique pleine ({0} %)" -f $Worst.Vram) }
+    if ($Worst.Driver -and $Best.Driver -and $Worst.Driver -ne $Best.Driver) { $w += ("pilote graphique différent ({0} contre {1})" -f $Worst.Driver, $Best.Driver) }
+    if ($Worst.Hz -and $Best.Hz -and $Worst.Hz -ne $Best.Hz) { $w += ("écran à {0} Hz (contre {1} Hz)" -f $Worst.Hz, $Best.Hz) }
+    if ($null -ne $Worst.CpuL -and $null -ne $Best.CpuL -and ($Worst.CpuL - $Best.CpuL) -ge 20) { $w += ("processeur bien plus occupé ({0} % contre {1} %) : un programme en fond ?" -f $Worst.CpuL, $Best.CpuL) }
+    if ($Worst.Verdict -eq 'cap' -and $Best.Verdict -ne 'cap') { $w += ("FPS bridés à {0}" -f $Worst.Cap) }
+    if (-not $w.Count) { return "pas de cause visible côté PC : sans doute une carte, un mode de jeu ou une scène plus lourde." }
+    return ($w -join ' ; ')
+}
+
+# ---------------------------------------------------------------- Zone de notification (mode discret)
+function Initialize-Tray {
+    if ($script:Tray) { return }
+    Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+    $ni = New-Object System.Windows.Forms.NotifyIcon
+    try { $ni.Icon = New-Object System.Drawing.Icon((Join-Path $AppRoot 'aerox.ico')) } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
+    $ni.Text = 'AEROX PC Care'
+    $m = New-Object System.Windows.Forms.ContextMenuStrip
+    [void]$m.Items.Add('Ouvrir AEROX PC Care', $null, [EventHandler]{ Show-MainWindow '' })
+    [void]$m.Items.Add('Gaming : mes jeux', $null, [EventHandler]{ Show-MainWindow 'monitor' })
+    [void]$m.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    [void]$m.Items.Add('Quitter AEROX PC Care', $null, [EventHandler]{ Exit-Aerox })
+    $ni.ContextMenuStrip = $m
+    $ni.Add_MouseClick({ param($s, $e) if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Show-MainWindow '' } })
+    $ni.Add_BalloonTipClicked({ $k = $script:BalloonKey; Show-MainWindow 'monitor'; if ($k) { Show-GameDialog $k } })
+    $script:Tray = $ni
+}
+function Update-TrayIcon { if ($script:Settings.Gaming.Tray -or $script:InTray) { Initialize-Tray; $script:Tray.Visible = $true } elseif ($script:Tray -and -not $script:BalloonKey) { $script:Tray.Visible = $false } }
+function Show-TrayBalloon([string]$Title, [string]$Text, [string]$Key) {
+    Initialize-Tray
+    $script:BalloonKey = $Key
+    $script:Tray.Visible = $true
+    if ($Text.Length -gt 250) { $Text = $Text.Substring(0, 247) + '…' }
+    $script:Tray.ShowBalloonTip(10000, $Title, $Text, [System.Windows.Forms.ToolTipIcon]::Info)
+}
+function Get-MainHandle { return (New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle }
+function Hide-ToTray([bool]$Tip = $true) {
+    Initialize-Tray; $script:Tray.Visible = $true
+    [AeroxGame]::Hide((Get-MainHandle)); $script:InTray = $true
+    if ($Tip -and -not $script:Settings.Gaming.TrayTip) {
+        $script:Settings.Gaming.TrayTip = $true; Save-Settings
+        $script:Tray.ShowBalloonTip(8000, 'AEROX PC Care reste ouvert', "Il note tes parties en silence, ici près de l'horloge. Clic droit sur l'icône > Quitter pour le fermer complètement.", [System.Windows.Forms.ToolTipIcon]::Info)
+    }
+}
+function Show-MainWindow([string]$Page) {
+    if (-not $window.ShowInTaskbar) {
+        # Démarré en mode discret : la fenêtre était placée hors de l'écran
+        $window.ShowInTaskbar = $true
+        $wa = [System.Windows.SystemParameters]::WorkArea
+        $window.Left = $wa.Left + [math]::Max(0, ($wa.Width - $window.ActualWidth) / 2); $window.Top = $wa.Top + [math]::Max(0, ($wa.Height - $window.ActualHeight) / 2)
+    }
+    if ($window.WindowState -eq 'Minimized') { $window.WindowState = 'Normal' }
+    [AeroxGame]::Show((Get-MainHandle)); try { [void]$window.Activate() } catch {}
+    $script:InTray = $false
+    Update-TrayIcon
+    if ($Page) { Go-Page $Page } elseif ($script:Cur -eq 'monitor') { Refresh-Page }
+    if ($script:DeferredStart) { $script:DeferredStart = $false; Invoke-StartupExtras }
+}
+function Exit-Aerox { $script:QuitNow = $true; if ($script:InTray) { Show-MainWindow '' }; $window.Close(); $script:QuitNow = $false }
+
+# ---------------------------------------------------------------- Lancement avec Windows (tâche planifiée, sans demande d'autorisation)
+function Get-AutoStartBlock {
+    if ($Portable) { return "Pas disponible en version portable (la clé USB n'est pas toujours branchée)." }
+    if ((Get-SessionUser).Other) { return "Pas disponible quand AEROX est lancé avec le mot de passe d'un autre compte : Windows le redemanderait à chaque démarrage." }
+    if (-not $AeroxLauncher -or -not (Test-Path -LiteralPath $AeroxLauncher)) { return "Lance AEROX avec son raccourci pour activer cette option." }
+    return ''
+}
+function Test-AutoStart { try { return [bool](Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop) } catch { return $false } }
+function Set-AutoStart([bool]$On) {
+    if (-not $On) { Unregister-ScheduledTask -TaskName $script:AutoTaskName -Confirm:$false -ErrorAction SilentlyContinue; return }
+    $b = Get-AutoStartBlock; if ($b) { throw $b }
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $a = New-ScheduledTaskAction -Execute $AeroxLauncher -Argument '--discret'
+    $t = New-ScheduledTaskTrigger -AtLogOn -User $user; $t.Delay = 'PT45S'
+    $p = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+    $st = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $script:AutoTaskName -Action $a -Trigger $t -Principal $p -Settings $st -Description "Lance AEROX PC Care caché près de l'horloge pour noter tes parties. Option de l'onglet Gaming, à désactiver au même endroit." -Force -ErrorAction Stop | Out-Null
+}
+function Set-GamingOption([string]$What) {
+    $g = $script:Settings.Gaming
+    switch ($What) {
+        'track' { $g.Track = -not [bool]$g.Track; Write-UiLog $(if ($g.Track) { "🎮 Les parties seront notées automatiquement." } else { "🎮 Les parties ne sont plus notées." }) }
+        'tray' {
+            $g.Tray = -not [bool]$g.Tray
+            if (-not $g.Tray -and (Test-AutoStart)) { Set-AutoStart $false; Write-UiLog "AEROX ne se lance plus avec Windows." }
+            Update-TrayIcon
+            Write-UiLog $(if ($g.Tray) { "La croix cache maintenant AEROX près de l'horloge (clic droit sur l'icône > Quitter pour le fermer)." } else { "La croix ferme de nouveau AEROX." })
+        }
+        'autostart' {
+            if (Test-AutoStart) { Set-AutoStart $false; Write-UiLog "AEROX ne se lance plus avec Windows." }
+            else {
+                try {
+                    Set-AutoStart $true
+                    if (-not $g.Tray) { $g.Tray = $true; Update-TrayIcon }
+                    Write-UiLog "AEROX se lancera avec Windows, caché près de l'horloge : il ne fait rien tant que tu ne lances pas de jeu."
+                } catch { [System.Windows.MessageBox]::Show("Impossible d'activer le lancement avec Windows :`n`n$($_.Exception.Message)", $AppName, 'OK', 'Warning') | Out-Null }
+            }
+        }
+    }
+    Save-Settings
+    if ($script:Cur -eq 'monitor') { Refresh-Page }
+}
+
+# ---------------------------------------------------------------- Page Gaming : mes jeux
+function New-VerdictPill($R) {
+    $id = "$(Get-RecValue $R 'Verdict')"
+    $t = switch ($id) { 'gpu' { @('carte graphique', '#9FE8B5', '#173326') } 'cpu' { @('processeur', '#FFD08A', '#3A2A12') } 'cap' { @(("plafonné {0}" -f (Get-RecValue $R 'Cap')), '#C3CAD9', '#232838') } 'mixed' { @('équilibré', '#9FE8B5', '#173326') } default { $null } }
+    if (-not $t) { return $null }
+    return (New-Pill $t[0] $t[1] $t[2])
+}
+function Format-GameDate($D) {
+    $d = ConvertTo-DateSafe $D; if (-not $d) { return '' }
+    $fr = [Globalization.CultureInfo]::GetCultureInfo('fr-FR')
+    if ($d.Date -eq (Get-Date).Date) { return ("aujourd'hui à " + $d.ToString('HH:mm', $fr)) }
+    if ($d.Date -eq (Get-Date).Date.AddDays(-1)) { return ("hier à " + $d.ToString('HH:mm', $fr)) }
+    return $d.ToString("ddd dd/MM 'à' HH:mm", $fr)
+}
+function New-GameRow($G) {
+    $card = New-CardBorder; $card.Padding = Th 18 12 14 12; $card.Margin = Th 0 0 0 8
+    $dp = New-Object System.Windows.Controls.DockPanel
+    $b = New-Button 'Voir la fiche' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'game-sheet'; Key = $G.Key } } $false
+    $b.Margin = Th 14 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+    $l = $G.Last
+    $right = New-Object System.Windows.Controls.StackPanel; $right.Margin = Th 14 0 0 0; $right.VerticalAlignment = 'Center'; $right.MinWidth = 110
+    if ($null -ne $l.Fps) {
+        $f = New-Text ("{0} FPS" -f [int][math]::Round([double]$l.Fps)) 20 '#FFFFFF' 'Bold'; $f.HorizontalAlignment = 'Right'; Add-Child $right $f
+        $lo = New-Text ("1 % low {0}" -f [int][math]::Round([double]$l.Low1)) 12 '#8B93A7'; $lo.HorizontalAlignment = 'Right'; Add-Child $right $lo
+    } else { $f = New-Text 'FPS non mesurés' 12 '#6B7389'; $f.HorizontalAlignment = 'Right'; Add-Child $right $f }
+    [System.Windows.Controls.DockPanel]::SetDock($right, 'Right'); Add-Child $dp $right
+    $left = New-Object System.Windows.Controls.StackPanel; $left.VerticalAlignment = 'Center'
+    $h = New-Object System.Windows.Controls.WrapPanel
+    $n = New-Text $G.Name 15 '#FFFFFF' 'SemiBold'; $n.VerticalAlignment = 'Center'; Add-Child $h $n
+    $p = New-VerdictPill $l; if ($p) { Add-Child $h $p }
+    Add-Child $left $h
+    $cnt = @($G.Sessions).Count
+    Add-Child $left (New-Text ("{0} partie{1} · {2} au total · dernière {3}" -f $cnt, $(if ($cnt -gt 1) { 's' } else { '' }), (Format-GameTime $G.TotalMin), (Format-GameDate $l.Start)) 12 '#8B93A7')
+    Add-Child $dp $left
+    $card.Child = $dp
+    return $card
+}
+function New-GamingToggle([string]$Title, [string]$Desc, [bool]$On, [string]$Ui, [string]$Block) {
+    $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
+    if ($Block) { $p = New-Pill 'indisponible' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p }
+    else { $b = New-Button $(if ($On) { 'Activé' } else { 'Désactivé' }) $(if ($On) { 'FixBtn' } else { 'ActionBtn' }) @{ Kind = 'ui'; Def = @{ UI = $Ui } } $false; $b.Margin = Th 12 0 0 0; $b.MinWidth = 110; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b }
+    $t = New-Object System.Windows.Controls.StackPanel
+    Add-Child $t (New-Text $Title 14 '#FFFFFF' 'SemiBold')
+    Add-Child $t (New-Text $(if ($Block) { $Block } else { $Desc }) 12 '#8B93A7')
+    Add-Child $row $t
+    return $row
+}
+function Add-GamingSections($Sp, $U) {
+    $g = $script:Settings.Gaming
+    # Partie en cours
+    if ($script:GameSess) {
+        $c = New-CardBorder '#3B2F7A'; $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text ("🎮 Partie en cours : " + $script:GameSess.Name) 15 '#FFFFFF' 'SemiBold')
+        $U.Sess = New-Text '' 13 '#B9A8FF'; $U.Sess.Margin = Th 0 4 0 0; Add-Child $cs $U.Sess
+        Add-Child $cs (New-Text "Le résumé s'affichera quand tu quitteras le jeu (notification + fiche du jeu ci-dessous)." 12 '#8B93A7')
+        $c.Child = $cs; Add-Child $Sp $c
+    } elseif ($script:LastGame -and ((Get-Date) - $script:LastGame.At).TotalHours -lt 12) {
+        $c = New-CardBorder; $dp = New-Object System.Windows.Controls.DockPanel
+        $b = New-Button 'Voir la fiche' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'game-sheet'; Key = $script:LastGame.Key } } $false; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); $b.Margin = Th 12 0 0 0; Add-Child $dp $b
+        $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text 'DERNIÈRE PARTIE' 11 '#6B7389' 'Bold')
+        $t = New-Text $script:LastGame.Text 14 '#E6E9F2'; $t.Margin = Th 0 4 0 0; Add-Child $cs $t
+        Add-Child $dp $cs; $c.Child = $dp; Add-Child $Sp $c
+    }
+    # Mes jeux
+    Add-Child $Sp (New-Section 'Mes jeux')
+    $games = @(Get-GameList)
+    if (-not $games.Count) {
+        $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text "Aucune partie notée pour l'instant" 15 '#FFFFFF' 'SemiBold')
+        $t = New-Text ("Lance un jeu : AEROX le reconnaît tout seul (Steam, Epic, Riot, Battle.net, EA, Ubisoft, GOG, Xbox ou n'importe quel jeu en plein écran) et note la partie quand tu le quittes, à partir de {0} minutes de jeu. AEROX doit rester ouvert pendant que tu joues : active « Garder AEROX près de l'horloge » plus bas pour qu'il ne gêne pas." -f $script:GameMinMinutes) 13 '#A9B0C2'
+        $t.Margin = Th 0 6 0 0; Add-Child $cs $t
+        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Installe d'abord le compteur de FPS (en bas de la page) : sans lui, seules la durée et les températures sont notées." 12.5 '#FFB547'; $w.Margin = Th 0 8 0 0; Add-Child $cs $w }
+        $c.Child = $cs; Add-Child $Sp $c
+    } else {
+        foreach ($x in @($games | Select-Object -First 12)) { Add-Child $Sp (New-GameRow $x) }
+        if ($games.Count -gt 12) { $t = New-Text ("+ {0} autre(s) jeu(x) plus ancien(s), dans le dossier « jeux » des journaux." -f ($games.Count - 12)) 12 '#6B7389'; Add-Child $Sp $t }
+        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Le compteur de FPS n'est pas installé (en bas de la page) : seules la durée et les températures sont notées." 12.5 '#FFB547'; $w.Margin = Th 0 2 0 4; Add-Child $Sp $w }
+    }
+    # Réglages du suivi
+    Add-Child $Sp (New-Section 'Suivi automatique')
+    $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+    Add-Child $cs (New-GamingToggle "Noter mes parties automatiquement" "Détecte le jeu, mesure FPS, saccades et températures pendant la partie, puis affiche un résumé. Rien n'est injecté dans le jeu : aucun risque avec les anti-triche." ([bool]$g.Track) 'game-track' '')
+    Add-Child $cs (New-GamingToggle "Garder AEROX près de l'horloge quand je le ferme" "La croix cache AEROX dans la zone de notification au lieu de le fermer : il continue de noter tes parties sans rien afficher. Clic droit sur l'icône > Quitter pour le fermer." ([bool]$g.Tray) 'game-tray' '')
+    Add-Child $cs (New-GamingToggle "Lancer AEROX avec Windows, en mode discret" "Caché près de l'horloge, il ne fait rien tant que tu ne joues pas. C'est le seul programme qu'AEROX ajoute au démarrage, et seulement si tu l'actives ici." (Test-AutoStart) 'game-autostart' (Get-AutoStartBlock))
+    $c.Child = $cs; Add-Child $Sp $c
+}
+
+# ---------------------------------------------------------------- Fiche d'un jeu
+function New-LineChart($Series, [double]$W = 640, [double]$H = 120, [string]$Unit = 'FPS') {
+    $all = @(foreach ($s in $Series) { foreach ($x in @($s.V)) { if ([double]$x -gt 0) { [double]$x } } })
+    $dp = New-Object System.Windows.Controls.DockPanel
+    if (-not $all.Count) { return $dp }
+    $mx = ($all | Measure-Object -Maximum).Maximum; $mn = ($all | Measure-Object -Minimum).Minimum
+    $lo = [math]::Max(0, [math]::Floor($mn * 0.9 / 10) * 10); $hi = [math]::Ceiling($mx * 1.05 / 10) * 10; if ($hi -le $lo) { $hi = $lo + 10 }
+    $ax = New-Object System.Windows.Controls.Grid; $ax.Width = 44; $ax.Height = $H
+    $t1 = New-Text ("{0}" -f $hi) 11 '#6B7389'; $t1.VerticalAlignment = 'Top'; Add-Child $ax $t1
+    $t2 = New-Text ("{0}" -f $lo) 11 '#6B7389'; $t2.VerticalAlignment = 'Bottom'; Add-Child $ax $t2
+    [System.Windows.Controls.DockPanel]::SetDock($ax, 'Left'); Add-Child $dp $ax
+    $cv = New-Object System.Windows.Controls.Canvas; $cv.Width = $W; $cv.Height = $H; $cv.ClipToBounds = $true; $cv.Background = Brush '#10131A'
+    foreach ($i in 1, 2, 3) {
+        $ln = New-Object System.Windows.Shapes.Line; $ln.X1 = 0; $ln.X2 = $W; $ln.Y1 = $H * $i / 4; $ln.Y2 = $ln.Y1; $ln.Stroke = Brush '#1E2230'; $ln.StrokeThickness = 1; [void]$cv.Children.Add($ln)
+    }
+    foreach ($s in $Series) {
+        $v = @($s.V); if ($v.Count -lt 1) { continue }
+        $pl = New-Object System.Windows.Shapes.Polyline; $pl.Stroke = Brush $s.Color; $pl.StrokeThickness = 2; $pl.StrokeLineJoin = 'Round'
+        $pc = New-Object System.Windows.Media.PointCollection
+        for ($i = 0; $i -lt $v.Count; $i++) {
+            if ([double]$v[$i] -le 0) { continue }
+            $x = $(if ($v.Count -gt 1) { ($W - 8) * $i / ($v.Count - 1) + 4 } else { $W / 2 })
+            $y = $H - 4 - ([double]$v[$i] - $lo) / ($hi - $lo) * ($H - 8)
+            $pc.Add((New-Object System.Windows.Point($x, $y)))
+            if ($v.Count -le 40) { $e = New-Object System.Windows.Shapes.Ellipse; $e.Width = 6; $e.Height = 6; $e.Fill = Brush $s.Color; [System.Windows.Controls.Canvas]::SetLeft($e, $x - 3); [System.Windows.Controls.Canvas]::SetTop($e, $y - 3); [void]$cv.Children.Add($e) }
+        }
+        $pl.Points = $pc; [void]$cv.Children.Add($pl)
+    }
+    Add-Child $dp $cv
+    return $dp
+}
+function New-StatTile([string]$Label, [string]$Big, [string]$Small) {
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 10; $b.Margin = Th 0 0 8 8
+    $sp = New-Object System.Windows.Controls.StackPanel
+    Add-Child $sp (New-Text $Label 10.5 '#6B7389' 'Bold')
+    $t = New-Text $Big 20 '#FFFFFF' 'Bold'; $t.Margin = Th 0 4 0 0; Add-Child $sp $t
+    if ($Small) { Add-Child $sp (New-Text $Small 11.5 '#8B93A7') }
+    $b.Child = $sp
+    return $b
+}
+function New-LegendLine($Items) {
+    $wp = New-Object System.Windows.Controls.WrapPanel; $wp.Margin = Th 44 6 0 0
+    foreach ($it in $Items) {
+        $r = New-Object System.Windows.Shapes.Rectangle; $r.Width = 14; $r.Height = 3; $r.Fill = Brush $it[1]; $r.Margin = Th 0 0 6 0; $r.VerticalAlignment = 'Center'; Add-Child $wp $r
+        $t = New-Text $it[0] 11.5 '#8B93A7'; $t.Margin = Th 0 0 16 0; Add-Child $wp $t
+    }
+    return $wp
+}
+function Show-GameDialog([string]$Key) {
+    $g = Read-GameFile $Key
+    if (-not $g -or -not @($g.Sessions).Count) { Write-UiLog "Pas encore de partie notée pour ce jeu."; return }
+    $ses = @($g.Sessions); $last = $ses[-1]
+    $w = New-Dialog "$AppName : $($g.Name)" 780
+    $script:GameWin = $w; $script:GameAction = $null
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text $g.Name 20 '#FFFFFF' 'Bold')
+    $tot = ($ses | ForEach-Object { [double]$_.Min } | Measure-Object -Sum).Sum
+    $sub = New-Text ("{0} partie{1} notée{1} · {2} de jeu{3}" -f $ses.Count, $(if ($ses.Count -gt 1) { 's' } else { '' }), (Format-GameTime $tot), $(if ($g.Store) { " · " + $g.Store } else { '' })) 13 '#A9B0C2'
+    $sub.Margin = Th 0 4 0 12; Add-Child $sp $sub
+    $withFps = @($ses | Where-Object { $null -ne $_.Fps })
+    # Chiffres clés
+    $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 4
+    if ($null -ne $last.Fps) { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' ("{0} FPS" -f [int][math]::Round([double]$last.Fps)) ("1 % low {0}" -f [int][math]::Round([double]$last.Low1))) }
+    else { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' (Format-GameTime ([double]$last.Min)) 'FPS non mesurés') }
+    $recent = @($withFps | Select-Object -Last 5)
+    if ($recent.Count) { Add-Child $ug (New-StatTile ("MOYENNE ({0} DERNIÈRES)" -f $recent.Count) ("{0} FPS" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Fps } | Measure-Object -Average).Average))) ("1 % low {0}" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Low1 } | Measure-Object -Average).Average)))) }
+    $gt = @($ses | Where-Object { $null -ne $_.GpuT } | ForEach-Object { [double]$_.GpuT })
+    if ($gt.Count) { Add-Child $ug (New-StatTile 'CARTE GRAPHIQUE' ("{0} °C" -f [int]($gt | Measure-Object -Maximum).Maximum) 'température max notée') }
+    $stm = (@($withFps | ForEach-Object { [double]$_.Min }) | Measure-Object -Sum).Sum; $stn = (@($withFps | ForEach-Object { [double]$_.Stut }) | Measure-Object -Sum).Sum
+    if ($stm -gt 0) { Add-Child $ug (New-StatTile 'SACCADES' ("{0:N0} / h" -f ($stn * 60 / $stm)) 'en moyenne') }
+    Add-Child $sp $ug
+    # Évolution partie après partie
+    if ($withFps.Count -ge 2) {
+        $h = New-Text 'PARTIE APRÈS PARTIE' 11.5 '#6B7389' 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
+        $lastN = @($withFps | Select-Object -Last 30)
+        Add-Child $sp (New-LineChart @(@{ V = @($lastN | ForEach-Object { [double]$_.Fps }); Color = '#7C5CFF' }, @{ V = @($lastN | ForEach-Object { [double]$_.Low1 }); Color = '#8B93A7' }) 640 120)
+        Add-Child $sp (New-LegendLine @(@('FPS moyen', '#7C5CFF'), @('1 % low', '#8B93A7')))
+    }
+    if (@($last.Curve).Count -ge 2) {
+        $h = New-Text 'DERNIÈRE PARTIE, MINUTE PAR MINUTE' 11.5 '#6B7389' 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
+        Add-Child $sp (New-LineChart @(@{ V = @($last.Curve); Color = '#4ADE80' }) 640 90)
+    }
+    # Ce qui limite ce jeu et quoi faire
+    $h = New-Text 'CE QUI LIMITE CE JEU ET QUOI FAIRE' 11.5 '#6B7389' 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
+    # Verdict le plus fréquent sur les 5 dernières parties (une partie isolée peut tromper)
+    $ref = $last
+    $vs = @($ses | Select-Object -Last 5 | Where-Object { $_.Verdict } | Group-Object { $_.Verdict } | Sort-Object Count -Descending)
+    if ($vs.Count -and $vs[0].Name -ne "$($last.Verdict)") { $ref = @($vs[0].Group)[-1] }
+    $adv = @(Get-GameAdvice $ref)
+    if ($ref -ne $last) { foreach ($a in @(Get-GameAdvice $last)) { if ($a.T -notin @($adv | ForEach-Object { $_.T }) -and $a.C -ne '#4ADE80') { $adv += $a } } }
+    foreach ($a in $adv) {
+        $c = New-Object System.Windows.Controls.Border; $c.Background = Brush '#171A23'; $c.BorderBrush = Brush $a.C; $c.BorderThickness = Th 3 0 0 0; $c.CornerRadius = Corner 8; $c.Padding = Th 14 10 14 10; $c.Margin = Th 0 0 0 8
+        $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text $a.T 14 '#FFFFFF' 'SemiBold')
+        $d = New-Text $a.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
+        if ($a.B) {
+            $bw = New-Object System.Windows.Controls.WrapPanel; $bw.Margin = Th 0 8 0 0
+            foreach ($bb in @(@($a.B, $a.Ui), @($a.B2, $a.Ui2))) {
+                if (-not $bb[0]) { continue }
+                $btn = New-DlgButton $bb[0] 'ActionBtn'; $btn.Tag = $bb[1]; $btn.Margin = Th 0 0 8 0
+                $btn.Add_Click({ $script:GameAction = $this.Tag; $script:GameWin.Close() }); Add-Child $bw $btn
+            }
+            Add-Child $cs $bw
+        }
+        $c.Child = $cs; Add-Child $sp $c
+    }
+    # Meilleure et pire partie
+    $long = @($withFps | Where-Object { [double]$_.Min -ge 5 })
+    if ($long.Count -ge 3) {
+        $best = $long | Sort-Object { [double]$_.Fps } -Descending | Select-Object -First 1
+        $worst = $long | Sort-Object { [double]$_.Fps } | Select-Object -First 1
+        if ([double]$best.Fps -gt [double]$worst.Fps * 1.08) {
+            $h = New-Text 'MEILLEURE ET PIRE PARTIE' 11.5 '#6B7389' 'Bold'; $h.Margin = Th 0 8 0 8; Add-Child $sp $h
+            Add-Child $sp (New-Rich 'Meilleure' ("{0} FPS, {1}" -f [int][math]::Round([double]$best.Fps), (Format-GameDate $best.Start)) '')
+            Add-Child $sp (New-Rich 'Pire' ("{0} FPS, {1}" -f [int][math]::Round([double]$worst.Fps), (Format-GameDate $worst.Start)) '')
+            Add-Child $sp (New-Rich 'Pourquoi' (Get-GameWhy $worst $best) '')
+        }
+    }
+    # Dernières parties
+    $h = New-Text 'DERNIÈRES PARTIES' 11.5 '#6B7389' 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
+    $rl = @($ses | Select-Object -Last 10); [array]::Reverse($rl)
+    foreach ($s in $rl) {
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 8; $row.Padding = Th 12 7 12 7; $row.Margin = Th 0 0 0 4
+        $dp = New-Object System.Windows.Controls.DockPanel
+        $pl = New-VerdictPill $s; if ($pl) { [System.Windows.Controls.DockPanel]::SetDock($pl, 'Right'); Add-Child $dp $pl }
+        $bits = @((Format-GameDate $s.Start), (Format-GameTime ([double]$s.Min)))
+        if ($null -ne $s.Fps) { $bits += ("{0} FPS" -f [int][math]::Round([double]$s.Fps)); $bits += ("1 % low {0}" -f [int][math]::Round([double]$s.Low1)); $bits += ("{0} saccade{1}" -f [int]$s.Stut, $(if ([int]$s.Stut -gt 1) { 's' } else { '' })) }
+        if ($null -ne $s.GpuT) { $bits += ("GPU {0} °C" -f $s.GpuT) }
+        Add-Child $dp (New-Text ($bits -join '  ·  ') 12.5 '#C3CAD9')
+        $row.Child = $dp; Add-Child $sp $row
+    }
+    $tip = New-Text "FPS mesurés par PresentMon (outil d'Intel) sans rien injecter dans le jeu. 1 % low = les FPS des 1 % d'images les plus lentes : plus il est proche de la moyenne, plus c'est fluide." 11.5 '#6B7389'
+    $tip.Margin = Th 0 10 0 0; Add-Child $sp $tip
+    # Boutons
+    $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 16 0 0
+    $bc = New-DlgButton 'Fermer' 'PrimaryBtn'; $bc.Add_Click({ $script:GameWin.Close() }); [System.Windows.Controls.DockPanel]::SetDock($bc, 'Right'); Add-Child $row $bc
+    $bl = New-Object System.Windows.Controls.StackPanel; $bl.Orientation = 'Horizontal'
+    $bn = New-DlgButton "Ce n'est pas un jeu" 'GhostBtn'; $bn.Margin = Th 0 0 8 0; $bn.Add_Click({ $script:GameAction = 'notgame'; $script:GameWin.Close() }); Add-Child $bl $bn
+    $bd = New-DlgButton "Effacer l'historique" 'GhostBtn'; $bd.Add_Click({ $script:GameAction = 'forget'; $script:GameWin.Close() }); Add-Child $bl $bd
+    Add-Child $row $bl
+    Add-Child $sp $row
+    $sv.Content = $sp; $w.Content = $sv
+    [void]$w.ShowDialog()
+    $act = $script:GameAction; $script:GameAction = $null
+    if (-not $act) { return }
+    switch ($act) {
+        'notgame' {
+            if (Confirm-Box ("« $($g.Name) » n'est pas un jeu ?`n`nAEROX ne le suivra plus et efface ses parties notées.")) {
+                if ($g.Path) { $script:Settings.Gaming.Ignore = @(@($script:Settings.Gaming.Ignore) + @("$($g.Path)".ToLowerInvariant()) | Select-Object -Unique); Save-Settings }
+                Remove-Item -LiteralPath (Get-GameFile $Key) -Force -ErrorAction SilentlyContinue
+                Write-UiLog ("🎮 « {0} » n'est plus suivi." -f $g.Name); Refresh-Page
+            }
+        }
+        'forget' {
+            if (Confirm-Box ("Effacer les {0} partie(s) notée(s) de « {1} » ?" -f $ses.Count, $g.Name)) {
+                Remove-Item -LiteralPath (Get-GameFile $Key) -Force -ErrorAction SilentlyContinue
+                Write-UiLog ("🎮 Historique de « {0} » effacé." -f $g.Name); Refresh-Page
+            }
+        }
+        'page-perf' { Go-Page 'perf' }
+        'display-fix' { $d = @(Get-Displays) | Where-Object { $_.Primary } | Select-Object -First 1; Set-DisplayWithConfirm $d $null }
+        default { Invoke-UiCommand @{ Kind = 'ui'; Def = @{ UI = $act } } }
     }
 }
 
@@ -3777,13 +4466,17 @@ $window.Add_SourceInitialized({
 })
 $window.Add_Closing({
     param($s, $e)
+    # Mode discret : la croix cache AEROX près de l'horloge (il continue de noter les parties)
+    if ($script:Settings.Gaming.Tray -and -not $script:QuitNow) { $e.Cancel = $true; try { Hide-ToTray } catch { Write-Bug -Context 'Zone de notification' -ErrorRecord $_ }; return }
     if ($script:Job) {
         $r = [System.Windows.MessageBox]::Show("Une opération est en cours. Quitter quand même ?`n(Mieux vaut attendre la fin, surtout pendant une réparation ou des mises à jour.)", $AppName, 'YesNo', 'Warning')
         if ($r -ne 'Yes') { $e.Cancel = $true; return } else { try { $script:Job.PS.Stop() } catch {} }
     }
+    try { Stop-GameSession } catch { Write-Bug -Context 'Gaming : fin de partie' -ErrorRecord $_ }
     try { Stop-Monitoring } catch {}
     try { [AeroxHotkey]::Unregister() } catch {}
     try { if ($script:Ov) { $script:Ov.Close() } } catch {}
+    try { if ($script:Tray) { $script:Tray.Visible = $false; $script:Tray.Dispose(); $script:Tray = $null } } catch {}
 })
 
 # Rafraîchissement : journal, barre de progression, scan en direct, nouvelle version
@@ -3792,7 +4485,8 @@ $timer.Interval = [TimeSpan]::FromMilliseconds(150)
 $timer.Add_Tick({
     try {
         Flush-Queue
-        try { Invoke-MonitorTick } catch { Write-Bug -Context 'Moniteur' -ErrorRecord $_ }
+        if ($script:ShowEvent -and $script:ShowEvent.WaitOne(0)) { Show-MainWindow '' }
+        try { Invoke-MonitorTick } catch { Write-Bug -Context 'Gaming' -ErrorRecord $_ }
         if ($script:Job) {
             $p = $sync.Progress
             if ($p -ge 0) { $Progress.IsIndeterminate = $false; $Progress.Value = $p } else { $Progress.IsIndeterminate = $true }
@@ -3843,14 +4537,30 @@ $window.Add_ContentRendered({
     Close-Splash
     if ($script:OvStarted) { return }
     $script:OvStarted = $true
+    if ($script:StartHidden) { try { Hide-ToTray $false } catch { Write-Bug -Context 'Mode discret' -ErrorRecord $_ } }
     if ($script:Settings.Overlay.Visible) { try { Show-Overlay $true } catch { Write-Bug -Context 'Overlay au démarrage' -ErrorRecord $_ } }
+    # Mode discret : nouveautés et bilan d'après optimisation attendent que la fenêtre soit ouverte
+    if ($script:StartHidden) { $script:DeferredStart = $true } else { Invoke-StartupExtras }
+})
+function Invoke-StartupExtras {
     try { Show-WhatsNewIfUpdated } catch { Write-Bug -Context 'Quoi de neuf' -ErrorRecord $_ }
     if ($script:Settings.PostOptimize) {
         $script:Settings.PostOptimize = $false; Save-Settings
         Write-UiLog "Bilan après l'optimisation complète : diagnostic en cours…"
         Start-Diagnostic
     }
-})
+}
+# Lancé avec Windows (mode discret) : fenêtre cachée près de l'horloge, rien ne s'affiche
+$script:StartHidden = ([bool]$AeroxDiscreet -and [bool]$script:Settings.Gaming.Tray)
+if ($script:StartHidden) { $window.ShowInTaskbar = $false; $window.ShowActivated = $false; $window.WindowStartupLocation = 'Manual'; $window.Left = -32000; $window.Top = -32000; Close-Splash }
+try { Update-TrayIcon } catch { Write-Bug -Context 'Zone de notification' -ErrorRecord $_ }
+# Un 2e lancement d'AEROX (raccourci) réaffiche la fenêtre cachée
+try {
+    $evs = New-Object System.Security.AccessControl.EventWaitHandleSecurity
+    foreach ($sid in 'S-1-5-11', 'S-1-5-32-544', 'S-1-5-18') { $evs.AddAccessRule((New-Object System.Security.AccessControl.EventWaitHandleAccessRule((New-Object System.Security.Principal.SecurityIdentifier($sid)), ([System.Security.AccessControl.EventWaitHandleRights]'Synchronize, Modify'), 'Allow'))) }
+    $evNew = $false
+    $script:ShowEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, 'Local\AeroxPCCare_Ouvrir', [ref]$evNew, $evs)
+} catch { $script:ShowEvent = $null }
 Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
