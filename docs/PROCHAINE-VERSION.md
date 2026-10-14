@@ -4,6 +4,7 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
 ## Prêt sur la branche 2.0.1
 
+- Gaming, aucune affirmation sans preuve (demande de Sam : « fiable à 100 % ») : « processeur » seulement si un cœur est à ≥ 90 % avec la carte graphique < 75 %, ou le processeur à ≥ 80 % avec la carte graphique < 85 % ; pas de verdict si moins de 60 mesures avec le jeu au premier plan (« Pas de conclusion » plutôt qu'une conclusion fausse) ; la fiche affiche les mesures qui justifient le verdict (carte graphique %, processeur %, cœur le plus chargé %, FPS / Hz).
 - Gaming, verdict plus juste (retour de Sam : Roblox sur Ryzen 7 7800X3D annoncé « limité par le processeur » avec la carte graphique à 30 %) : « processeur » seulement si un cœur est à ≥ 85 % ou le processeur à ≥ 80 % ; sinon, carte graphique < 70 % = « limité par le jeu lui-même » (moteur sur 1-2 cœurs, limite d'images). Limite de FPS reconnue aussi quand les FPS bougent un peu (carte graphique < 70 %). Nouveau conseil vert « déjà plus de FPS que ton écran n'en affiche ». Le verdict est recalculé à la lecture des fiches, donc les anciennes parties sont corrigées aussi.
 - Gaming : Roblox (RobloxPlayerBeta dans AppData\Local\Roblox\Versions) reconnu par son dossier, donc aussi en fenêtre ; avant, seulement en plein écran via la détection générale.
 

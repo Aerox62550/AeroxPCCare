@@ -3951,6 +3951,7 @@ function New-GameRecord($S, $St, $Mins, [datetime]$End, $Ctx) {
     if ($S.NL) { $r.CpuL = [int][math]::Round($S.CpuL / $S.NL) }
     if ($S.NGpu) { $r.GpuL = [int][math]::Round($S.GpuL / $S.NGpu) }
     if ($S.NCore) { $r.Core = [int][math]::Round($S.Core / $S.NCore) }
+    $r.N = [int]$S.N
     if ($S.Fps -and $S.Fps.Count -ge 30) {
         $a = @($S.Fps); $mean = ($a | Measure-Object -Average).Average
         $var = 0.0; foreach ($x in $a) { $var += ($x - $mean) * ($x - $mean) }
@@ -3980,9 +3981,11 @@ function Get-GameVerdict($R) {
     # FPS très stables sur une limite, ou carte graphique peu utilisée avec des FPS posés sur une limite courante
     if ($onCap -and ($null -eq $gl -or $gl -lt 85) -and ($cv -le 0.035 -or ($null -ne $gl -and $gl -lt 70 -and $cv -le 0.08))) { return @{ Id = 'cap'; Cap = [int][math]::Round([double](Get-RecValue $R 'Med')) } }
     if ($null -eq $gl) { return @{ Id = '' } }
+    # Pas assez de mesures pendant qu'on jouait vraiment (jeu au premier plan) : pas de conclusion plutôt qu'une conclusion fausse
+    $n = Get-RecValue $R 'N'; if ($null -ne $n -and [int]$n -lt 60) { return @{ Id = '' } }
     if ($gl -ge 85) { return @{ Id = 'gpu' } }
-    # Processeur vraiment saturé (un cœur à fond ou tout le processeur très occupé)
-    if (($null -ne $core -and $core -ge 85) -or ($null -ne $cl -and $cl -ge 80)) { return @{ Id = 'cpu' } }
+    # Processeur vraiment saturé ET carte graphique qui attend (sinon, on n'accuse pas le processeur)
+    if (($null -ne $core -and $core -ge 90 -and $gl -lt 75) -or ($null -ne $cl -and $cl -ge 80 -and $gl -lt 85)) { return @{ Id = 'cpu' } }
     # Ni l'un ni l'autre à fond : c'est le jeu qui fixe le rythme (moteur sur 1-2 cœurs, limite d'images…)
     if ($gl -lt 70) { return @{ Id = 'engine' } }
     return @{ Id = 'mixed' }
@@ -4090,7 +4093,10 @@ function Get-GameAdvice($R) {
         }
         'engine' { [void]$out.Add(@{ C = '#8B93A7'; T = 'Limité par le jeu lui-même'; D = ("Ni ton processeur ni ta carte graphique (utilisée à {0} %) ne sont à fond : c'est le jeu qui fixe le rythme. Son moteur n'utilise souvent qu'un ou deux cœurs du processeur, ou il a une limite d'images dans ses options (« Max FPS », « Fréquence d'images maximale »). Très courant avec Roblox, Minecraft, les jeux compétitifs ou anciens : ce n'est pas un défaut du PC." -f $gl) }) }
         'mixed' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Bien équilibré'; D = "Ni le processeur ni la carte graphique ne bloquent franchement : le PC est bien réglé pour ce jeu." }) }
-        default { if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Analyse incomplète'; D = "Installe le module de températures (en bas de l'onglet Gaming) pour savoir ce qui limite ce jeu." }) } }
+        default {
+            if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "L'utilisation de la carte graphique n'a pas pu être lue : installe le module de températures (en bas de l'onglet Gaming) pour savoir ce qui limite ce jeu. AEROX préfère ne rien affirmer sans mesure." }) }
+            else { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "Pas assez de mesures pendant que le jeu était au premier plan pour conclure sans risque de se tromper. La prochaine partie le dira." }) }
+        }
     }
     $flags = @(Get-RecValue $R 'Flags')
     if ($flags -contains 'hot-gpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Carte graphique très chaude ({0} °C)" -f (Get-RecValue $R 'GpuT')); D = "Trop chaude, elle ralentit pour se protéger : moins de FPS. Dépoussière le PC (bombe d'air sec, PC éteint), dégage les grilles d'aération, et pour un portable pose-le sur une surface dure." }) }
@@ -4385,6 +4391,13 @@ function Show-GameDialog([string]$Key) {
     $ref = $last
     $vs = @($ses | Select-Object -Last 5 | Where-Object { $_.Verdict } | Group-Object { $_.Verdict } | Sort-Object Count -Descending)
     if ($vs.Count -and $vs[0].Name -ne "$($last.Verdict)") { $ref = @($vs[0].Group)[-1] }
+    # Les mesures sur lesquelles repose le verdict, pour que chacun puisse vérifier
+    $ev = @()
+    if ($null -ne $ref.GpuL) { $ev += ("carte graphique {0} %" -f $ref.GpuL) }
+    if ($null -ne $ref.CpuL) { $ev += ("processeur {0} %" -f $ref.CpuL) }
+    if ($null -ne $ref.Core) { $ev += ("cœur le plus chargé {0} %" -f $ref.Core) }
+    if ($null -ne $ref.Fps -and $ref.Hz) { $ev += ("{0} FPS pour un écran à {1} Hz" -f [int][math]::Round([double]$ref.Fps), $ref.Hz) }
+    if ($ev.Count) { $t = New-Text ("Utilisation moyenne mesurée pendant la partie : " + ($ev -join ' · ')) 12 '#8B93A7'; $t.Margin = Th 0 0 0 8; Add-Child $sp $t }
     $adv = @(Get-GameAdvice $ref)
     if ($ref -ne $last) { foreach ($a in @(Get-GameAdvice $last)) { if ($a.T -notin @($adv | ForEach-Object { $_.T }) -and $a.C -ne '#4ADE80') { $adv += $a } } }
     foreach ($a in $adv) {
