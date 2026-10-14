@@ -1928,6 +1928,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.0.1' = @("Gaming : Roblox est reconnu même en fenêtre (pas seulement en plein écran).")
     '2.0.0' = @("Nouvel onglet Gaming (à la place de « Moniteur ») : AEROX reconnaît tes jeux tout seul et note chaque partie (FPS moyens, 1 % low, saccades, températures).", "À la fin de la partie : un résumé en une ligne (notification + dans AEROX), et une fiche par jeu avec l'évolution partie après partie, ce qui limite le jeu (processeur, carte graphique, limite de FPS) et quoi faire.", "Option : garder AEROX près de l'horloge quand tu le fermes, et le lancer avec Windows en mode discret pour ne rater aucune partie. Rien n'est injecté dans les jeux : aucun risque avec les anti-triche.")
     '1.9.0' = @("Après chaque réparation, AEROX vérifie que le problème est vraiment réglé. Sinon, il te le dit et t'explique quoi faire.", "Pilotes : plus de boucle « mets à jour » quand tu as déjà installé la dernière version proposée pour ta carte, et un pilote que Windows repropose sans arrêt est signalé au lieu d'être réinstallé.")
     '1.8.0' = @("« Quoi de neuf » : cette fenêtre s'affiche après chaque mise à jour pour te montrer les nouveautés (onglet Aide pour la revoir).")
@@ -3798,7 +3799,9 @@ $script:GameRoots = @(
     @('\\GOG Games\\([^\\]+)\\', 'GOG'),
     @('\\XboxGames\\([^\\]+)\\', 'Xbox'),
     @('\\Rockstar Games\\([^\\]+)\\', 'Rockstar'),
-    @('\\([^\\]+)\\_(?:retail|classic|classic_era|ptr|beta)_\\', 'Battle.net')
+    @('\\([^\\]+)\\_(?:retail|classic|classic_era|ptr|beta)_\\', 'Battle.net'),
+    @('\\Roblox\\Versions\\[^\\]+\\RobloxPlayerBeta\.exe$', 'Roblox', 'Roblox'),
+    @('\\Minecraft Launcher\\|\\\.minecraft\\', 'Minecraft', 'Minecraft (Java)')
 )
 $script:GameRootSkip = '(?i)^(Launcher|Riot Client|Epic Online Services|DirectXRedist|DirectX|Steamworks Shared|Social Club|Rockstar Games Launcher|EA Desktop|EA app|Battle\.net|Ubisoft Connect|GalaxyClient|Steam|Common Redist|_CommonRedist|Steam Controller Configs|SteamVR)$'
 $script:GameExeSkip = '(?i)(launcher|crash|setup|unins|redist|dxsetup|easyanticheat|battleye|beservice|prereq|updater|helper|cefprocess|webhelper|overlay|bootstrap|install|anticheat|vanguard|dedicated|server)'
@@ -3827,6 +3830,7 @@ function Get-GameFromPath([string]$Path) {
     foreach ($r in $script:GameRoots) {
         $m = [regex]::Match($Path, $r[0], 'IgnoreCase')
         if ($m.Success) {
+            if ($r.Count -ge 3) { return @{ Name = $r[2]; Store = $r[1] } }   # nom fixe (Roblox…)
             $n = $m.Groups[1].Value
             if ($n -match $script:GameRootSkip) { return $null }
             return @{ Name = (Format-GameName $n); Store = $r[1] }
