@@ -1880,20 +1880,52 @@ function Open-QuickAssistForSession([string]$Qa) {
             $how = 'system32'
             [void](Start-AsSessionUser $Qa)
         }
-        $ok = $false
-        if ($how -ne 'aucun') {
-            for ($i = 0; $i -lt 12 -and -not $ok; $i++) {
-                if (@(Get-Process -Name quickassist -ErrorAction SilentlyContinue | Where-Object { $before -notcontains $_.Id }).Count) { $ok = $true } else { Start-Sleep -Milliseconds 500 }
-            }
-        }
     } finally { $window.Cursor = $null }
-    if ($ok) { Write-UiLog "Assistance rapide ouverte."; return }
-    Write-Bug -Context 'Assistance rapide (compte ADMIN séparé)' -ErrorRecord ("ne s'est pas ouverte : session={0}, appli Store pour ce compte={1}, essai={2}, tâche={3}" -f $user, [bool]$upkg, $how, $script:LastSessionTask)
+    if ($how -eq 'aucun') { Show-QuickAssistFail $user $false $how $Qa; return }
+    # Vérifie pendant 6 secondes qu'elle s'ouvre, sans figer la fenêtre
+    $script:QaCheck = @{ Before = $before; N = 0; User = $user; Pkg = [bool]$upkg; How = $how; Qa = $Qa }
+    $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromMilliseconds(500)
+    $t.Add_Tick({
+        $c = $script:QaCheck
+        if (@(Get-Process -Name quickassist -ErrorAction SilentlyContinue | Where-Object { $c.Before -notcontains $_.Id }).Count) { $this.Stop(); Write-UiLog "Assistance rapide ouverte."; return }
+        $c.N++
+        if ($c.N -ge 12) { $this.Stop(); Show-QuickAssistFail $c.User $c.Pkg $c.How $c.Qa }
+    })
+    $t.Start()
+}
+function Show-QuickAssistFail([string]$user, [bool]$upkg, [string]$how, [string]$Qa) {
+    Write-Bug -Context 'Assistance rapide (compte ADMIN séparé)' -ErrorRecord ("ne s'est pas ouverte : session={0}, appli Store pour ce compte={1}, essai={2}, tâche={3}" -f $user, $upkg, $how, $script:LastSessionTask)
     if (-not $upkg -and -not (Test-Path -LiteralPath $Qa)) {
         if (Confirm-Box "Assistance rapide n'est pas installée pour ce compte.`n`nC'est l'outil gratuit de Microsoft pour l'aide à distance. Ouvrir le Microsoft Store pour l'installer ?") { Open-WinUri 'ms-windows-store://pdp/?ProductId=9P7BP5VNWKX5' }
         return
     }
     [System.Windows.MessageBox]::Show("Assistance rapide n'a pas pu s'ouvrir toute seule (AEROX tourne avec le mot de passe d'un autre compte).`n`nOuvre-la toi-même : menu Démarrer, tape « Assistance rapide », puis Entrée.$(if (-not $upkg) { "`n`nSi elle n'apparaît pas, installe-la depuis le Microsoft Store (recherche « Assistance rapide »)." })", $AppName, 'OK', 'Information') | Out-Null
+}
+
+# ---------------------------------------------------------------- Envoi au relais sans figer la fenêtre
+# La requête part dans un fil séparé ; $Done reçoit @{ Ok; R; Err } quand elle est finie (20 s au plus)
+function Send-RelayAsync([string]$Uri, [byte[]]$Body, [scriptblock]$Done) {
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript({
+        param($u, $b)
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
+        try { $r = Invoke-RestMethod -Uri $u -Method Post -Body $b -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -TimeoutSec 20 -ErrorAction Stop; @{ Ok = $true; R = $r } }
+        catch { $m = $_.Exception.Message; try { $e = $_.ErrorDetails.Message | ConvertFrom-Json; if ($e.error) { $m = $e.error } } catch {}; @{ Ok = $false; Err = $m } }
+    }).AddArgument($Uri).AddArgument($Body)
+    $h = $ps.BeginInvoke()
+    $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromMilliseconds(200)
+    $t.Tag = @{ PS = $ps; H = $h; Done = $Done }
+    $t.Add_Tick({
+        $x = $this.Tag
+        if (-not $x.H.IsCompleted) { return }
+        $this.Stop()
+        $res = $null
+        try { $res = @($x.PS.EndInvoke($x.H))[0] } catch { $res = @{ Ok = $false; Err = $_.Exception.Message } }
+        try { $x.PS.Dispose() } catch {}
+        if (-not $res) { $res = @{ Ok = $false; Err = "pas de réponse du service d'envoi" } }
+        try { & $x.Done $res } catch { Write-Bug -Context 'Envoi au relais' -ErrorRecord $_ }
+    })
+    $t.Start()
 }
 
 # ---------------------------------------------------------------- Avis (note + commentaire, publiés sur GitHub)
@@ -1951,12 +1983,20 @@ function Show-ReviewDialog {
             $btn.IsEnabled = $false; $btn.Content = 'Envoi...'
             [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
             $payload = @{ note = $script:RevNote; commentaire = $script:RevText.Text.Trim(); pseudo = $script:RevPseudo.Text.Trim(); version = $AppVersion; id = "$($script:Settings.InstallId)" } | ConvertTo-Json -Compress
-            $r = Invoke-RestMethod -Uri ($sync.BugRelay.TrimEnd('/') + '/avis') -Method Post -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -TimeoutSec 20 -ErrorAction Stop
-            [System.Windows.Input.Mouse]::OverrideCursor = $null
-            $script:Settings.ReviewSent = $true; $script:Settings.ReviewNote = $script:RevNote; $script:Settings.ReviewText = $script:RevText.Text.Trim(); $script:Settings.ReviewPseudo = $script:RevPseudo.Text.Trim(); Save-Settings
-            Write-UiLog ("⭐ Avis " + $(if ($r.updated) { 'modifié' } else { 'publié' }) + ". Merci !")
-            [System.Windows.MessageBox]::Show("Merci pour ton avis ! Il est publié sur la page GitHub d'AEROX PC Care.", $AppName, 'OK', 'Information') | Out-Null
-            $script:RevWin.Close()
+            $script:RevBtn = $btn
+            Send-RelayAsync ($sync.BugRelay.TrimEnd('/') + '/avis') ([System.Text.Encoding]::UTF8.GetBytes($payload)) {
+                param($res)
+                [System.Windows.Input.Mouse]::OverrideCursor = $null
+                if (-not $res.Ok) {
+                    $script:RevBtn.IsEnabled = $true; $script:RevBtn.Content = 'Envoyer'
+                    [System.Windows.MessageBox]::Show("L'avis n'a pas pu être envoyé : $($res.Err)", $AppName, 'OK', 'Warning') | Out-Null
+                    return
+                }
+                $script:Settings.ReviewSent = $true; $script:Settings.ReviewNote = $script:RevNote; $script:Settings.ReviewText = $script:RevText.Text.Trim(); $script:Settings.ReviewPseudo = $script:RevPseudo.Text.Trim(); Save-Settings
+                Write-UiLog ("⭐ Avis " + $(if ($res.R.updated) { 'modifié' } else { 'publié' }) + ". Merci !")
+                [System.Windows.MessageBox]::Show("Merci pour ton avis ! Il est publié sur la page GitHub d'AEROX PC Care.", $AppName, 'OK', 'Information') | Out-Null
+                $script:RevWin.Close()
+            }
         } catch {
             [System.Windows.Input.Mouse]::OverrideCursor = $null
             $btn.IsEnabled = $true; $btn.Content = 'Envoyer'
@@ -1974,6 +2014,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
     '2.1.0' = @("Interface rafraîchie : une icône pour chaque outil, des cartes qui s'éclairent au survol, des pages qui apparaissent en douceur et des textes plus lisibles.", "Accueil : l'état de ton PC est mis en avant.", "Gaming rangé en 3 onglets : « Mes jeux », « En direct » et « Overlay en jeu ».")
     '2.0.2' = @("Caché près de l'horloge, AEROX consomme beaucoup moins de mémoire : il libère son affichage et rend à Windows la mémoire inutilisée. Tout revient instantanément quand tu le rouvres.")
     '2.0.1' = @("Gaming : Roblox est reconnu même en fenêtre (pas seulement en plein écran).", "Gaming : analyse plus juste. Quand ni le processeur ni la carte graphique ne sont à fond, AEROX dit que c'est le jeu qui fixe le rythme (Roblox, Minecraft…) au lieu d'accuser le processeur, et il te dit quand tu as déjà plus de FPS que ton écran n'en affiche.")
@@ -2317,12 +2358,21 @@ function Show-BugReport([string]$Prefill) {
                 if ($title.Length -gt 100) { $title = $title.Substring(0, 97) + '...' }
                 $payload = @{ title = $title; body = (Build-BugReport $script:RptDesc.Text); version = $AppVersion } | ConvertTo-Json -Compress
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
-                $r = Invoke-RestMethod -Uri $sync.BugRelay -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -TimeoutSec 20 -ErrorAction Stop
-                [System.Windows.Input.Mouse]::OverrideCursor = $null
-                Save-ReportDone
-                Write-UiLog ("✔ Rapport de bug envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci !")
-                [System.Windows.MessageBox]::Show("Rapport envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci, ça aide à corriger le logiciel !", $AppName, 'OK', 'Information') | Out-Null
-                $script:RptWin.Close()
+                $script:RptBtn = $btn
+                Send-RelayAsync $sync.BugRelay $bytes {
+                    param($res)
+                    [System.Windows.Input.Mouse]::OverrideCursor = $null
+                    if (-not $res.Ok) {
+                        $script:RptBtn.IsEnabled = $true; $script:RptBtn.Content = 'Envoyer le rapport'
+                        [System.Windows.MessageBox]::Show("Le rapport n'a pas pu être envoyé : $($res.Err)`n`nUtilise « Copier le rapport » et colle-le dans un message au développeur.", $AppName, 'OK', 'Warning') | Out-Null
+                        return
+                    }
+                    $r = $res.R
+                    Save-ReportDone
+                    Write-UiLog ("✔ Rapport de bug envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci !")
+                    [System.Windows.MessageBox]::Show("Rapport envoyé" + $(if ($r.number) { " (n°$($r.number))" } else { '' }) + ". Merci, ça aide à corriger le logiciel !", $AppName, 'OK', 'Information') | Out-Null
+                    $script:RptWin.Close()
+                }
             } catch {
                 [System.Windows.Input.Mouse]::OverrideCursor = $null
                 $btn.IsEnabled = $true; $btn.Content = 'Envoyer le rapport'
@@ -2573,7 +2623,8 @@ function Show-UninstallDialog($Issue) {
             foreach ($a in $g[1]) {
                 $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 12 10; $b.Margin = Th 0 0 6 6
                 $dp = New-Object System.Windows.Controls.DockPanel
-                $btn = New-DlgButton 'Désinstaller' $(if ($a.Tag -eq 'reco') { 'PrimaryBtn' } else { 'ActionBtn' }); $btn.Tag = $a; $btn.VerticalAlignment = 'Center'; $btn.Margin = Th 12 0 0 0
+                $btn = New-DlgButton $(if ($a.Pending) { 'En cours…' } else { 'Désinstaller' }) $(if ($a.Tag -eq 'reco') { 'PrimaryBtn' } else { 'ActionBtn' }); $btn.Tag = $a; $btn.VerticalAlignment = 'Center'; $btn.Margin = Th 12 0 0 0
+                if ($a.Pending) { $btn.IsEnabled = $false }
                 $btn.Add_Click({ Invoke-UninstallApp $this.Tag })
                 [System.Windows.Controls.DockPanel]::SetDock($btn, 'Right'); Add-Child $dp $btn
                 if ($a.Location) {
@@ -2588,6 +2639,8 @@ function Show-UninstallDialog($Issue) {
                 if ($a.Location) { $lt = New-Text $a.Location 11 '#6E768B'; $lt.FontFamily = 'Cascadia Mono, Consolas'; $lt.TextTrimming = 'CharacterEllipsis'; $lt.TextWrapping = 'NoWrap'; $lt.ToolTip = $a.Location; Add-Child $t $lt }
                 elseif ($a.Kind -eq 'win32') { Add-Child $t (New-Text 'Emplacement non indiqué par le logiciel' 11 '#6E768B') }
                 if ($a.Reason) { $r = New-Text $a.Reason 12 $(if ($a.Tag -eq 'reco') { '#FFB547' } else { '#B9A8FF' }); $r.Margin = Th 0 3 0 0; Add-Child $t $r }
+                if ($a.Pending) { $r = New-Text "Désinstallation en cours : termine-la dans la fenêtre du désinstalleur. Le logiciel disparaîtra d'ici dès qu'il sera vraiment désinstallé." 12 '#4ADE80'; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
+                elseif ($a.NotRemoved) { $r = New-Text "Toujours installé : la désinstallation a été annulée ou n'a pas abouti." 12 '#FFB547'; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
                 Add-Child $dp $t
                 $b.Child = $dp; Add-Child $script:UniList $b
             }
@@ -2598,18 +2651,45 @@ function Show-UninstallDialog($Issue) {
     $bSet.Add_Click({ Open-WinUri 'ms-settings:appsfeatures' })
     $bClose.Add_Click({ $script:UniWin.Close() })
     & $script:RenderUni
+    # Toutes les 2 secondes : les désinstallations lancées sont-elles vraiment finies ?
+    $ut = New-Object System.Windows.Threading.DispatcherTimer; $ut.Interval = [TimeSpan]::FromSeconds(2)
+    $ut.Add_Tick({ try { if (Update-UninstallPending) { & $script:RenderUni } } catch {} })
+    $ut.Start()
     [void]$w.ShowDialog()
+    $ut.Stop()
+    [void](Update-UninstallPending $true)
     if ($Issue -and -not @($script:UniApps | Where-Object { $_.Tag -eq 'reco' -and -not $_.Removed }).Count) { $Issue.Status = 'done'; Update-DiagBadge; Refresh-Page }
+}
+# Vrai si une désinstallation lancée a changé d'état ; à la fermeture ($Final), ce qui n'est pas fini est signalé
+function Update-UninstallPending([bool]$Final = $false) {
+    $changed = $false
+    foreach ($a in @($script:UniApps | Where-Object { $_.Pending })) {
+        if (-not (Test-Path -LiteralPath $a.Key)) {
+            $a.Pending = $false; $a.Removed = $true; $changed = $true
+            Add-Change -Kind 'info' -Title ("Désinstallation de « {0} »" -f $a.Name) -Detail "Pour le récupérer : réinstalle-le depuis son site officiel."
+            Write-UiLog ("✔ « {0} » désinstallé." -f $a.Name)
+        } elseif ($Final) {
+            $a.Pending = $false; $a.NotRemoved = $true
+            Write-UiLog ("« {0} » est toujours installé (désinstallation annulée, pas finie ou refusée par le logiciel)." -f $a.Name)
+        }
+    }
+    return $changed
 }
 
 function Invoke-UninstallApp($A) {
     $msg = "Désinstaller « $($A.Name) » ?" + $(if ($A.Kind -eq 'store') { "`n`nL'appli sera retirée tout de suite (elle se réinstalle depuis le Microsoft Store si besoin)." } else { "`n`nLe désinstalleur du logiciel va s'ouvrir : suis ses étapes (attention aux cases « garder mes données » ou aux offres qu'il peut proposer)." })
     if (-not (Confirm-Box $msg)) { return }
     try {
-        Uninstall-App $A.Kind $A.Cmd $A.Name
-        Add-Change -Kind 'info' -Title ("Désinstallation de « {0} »" -f $A.Name) -Detail $(if ($A.Kind -eq 'store') { "Pour la récupérer : Microsoft Store." } else { "Pour le récupérer : réinstalle-le depuis son site officiel." })
-        Write-UiLog ("✔ Désinstallation de « {0} » {1}." -f $A.Name, $(if ($A.Kind -eq 'store') { 'terminée' } else { 'lancée' }))
-        $A.Removed = $true
+        Uninstall-App $A.Kind $A.Cmd $A.Name ([bool]$A.PerUser)
+        if ($A.Kind -eq 'store' -or -not $A.Key) {
+            $A.Removed = $true
+            Add-Change -Kind 'info' -Title ("Désinstallation de « {0} »" -f $A.Name) -Detail "Pour la récupérer : Microsoft Store."
+            Write-UiLog ("✔ « {0} » désinstallé." -f $A.Name)
+        } else {
+            # Pas encore « désinstallé » : on attend que le désinstalleur ait vraiment fini (annulation ou échec possibles)
+            $A.Pending = $true
+            Write-UiLog ("Désinstalleur de « {0} » ouvert : suis ses étapes." -f $A.Name)
+        }
         & $script:RenderUni
     } catch {
         Write-UiLog ("❌ Impossible de désinstaller « {0} » : {1}" -f $A.Name, $_.Exception.Message)
