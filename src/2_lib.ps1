@@ -1583,13 +1583,17 @@ function Set-CompactOS([string]$State) {
 # OneDrive : les fichiers restent dans le cloud et s'ouvrent quand on clique dessus (téléchargés à ce moment-là)
 function Set-OneDriveOnlineOnly([string]$Folder) {
     if (@(Get-OneDriveFolders) -notcontains $Folder) { throw "Ce dossier n'est pas un dossier OneDrive de ce PC : $Folder" }
+    # OneDrive doit tourner : c'est lui qui libère la place, et seulement pour les fichiers déjà envoyés en ligne
+    if (-not (Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue)) { throw "OneDrive n'est pas lancé sur ce PC. Ouvre OneDrive, attends qu'il soit à jour (icône du nuage sans flèches), puis recommence." }
     Step "OneDrive : fichiers gardés uniquement en ligne"
     $before = [AeroxFiles]::LocalCloudSize($Folder)
-    $null = Invoke-Native 'attrib.exe' @('+U', '-P', '/S', '/D', (Join-Path $Folder '*')) -Quiet
+    $c = [AeroxFiles]::SetOnlineOnly($Folder)
     Start-Sleep -Seconds 5
     $after = [AeroxFiles]::LocalCloudSize($Folder)
     Log ("   ✔ {0} libérés pour l'instant (OneDrive continue en arrière-plan). Tes fichiers restent dans OneDrive et s'ouvrent d'un clic." -f (Format-Size ([math]::Max(0, $before - $after))))
-    Add-Change -Kind 'info' -Title "OneDrive : fichiers gardés uniquement en ligne" -Detail "Pour garder un dossier sur le PC (sans Internet) : clic droit dessus > « Toujours conserver sur cet appareil »."
+    if ($c[1]) { Log ("   • {0} élément(s) que tu avais choisi(s) de « toujours conserver sur cet appareil » n'ont pas été touchés." -f $c[1]) }
+    Log "   • Un fichier pas encore envoyé dans OneDrive reste sur le PC : OneDrive ne libère que ce qui est déjà en ligne."
+    Add-Change -Kind 'info' -Title "OneDrive : fichiers gardés uniquement en ligne" -Detail "Les dossiers que tu avais choisis de garder sur le PC n'ont pas été touchés. Pour en garder un autre (sans Internet) : clic droit dessus > « Toujours conserver sur cet appareil »."
 }
 
 # Fichiers en double dans les dossiers perso de la personne devant l'écran (Bureau, Documents, Images, Vidéos, Musique, Téléchargements)
@@ -2779,7 +2783,11 @@ function Get-InstalledApps {
     $active = @()
     try { $active = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | ForEach-Object { $_.displayName }) } catch {}
     $avs = @()
-    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+    # Logiciels de la machine + ceux de la personne devant l'écran (pas ceux du compte ADMIN quand on a tapé son mot de passe)
+    $su = Get-SessionUser
+    $userKey = "$($su.Hkcu)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', $userKey) {
+        $perUser = ($k -eq $userKey)
         foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) {
             if (-not $e.DisplayName -or $e.SystemComponent -eq 1 -or $e.ParentKeyName -or $e.ReleaseType -match 'Update|Hotfix') { continue }
             if (-not $e.UninstallString -and -not $e.QuietUninstallString) { continue }
@@ -2788,7 +2796,8 @@ function Get-InstalledApps {
             $date = $null; if ("$($e.InstallDate)" -match '^(\d{4})(\d{2})(\d{2})$') { try { $date = Get-Date -Year $matches[1] -Month $matches[2] -Day $matches[3] } catch {} }
             $loc = Get-AppLocation $e
             $o = @{ Kind = 'win32'; LastUsed = (Get-FolderLastUsed $loc); Name = $name; Publisher = "$($e.Publisher)"; Size = $(if ($e.EstimatedSize) { [double]$e.EstimatedSize * 1KB } else { 0 }); Date = $date
-                    Cmd = "$($e.UninstallString)"; Tag = ''; Reason = ''; Location = $loc; Drive = $(if ($loc -match '^([A-Za-z]:)') { $matches[1].ToUpper() } else { '' }) }
+                    Cmd = "$($e.UninstallString)"; Tag = ''; Reason = ''; Location = $loc; Drive = $(if ($loc -match '^([A-Za-z]:)') { $matches[1].ToUpper() } else { '' })
+                    Key = "$($e.PSPath)"; PerUser = $perUser }
             foreach ($r in $script:BloatRules) { if ($name -match $r.P -or "$($e.Publisher)" -match $r.P) { $o.Tag = $r.Tag; $o.Reason = $r.R; break } }
             if (-not $o.Tag -and $name -match $script:AvRule) { $avs += $o }
             [void]$list.Add($o)
@@ -2803,7 +2812,8 @@ function Get-InstalledApps {
         }
     }
     try {
-        foreach ($p in @(Get-AppxPackage -ErrorAction Stop | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -and $_.SignatureKind -ne 'System' })) {
+        $pk = $(if ($su.Other -and $su.Sid) { @(Get-AppxPackage -User $su.Sid -ErrorAction Stop) } else { @(Get-AppxPackage -ErrorAction Stop) })
+        foreach ($p in @($pk | Where-Object { -not $_.IsFramework -and -not $_.NonRemovable -and $_.SignatureKind -ne 'System' })) {
             foreach ($r in $script:StoreBloat) {
                 if ($p.Name -match $r.P) {
                     $nm = if ($script:StoreNames.ContainsKey($p.Name)) { $script:StoreNames[$p.Name] } else { ($p.Name -replace '^[^.]+\.', '') -replace '([a-z])([A-Z])', '$1 $2' }
@@ -2839,18 +2849,22 @@ function Test-Bloatware {
 }
 
 # Désinstallation (lance le désinstalleur officiel du logiciel)
-function Uninstall-App([string]$Kind, [string]$Cmd, [string]$Name) {
+# Lance le désinstalleur officiel. Les applis du Store sont retirées tout de suite ;
+# pour les autres, c'est la disparition de leur entrée dans Windows qui confirme la désinstallation.
+function Uninstall-App([string]$Kind, [string]$Cmd, [string]$Name, [bool]$PerUser = $false) {
+    $su = Get-SessionUser
     if ($Kind -eq 'store') {
-        Remove-AppxPackage -Package $Cmd -ErrorAction Stop
+        if ($su.Other -and $su.Sid) { Remove-AppxPackage -Package $Cmd -User $su.Sid -ErrorAction Stop } else { Remove-AppxPackage -Package $Cmd -ErrorAction Stop }
         return
     }
-    if ($Cmd -match '(?i)msiexec(\.exe)?\s.*?(\{[0-9A-F\-]+\})') {
-        Start-Process -FilePath "$env:SystemRoot\System32\msiexec.exe" -ArgumentList '/X', $matches[2]
-    } elseif ($Cmd -match '^\s*"([^"]+)"\s*(.*)$') {
-        if ($matches[2]) { Start-Process -FilePath $matches[1] -ArgumentList $matches[2] } else { Start-Process -FilePath $matches[1] }
-    } elseif ($Cmd -match '^(.+?\.exe)\s*(.*)$') {
-        if ($matches[2]) { Start-Process -FilePath $matches[1] -ArgumentList $matches[2] } else { Start-Process -FilePath $matches[1] }
-    } else { throw "Commande de désinstallation inconnue : $Cmd" }
+    $exe = $null; $arg = ''
+    if ($Cmd -match '(?i)msiexec(\.exe)?\s.*?(\{[0-9A-F\-]+\})') { $exe = "$env:SystemRoot\System32\msiexec.exe"; $arg = "/X $($matches[2])" }
+    elseif ($Cmd -match '^\s*"([^"]+)"\s*(.*)$') { $exe = $matches[1]; $arg = $matches[2] }
+    elseif ($Cmd -match '^(.+?\.exe)\s*(.*)$') { $exe = $matches[1]; $arg = $matches[2] }
+    else { throw "Commande de désinstallation inconnue : $Cmd" }
+    # Logiciel installé pour la personne devant l'écran : son désinstalleur tourne sur son compte (sinon il nettoierait le mauvais profil)
+    if ($PerUser -and $su.Other) { Start-AsSessionUser $exe $arg; return }
+    if ($arg) { Start-Process -FilePath $exe -ArgumentList $arg } else { Start-Process -FilePath $exe }
 }
 
 # ---------------------------------------------------------------- NETTOYAGE APPROFONDI (analyse + choix)
@@ -2986,14 +3000,32 @@ function Invoke-CleanMgr([string[]]$Handlers, [int]$Slot) {
         $v = if ($Handlers -contains $k.PSChildName) { 2 } else { 0 }
         try { New-ItemProperty -Path $k.PSPath -Name $flag -Value $v -PropertyType DWord -Force -ErrorAction Stop | Out-Null } catch {}
     }
+    if (-not (Wait-WindowsCleanup)) { Log "   • Un autre nettoyage de Windows tourne encore : étape passée, relance-la plus tard."; return $false }
     $p = Start-Process -FilePath "$env:SystemRoot\System32\cleanmgr.exe" -ArgumentList "/sagerun:$Slot" -PassThru
-    # Jamais d'attente infinie : au-delà de 10 minutes (ou si on annule), Windows finit tout seul en arrière-plan
+    # Jamais d'attente infinie : « Annuler » l'arrête vraiment ; au-delà de 10 minutes, Windows finit tout seul en arrière-plan
     $t0 = Get-Date; $last = 0
     while (-not $p.WaitForExit(2000)) {
+        if ($sync.Cancel) {
+            try { $p.Kill() } catch {}
+            Log "   • Nettoyage de Windows arrêté à ta demande (ce qui était déjà supprimé l'est, rien n'est abîmé)."
+            return $false
+        }
         $min = [int][math]::Floor(((Get-Date) - $t0).TotalMinutes)
-        if ($sync.Cancel -or $min -ge 10) { Log "   • Le nettoyage de Windows continue tout seul en arrière-plan, AEROX passe à la suite."; break }
+        if ($min -ge 10) { Log "   • Le nettoyage de Windows continue tout seul en arrière-plan, AEROX passe à la suite."; return $false }
         if ($min -gt $last) { $last = $min; Log ("   … nettoyage de Windows en cours ({0} min)" -f $min) }
     }
+    return $true
+}
+# Deux nettoyages de Windows en même temps se bloquent (cleanmgr et DISM touchent les mêmes composants) :
+# on attend que le précédent ait fini (5 minutes au plus, « Annuler » possible). Vrai si la voie est libre.
+function Wait-WindowsCleanup {
+    $t0 = Get-Date; $said = $false
+    while (@(Get-Process -Name 'cleanmgr', 'dism', 'DismHost' -ErrorAction SilentlyContinue).Count) {
+        if ($sync.Cancel -or ((Get-Date) - $t0).TotalMinutes -ge 5) { return $false }
+        if (-not $said) { $said = $true; Log "   … attente de la fin du nettoyage de Windows en cours" }
+        Start-Sleep -Seconds 2
+    }
+    return $true
 }
 
 function Invoke-DeepClean([string[]]$Ids) {
@@ -3030,20 +3062,22 @@ function Invoke-DeepClean([string[]]$Ids) {
     if ($Ids -contains 'recycle' -and -not $sync.Cancel) { Clear-RecycleBinAll }
     if ($Ids -contains 'windows' -and -not $sync.Cancel) {
         Step "Nettoyage de disque Windows (peut prendre plusieurs minutes)"
-        try { Invoke-CleanMgr $script:CleanMgrSafe 7701; Log "   ✔ Nettoyage de disque Windows terminé" }
+        try { if (Invoke-CleanMgr $script:CleanMgrSafe 7701) { Log "   ✔ Nettoyage de disque Windows terminé" } }
         catch { Add-TaskError -Title "Le nettoyage de disque Windows n'a pas pu se lancer" -Cause $_.Exception.Message -Bug $_ }
     }
     if ($Ids -contains 'winold' -and -not $sync.Cancel) {
         Step "Suppression de l'ancienne version de Windows"
-        try { Invoke-CleanMgr @('Previous Installations', 'Temporary Setup Files', 'Windows Upgrade Log Files') 7702; Log "   ✔ Ancienne version de Windows supprimée" }
+        try { if (Invoke-CleanMgr @('Previous Installations', 'Temporary Setup Files', 'Windows Upgrade Log Files') 7702) { Log "   ✔ Ancienne version de Windows supprimée" } }
         catch { Add-TaskError -Title "Windows.old n'a pas pu être supprimé" -Cause $_.Exception.Message -Bug $_ }
     }
     if (($Ids -contains 'components' -or $Ids -contains 'resetbase') -and -not $sync.Cancel) {
         Step "Anciens composants Windows (DISM, 5 à 20 minutes)"
         $dargs = @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
         if ($Ids -contains 'resetbase') { $dargs += '/ResetBase' }
-        $ec = if (Test-ComponentsPending) { -2146498554 } else { Invoke-Native 'dism.exe' $dargs -Quiet }
-        if ($ec -eq -2146498554) { Log $script:PendingMsg }
+        $busy = -not (Wait-WindowsCleanup)
+        $ec = if ($busy) { 0 } elseif (Test-ComponentsPending) { -2146498554 } else { Invoke-Native 'dism.exe' $dargs -Quiet }
+        if ($busy) { Log "   • Étape passée : le nettoyage de Windows tourne encore en arrière-plan. Relance « anciens composants » plus tard." }
+        elseif ($ec -eq -2146498554) { Log $script:PendingMsg }
         elseif ($ec -ne 0) {
             Add-TaskError -Title "Le nettoyage des anciens composants n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
                 -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot'

@@ -139,6 +139,37 @@ function Invoke-Smoke {
             if (-not $PageHost.Children.Count -or $script:Cur -ne 'monitor') { throw "la page n'est pas reconstruite à la réouverture" }
         } finally { $script:Settings.Gaming.Tray = $false; $script:InTray = $false; Update-TrayIcon }
     }
+    # ---- Points relevés par une relecture externe (Gemini), corrigés en 2.1.1
+    Smoke 'Désinstallation : confirmée seulement quand le logiciel a disparu' {
+        $script:UniApps = @(@{ Name = 'Logiciel parti'; Key = 'HKCU:\Software\AeroxTestNExistePas'; Pending = $true }, @{ Name = 'Logiciel resté'; Key = 'HKCU:\Software'; Pending = $true })
+        [void](Update-UninstallPending)
+        if (-not $script:UniApps[0].Removed -or $script:UniApps[1].Removed -or -not $script:UniApps[1].Pending) { throw "état après vérification incorrect" }
+        [void](Update-UninstallPending $true)
+        if ($script:UniApps[1].Pending -or -not $script:UniApps[1].NotRemoved -or $script:UniApps[1].Removed) { throw "logiciel toujours installé non signalé" }
+        $apps = Get-InstalledApps; $k = @(@($apps) | Where-Object { $_.Kind -eq 'win32' -and $_.Key }).Count
+        if (-not $k) { throw "les logiciels n'ont pas leur clé de registre" }
+        Write-Host "        $k logiciels avec leur clé de désinstallation"
+    }
+    Smoke 'OneDrive : ce qui est gardé sur le PC n est pas touché' {
+        $d = Join-Path $env:TEMP 'aerox-onedrive-test'; Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path (Join-Path $d 'sous') | Out-Null
+        'a' | Set-Content (Join-Path $d 'a.txt'); 'b' | Set-Content (Join-Path $d 'sous\b.txt')
+        $c = [AeroxFiles]::SetOnlineOnly($d); Write-Host ("        en ligne : {0}, gardés : {1} (disque sans OneDrive : rien de spécial attendu)" -f $c[0], $c[1])
+        Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+        $threw = $false; if (-not (Get-Process OneDrive -ErrorAction SilentlyContinue)) { try { Set-OneDriveOnlineOnly 'C:\pas-onedrive' } catch { $threw = $true } }
+        else { $threw = $true }
+        if (-not $threw) { throw "accepté sans OneDrive" }
+    }
+    Smoke 'Nettoyage Windows : pas deux nettoyages en même temps' { if (-not (Wait-WindowsCleanup)) { throw "voie bloquée alors qu'aucun nettoyage ne tourne" } }
+    Smoke 'Envoi au relais sans figer la fenêtre' {
+        $script:RelayRes = $null
+        Send-RelayAsync 'https://127.0.0.1:9/test' ([System.Text.Encoding]::UTF8.GetBytes('{}')) { param($r) $script:RelayRes = $r }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while (-not $script:RelayRes -and $sw.Elapsed.TotalSeconds -lt 30) { $window.Dispatcher.Invoke([Action]{}, [System.Windows.Threading.DispatcherPriority]::ContextIdle); Start-Sleep -Milliseconds 100 }
+        if (-not $script:RelayRes) { throw "pas de réponse en 30 s" }
+        if ($script:RelayRes.Ok) { throw "un envoi impossible a été vu comme réussi" }
+        Write-Host ("        erreur bien remontée : {0}" -f $script:RelayRes.Err)
+    }
     foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
     foreach ($t in 'live', 'overlay', 'jeux') { $script:GameTab = $t; Smoke-Page 'monitor' }
     Smoke 'Infos système' { Get-SystemInfo }

@@ -220,6 +220,7 @@ public class AeroxFps {
     Dictionary<int, List<double[]>> frames = new Dictionary<int, List<double[]>>();
     Dictionary<int, string> names = new Dictionary<int, string>();
     int cApp = -1, cPid = -1, cMs = -1;
+    long lines = 0;
     Stopwatch sw = Stopwatch.StartNew();
     // Partie en cours (carnet de jeu) : toutes les images du jeu suivi, du début à la fin
     int sPid = 0;
@@ -272,6 +273,12 @@ public class AeroxFps {
             if (pid == sPid && sPid != 0) SessionAdd(ms);
             if (cApp >= 0 && cApp < p.Length) names[pid] = p[cApp];
             if (lst.Count > 4000) lst.RemoveRange(0, lst.Count - 3000);
+            // Ménage régulier : programmes qui n'affichent plus rien depuis 10 s (fermés, en veille…)
+            if (++lines % 5000 == 0) {
+                List<int> dead = new List<int>();
+                foreach (KeyValuePair<int, List<double[]>> kv in frames) { if (kv.Key != sPid && (kv.Value.Count == 0 || now - kv.Value[kv.Value.Count - 1][0] > 10000)) dead.Add(kv.Key); }
+                foreach (int k in dead) { frames.Remove(k); names.Remove(k); }
+            }
         }
     }
 
@@ -1086,6 +1093,26 @@ public static class AeroxFiles {
     static bool CloudOnly(FileSystemInfo f) { int a = (int)f.Attributes; return (a & (RecallOnData | RecallOnOpen | Offline)) != 0; }
 
     // Taille des fichiers d'un dossier OneDrive réellement présents sur le PC (ceux « uniquement en ligne » ne comptent pas)
+    // OneDrive « uniquement en ligne » : tout passe en ligne SAUF ce que la personne a choisi de garder sur le PC
+    // (« Toujours conserver sur cet appareil » = attribut Pinned) : ces fichiers et dossiers ne sont jamais touchés.
+    // Renvoie [éléments passés en ligne, éléments gardés sur le PC à la demande de la personne]
+    const FileAttributes PinnedAttr = (FileAttributes)0x80000, UnpinnedAttr = (FileAttributes)0x100000;
+    const FileAttributes Settable = FileAttributes.ReadOnly | FileAttributes.Hidden | FileAttributes.System | FileAttributes.Archive | FileAttributes.Temporary | FileAttributes.Offline | FileAttributes.NotContentIndexed;
+    public static int[] SetOnlineOnly(string root) { int[] c = new int[2]; Online(root, 0, c); return c; }
+    static void Online(string d, int depth, int[] c) {
+        if (depth > 40) return;
+        try {
+            foreach (FileSystemInfo fi in new DirectoryInfo(d).EnumerateFileSystemInfos()) {
+                if (AeroxNative.StopScan) return;
+                try {
+                    FileAttributes a = fi.Attributes;
+                    if ((a & PinnedAttr) != 0) { c[1]++; continue; }
+                    if ((a & FileAttributes.Directory) != 0) Online(fi.FullName, depth + 1, c);
+                    if ((a & UnpinnedAttr) == 0) { File.SetAttributes(fi.FullName, (a & Settable) | UnpinnedAttr); c[0]++; }
+                } catch { }
+            }
+        } catch { }
+    }
     public static long LocalCloudSize(string root) {
         return LocalSize(root, 0);
     }

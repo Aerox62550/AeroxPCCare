@@ -2,6 +2,15 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.1 : relecture externe (Gemini), points vérifiés et corrigés
+
+- Désinstallation : logiciels et applis du Store de la personne devant l'écran (pas ceux du compte ADMIN) ; désinstalleur d'un logiciel « par utilisateur » lancé sur son compte ; « désinstallé » seulement quand l'entrée de Windows a disparu (vérifié toutes les 2 s, sinon « toujours installé » à la fermeture), problème du diagnostic réglé seulement dans ce cas.
+- OneDrive « uniquement en ligne » : plus d'attrib -P récursif ; les éléments « Toujours conserver sur cet appareil » (Pinned) ne sont jamais touchés ; refusé si OneDrive n'est pas lancé.
+- Nettoyage approfondi : « Annuler » arrête cleanmgr ; « terminé » seulement s'il a vraiment fini ; attente (5 min max) qu'aucun cleanmgr / DISM ne tourne avant cleanmgr et DISM, sinon étape passée avec un message.
+- Compteur de FPS : ménage des programmes qui n'affichent plus rien (toutes les 5000 lignes). Le point « --v1_metrics refusé par PresentMon 2 » était faux (l'option existe en 2.x).
+- Envoi rapport de bug / avis dans un fil séparé (la fenêtre ne fige plus jusqu'à 20 s) ; Assistance rapide (compte ADMIN) vérifiée sans figer la fenêtre.
+- Pas fait (gain faible) : statut des cartes Performances et infos de l'accueil calculés en arrière-plan.
+
 ## Prêt sur la branche 2.1.0 : interface (à valider par Sam)
 
 - Icône pour chaque carte d'action (police d'icônes de Windows Segoe MDL2, rien à télécharger), carte qui s'éclaire au survol.
