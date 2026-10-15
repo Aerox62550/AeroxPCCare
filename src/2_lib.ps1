@@ -1292,7 +1292,7 @@ function Repair-BrowserItems([string[]]$Items) {
                 # Écrit à côté puis remplace d'un coup : jamais de fichier à moitié écrit, même en cas de coupure
                 $tmp = "$file.aerox-tmp"
                 [IO.File]::WriteAllText($tmp, $new, (New-Object System.Text.UTF8Encoding($false)))
-                [IO.File]::Replace($tmp, $file, $null)
+                [IO.File]::Replace($tmp, $file, [NullString]::Value)   # $null deviendrait "" (refusé)
                 # Relecture : en cas de souci, on remet la sauvegarde
                 if (-not [AeroxJson]::Valid((Read-JsonFile $file))) { Copy-Item -LiteralPath $bk -Destination $file -Force; Log "   ⚠ Écriture ratée, réglages remis comme avant : $file"; continue }
                 $blocked += $n
