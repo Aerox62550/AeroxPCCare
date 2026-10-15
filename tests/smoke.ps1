@@ -160,6 +160,19 @@ function Invoke-Smoke {
         else { $threw = $true }
         if (-not $threw) { throw "accepté sans OneDrive" }
     }
+    Smoke 'Sauvegarde de réglages : contenu vérifié avant de la remettre' {
+        $d = Join-Path $LogDir 'sauvegardes\navigateurs'; New-Item -ItemType Directory -Force -Path $d | Out-Null
+        $ok = Join-Path $d 'test_ok.reg'; $ko = Join-Path $d 'test_ko.reg'
+        [IO.File]::WriteAllText($ok, "Windows Registry Editor Version 5.00`r`n`r`n[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]`r`n`"HomepageLocation`"=`"https://exemple.fr`"`r`n", [Text.Encoding]::Unicode)
+        [IO.File]::WriteAllText($ko, "Windows Registry Editor Version 5.00`r`n`r`n[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome]`r`n`r`n[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run]`r`n`"Piege`"=`"C:\\piege.exe`"`r`n", [Text.Encoding]::Unicode)
+        if (-not (Test-RegBackupSafe $ok)) { throw "vraie sauvegarde refusée" }
+        if (Test-RegBackupSafe $ko) { throw "sauvegarde piégée acceptée" }
+        $threw = $false; try { Restore-RegBackup $ko } catch { $threw = $true }
+        if (-not $threw) { throw "sauvegarde piégée importée" }
+        if (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run' -Name Piege -ErrorAction SilentlyContinue) { throw "valeur piégée écrite dans le registre" }
+        Remove-Item $ok, $ko -Force
+        $a = New-SessionShortcutPath '.lnk'; $b = New-SessionShortcutPath '.lnk'; if ($a -eq $b) { throw "nom de raccourci prévisible" }
+    }
     Smoke 'Nettoyage Windows : pas deux nettoyages en même temps' { if (-not (Wait-WindowsCleanup)) { throw "voie bloquée alors qu'aucun nettoyage ne tourne" } }
     Smoke 'Envoi au relais sans figer la fenêtre' {
         $script:RelayRes = $null
