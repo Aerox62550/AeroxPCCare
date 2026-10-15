@@ -1229,7 +1229,7 @@ function Test-RegBackupSafe([string]$Path) {
         $t = $l.Trim()
         if ($t -notlike '[[]*') { continue }
         $keys++
-        if ($t -notmatch '^\[HKEY_(LOCAL_MACHINE|USERS\\S-1-5-21-[\d-]+)\\SOFTWARE\\Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave)(\\[^\]\\]+)*\]$') -or $t -match '\\\.+(\\|\])') { return $false }
+        if ($t -notmatch '^\[HKEY_(LOCAL_MACHINE|USERS\\S-1-5-21-[\d-]+)\\SOFTWARE\\Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave)(\\[^\]\\]+)*\]$' -or $t -match '\\\.+(\\|\])') { return $false }
     }
     return ($keys -gt 0 -and $txt -match '^\W*Windows Registry Editor Version 5\.00')
 }
