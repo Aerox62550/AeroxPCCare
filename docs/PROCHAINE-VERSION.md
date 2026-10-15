@@ -9,6 +9,12 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Nettoyage approfondi : « Annuler » arrête cleanmgr ; « terminé » seulement s'il a vraiment fini ; attente (5 min max) qu'aucun cleanmgr / DISM ne tourne avant cleanmgr et DISM, sinon étape passée avec un message.
 - Compteur de FPS : ménage des programmes qui n'affichent plus rien (toutes les 5000 lignes). Le point « --v1_metrics refusé par PresentMon 2 » était faux (l'option existe en 2.x).
 - Envoi rapport de bug / avis dans un fil séparé (la fenêtre ne fige plus jusqu'à 20 s) ; Assistance rapide (compte ADMIN) vérifiée sans figer la fenêtre.
+- 2.1.2, 2e relecture Gemini (sécurité) :
+  - Désinstalleur d'un logiciel « par utilisateur » (registre HKCU, modifiable par n'importe quel programme de la personne sans droits admin) : toujours lancé SANS les droits admin, sur le compte de la personne (sinon un programme malveillant pouvait se faire lancer en administrateur en se déguisant en logiciel à désinstaller).
+  - Annulation « réglages imposés des navigateurs » : le fichier .reg de sauvegarde (dossier modifiable sans droits admin) est vérifié avant import : uniquement des clés SOFTWARE\Policies\Google\Chrome / Microsoft\Edge / BraveSoftware\Brave, sinon refusé.
+  - Raccourcis temporaires dans ProgramData (Assistance rapide, liens) : nom imprévisible à chaque fois + ménage. (Pas d'élévation possible avant non plus : ils s'ouvrent sans droits admin.)
+  - Fichier Preferences des navigateurs : écrit à côté puis remplacé d'un coup (déjà sauvegardé, vérifié et remis en cas de souci).
+  - Faux : « Set-CpuMaxState ne gère pas le refus du fabricant » (le réglage est relu et un message clair s'affiche s'il n'a pas pris).
 - Pas fait (gain faible) : statut des cartes Performances et infos de l'accueil calculés en arrière-plan.
 
 ## Prêt sur la branche 2.1.0 : interface (à valider par Sam)

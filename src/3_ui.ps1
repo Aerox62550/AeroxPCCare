@@ -2014,6 +2014,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
     '2.1.0' = @("Interface rafraîchie : une icône pour chaque outil, des cartes qui s'éclairent au survol, des pages qui apparaissent en douceur et des textes plus lisibles.", "Accueil : l'état de ton PC est mis en avant.", "Gaming rangé en 3 onglets : « Mes jeux », « En direct » et « Overlay en jeu ».")
     '2.0.2' = @("Caché près de l'horloge, AEROX consomme beaucoup moins de mémoire : il libère son affichage et rend à Windows la mémoire inutilisée. Tout revient instantanément quand tu le rouvres.")

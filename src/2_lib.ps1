@@ -16,6 +16,14 @@ function Log([string]$Message) {
     else          { $sync.Queue.Enqueue('') }
 }
 
+# Dossier des raccourcis temporaires ouverts dans la session de la personne : un nom imprévisible à chaque fois
+# (personne ne peut préparer ou remplacer le fichier à l'avance), et les anciens sont effacés.
+function New-SessionShortcutPath([string]$Ext) {
+    $dir = Join-Path $env:ProgramData 'AeroxPCCare'
+    New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+    foreach ($old in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(lien|lancer)' -and $_.LastWriteTime -lt (Get-Date).AddMinutes(-10) })) { try { Remove-Item -LiteralPath $old.FullName -Force } catch {} }
+    return (Join-Path $dir ("{0}-{1}{2}" -f $(if ($Ext -eq '.url') { 'lien' } else { 'lancer' }), [guid]::NewGuid().ToString('N'), $Ext))
+}
 # Ouvre un lien dans la session de la personne connectée (tâche planifiée temporaire « seulement si l'utilisateur
 # est connecté » : aucun mot de passe nécessaire), via un raccourci .url (pas de limite de longueur ni de souci de guillemets).
 function Open-UrlAsSessionUser([string]$Url) {
@@ -23,9 +31,7 @@ function Open-UrlAsSessionUser([string]$Url) {
     try {
         $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
         if (-not $user) { return $false }
-        $dir = Join-Path $env:ProgramData 'AeroxPCCare'
-        New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
-        $lnk = Join-Path $dir 'lien.url'
+        $lnk = New-SessionShortcutPath '.url'
         $abs = ([uri]$Url).AbsoluteUri
         [IO.File]::WriteAllText($lnk, "[InternetShortcut]`r`nURL=$abs`r`n", [Text.Encoding]::ASCII)
         $a = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'explorer.exe') -Argument ('"{0}"' -f $lnk)
@@ -53,9 +59,7 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
         } else {
             # Un programme lancé directement par la tâche serait fermé avec elle : on passe par un raccourci
             # ouvert par l'Explorateur, le programme devient alors un programme normal du bureau de la personne
-            $dir = Join-Path $env:ProgramData 'AeroxPCCare'
-            New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
-            $lnk = Join-Path $dir 'lancer.lnk'
+            $lnk = New-SessionShortcutPath '.lnk'
             $ws = New-Object -ComObject WScript.Shell
             $sc = $ws.CreateShortcut($lnk); $sc.TargetPath = $Exe; $sc.Arguments = $Arguments; $sc.WorkingDirectory = (Split-Path $Exe -Parent); $sc.Save()
             $a = New-ScheduledTaskAction -Execute $explorer -Argument ('"{0}"' -f $lnk)
@@ -1218,11 +1222,25 @@ function Get-BrowserReport {
         @($items | Where-Object { $_.Type -eq 'ext' }).Count, @($items | Where-Object { $_.Type -eq 'ext' -and $_.Bad }).Count, @($items | Where-Object { $_.Type -eq 'pol' }).Count)
 }
 
+function Test-RegBackupSafe([string]$Path) {
+    try { $txt = [IO.File]::ReadAllText($Path) } catch { return $false }
+    $keys = 0
+    foreach ($l in ($txt -split "`r?`n")) {
+        $t = $l.Trim()
+        if ($t -notlike '[[]*') { continue }
+        $keys++
+        if ($t -notmatch '^\[HKEY_(LOCAL_MACHINE|USERS\\S-1-5-21-[\d-]+)\\SOFTWARE\\Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave)(\\[^\]\\]+)*\]$') -or $t -match '\\\.+(\\|\])') { return $false }
+    }
+    return ($keys -gt 0 -and $txt -match '^\W*Windows Registry Editor Version 5\.00')
+}
 # Remet une sauvegarde de réglages imposés (annulation depuis l'historique) : uniquement nos propres sauvegardes
 function Restore-RegBackup([string]$File) {
     $root = [IO.Path]::GetFullPath((Join-Path $AppInfo.LogDir 'sauvegardes')) + '\'
     $full = [IO.Path]::GetFullPath($File)
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full -notmatch '(?i)\.reg$' -or -not (Test-Path -LiteralPath $full)) { throw "Sauvegarde introuvable : $File" }
+    # Le dossier des sauvegardes est modifiable sans droits admin : on vérifie que le fichier ne touche QUE les réglages
+    # imposés des navigateurs (ceux qu'AEROX a sauvegardés), sinon il n'est pas importé
+    if (-not (Test-RegBackupSafe $full)) { throw "Cette sauvegarde a été modifiée et touche d'autres réglages de Windows que ceux des navigateurs : elle n'est pas remise, par sécurité." }
     $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\reg.exe') -ArgumentList @('import', ('"{0}"' -f $full)) -Wait -PassThru -WindowStyle Hidden
     if ($p.ExitCode -ne 0) { throw "La sauvegarde n'a pas pu être remise (code $($p.ExitCode))." }
     Log "   ✔ Réglages du navigateur remis comme avant"
@@ -1271,11 +1289,17 @@ function Repair-BrowserItems([string[]]$Items) {
             try {
                 $bk = Join-Path $bkDir ("{0}_{1}_{2}_Preferences.json" -f $g.Browser, $stamp, $i)
                 Copy-Item -LiteralPath $file -Destination $bk -Force -ErrorAction Stop
-                [IO.File]::WriteAllText($file, $new, (New-Object System.Text.UTF8Encoding($false)))
+                # Écrit à côté puis remplace d'un coup : jamais de fichier à moitié écrit, même en cas de coupure
+                $tmp = "$file.aerox-tmp"
+                [IO.File]::WriteAllText($tmp, $new, (New-Object System.Text.UTF8Encoding($false)))
+                [IO.File]::Replace($tmp, $file, $null)
                 # Relecture : en cas de souci, on remet la sauvegarde
                 if (-not [AeroxJson]::Valid((Read-JsonFile $file))) { Copy-Item -LiteralPath $bk -Destination $file -Force; Log "   ⚠ Écriture ratée, réglages remis comme avant : $file"; continue }
                 $blocked += $n
-            } catch { Log ("   ⚠ Impossible de modifier les réglages du navigateur : {0}" -f $_.Exception.Message) }
+            } catch {
+                try { Remove-Item -LiteralPath "$file.aerox-tmp" -Force -ErrorAction SilentlyContinue } catch {}
+                Log ("   ⚠ Impossible de modifier les réglages du navigateur : {0}" -f $_.Exception.Message)
+            }
         }
         if ($blocked) { Add-Change -Kind 'info' -Title ("Navigateurs : notifications bloquées pour {0} site(s)" -f $blocked) -Detail "Sauvegarde des réglages : $bkDir" }
     }
@@ -2862,8 +2886,13 @@ function Uninstall-App([string]$Kind, [string]$Cmd, [string]$Name, [bool]$PerUse
     elseif ($Cmd -match '^\s*"([^"]+)"\s*(.*)$') { $exe = $matches[1]; $arg = $matches[2] }
     elseif ($Cmd -match '^(.+?\.exe)\s*(.*)$') { $exe = $matches[1]; $arg = $matches[2] }
     else { throw "Commande de désinstallation inconnue : $Cmd" }
-    # Logiciel installé pour la personne devant l'écran : son désinstalleur tourne sur son compte (sinon il nettoierait le mauvais profil)
-    if ($PerUser -and $su.Other) { Start-AsSessionUser $exe $arg; return }
+    # Logiciel installé pour la personne seulement (registre de son compte) : son désinstalleur tourne sur son compte,
+    # SANS les droits admin. Cette entrée peut être écrite par n'importe quel programme de la personne :
+    # AEROX ne doit jamais la lancer avec ses droits administrateur.
+    if ($PerUser) {
+        if (-not (Start-AsSessionUser $exe $arg)) { throw "Le désinstalleur n'a pas pu être lancé sur ton compte. Désinstalle-le depuis Paramètres > Applications." }
+        return
+    }
     if ($arg) { Start-Process -FilePath $exe -ArgumentList $arg } else { Start-Process -FilePath $exe }
 }
 
