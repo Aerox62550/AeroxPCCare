@@ -2,6 +2,13 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.1.5 : overlay (retour testeur sur la 2.1.4)
+
+- Cause trouvée (et confirmée par le test Windows) : en PowerShell, [math]::Min(1, 0.49) choisit la version « nombres entiers » et arrondit 0,49 à 0 (et 0,51 à 1). Le fond de l'overlay ne pouvait donc être que transparent (< 50 %) ou noir (≥ 50 %), et la taille était arrondie à 100 %, 200 % ou 300 %. Corrigé partout : premier nombre écrit en décimal ([double]) dans tous les Max/Min.
+- Même cause, autre bug évité : [math]::Max(0, place libérée) plantait au-delà de 2 Go (OneDrive « en ligne seulement », mesure d'espace libéré).
+- Overlay : taille minimum 70 % (en dessous, texte de 6 px forcément flou) ; ombre du texte plus fine sous 100 %.
+- Test Windows : fond à 49 % et 51 % presque identiques, taille 250 % vraiment appliquée ; élément de démarrage de test : clé Run créée si absente.
+
 ## Publié en 2.1.4 : retours de testeurs (démarrage, mises à jour)
 
 - Démarrage (retour d'un testeur : 3 applis décochées, toujours 9 au test suivant et encore cochées en revenant) : chaque désactivation est relue aussitôt (erreur claire + détails dans le rapport de bug si Windows ne l'a pas gardée). Identifiant stable « u|run|nom » / « m|run32|nom » : la fenêtre et la tâche de fond désignent toujours le même élément, quelle que soit l'écriture de la clé de la session (HKCU: ou HKEY_USERS\SID) ; anciens identifiants de l'historique acceptés. Élément demandé mais introuvable : noté dans le journal et le rapport.

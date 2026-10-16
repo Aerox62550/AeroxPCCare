@@ -461,7 +461,7 @@ function Add-BilanCard($sp) {
     $c.Child = $cs; Add-Child $sp $c
 }
 
-function Get-Score { if (-not $script:Diag) { return $null }; $s = 100; foreach ($i in $script:Diag.Issues) { if ($i.Status -ne 'done') { $s -= $(if ($i.Sev -eq 'crit') { 12 } else { 5 }) } }; return [math]::Max(0, $s) }
+function Get-Score { if (-not $script:Diag) { return $null }; $s = 100; foreach ($i in $script:Diag.Issues) { if ($i.Status -ne 'done') { $s -= $(if ($i.Sev -eq 'crit') { 12 } else { 5 }) } }; return [math]::Max([double]0, $s) }
 function Get-Level([int]$S) { if ($S -ge 85) { return @{ Text = 'Bonne forme'; Color = '#4ADE80' } } elseif ($S -ge 60) { return @{ Text = 'Correct, à surveiller'; Color = '#FFB547' } } else { return @{ Text = 'À améliorer'; Color = '#FF6B6B' } } }
 function Get-OpenIssues { if (-not $script:Diag) { return @() }; return @($script:Diag.Issues | Where-Object { $_.Status -ne 'done' }) }
 
@@ -2034,6 +2034,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.5' = @("Overlay : le fond passe vraiment en douceur de transparent à opaque (avant, il basculait d'un coup à 50 %), et la taille suit exactement le curseur. Taille minimum relevée à 70 % pour que le texte reste net.", "Correction d'un calcul qui pouvait planter quand plus de 2 Go étaient libérés (OneDrive, nettoyage).")
     '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).", "Overlay : le fond change en douceur quand tu bouges le curseur (avec le pourcentage affiché), et le texte reste net à toutes les tailles.", "État du PC : tous les disques sont affichés et vérifiés (D:, disques et clés USB…), plus seulement C:.")
     '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
@@ -2426,7 +2427,7 @@ function Show-BugReport([string]$Prefill) {
                 do {
                     $body = Build-BugReport $script:RptDesc.Text $lines $bugs
                     $url = "https://github.com/$GitHubRepo/issues/new?labels=bug&title=" + [uri]::EscapeDataString($title) + "&body=" + [uri]::EscapeDataString($body + "`n_(Si le rapport semble coupé, colle le rapport complet copié dans ton presse-papiers.)_")
-                    $lines = [math]::Floor($lines / 2); $bugs = [math]::Max(3, [math]::Floor($bugs / 2))
+                    $lines = [math]::Floor($lines / 2); $bugs = [math]::Max([double]3, [math]::Floor($bugs / 2))
                 } while ($url.Length -gt 7500 -and $lines -ge 2)
                 [void](Open-Url $url)
                 Save-ReportDone
@@ -3166,8 +3167,8 @@ function New-Meter([string]$Label, [double]$Pct, [string]$Sub) {
     Add-Child $sp (New-Text ("{0} %" -f [math]::Round($Pct)) 24 $col 'Bold')
     $tr = New-Object System.Windows.Controls.Border; $tr.Height = 6; $tr.CornerRadius = Corner 3; $tr.Background = Brush '#252A3A'; $tr.Margin = Th 0 4 0 4
     $g = New-Object System.Windows.Controls.Grid
-    $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength([math]::Max(0.01, [math]::Min(100.0, $Pct)), [System.Windows.GridUnitType]::Star)
-    $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = New-Object System.Windows.GridLength([math]::Max(0.01, 100.0 - [math]::Min(100.0, $Pct)), [System.Windows.GridUnitType]::Star)
+    $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength([math]::Max([double]0.01, [math]::Min([double]100.0, $Pct)), [System.Windows.GridUnitType]::Star)
+    $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = New-Object System.Windows.GridLength([math]::Max([double]0.01, 100.0 - [math]::Min([double]100.0, $Pct)), [System.Windows.GridUnitType]::Star)
     $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
     $fl = New-Object System.Windows.Controls.Border; $fl.CornerRadius = Corner 3; $fl.Background = Brush $col; Add-Child $g $fl
     $tr.Child = $g; Add-Child $sp $tr
@@ -3568,7 +3569,7 @@ while (-not $sync.SensStop) {
     }
     if (-not $v.ContainsKey('cpu.load')) {
         $c = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'"
-        if ($c) { $v['cpu.load'] = [math]::Min(100, [double]$c.PercentProcessorUtility) }
+        if ($c) { $v['cpu.load'] = [math]::Min([double]100, [double]$c.PercentProcessorUtility) }
     }
     if ($smi -and -not $v.ContainsKey('gpu.temp')) {
         $o = & $smi --query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw --format=csv,noheader,nounits 2>$null | Select-Object -First 1
@@ -3691,7 +3692,7 @@ function Get-OverlayRows {
 
 # Fond de l'overlay : de 0 % (invisible) à 100 % (opaque), en douceur
 function New-OverlayBrush([double]$Opacity) {
-    $a = [byte]([math]::Round(255 * [math]::Max(0, [math]::Min(1, $Opacity))))
+    $a = [byte]([math]::Round(255 * [math]::Max([double]0, [math]::Min([double]1, $Opacity))))
     $b = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb($a, 10, 12, 17)); $b.Freeze()
     return $b
 }
@@ -3709,8 +3710,8 @@ function Build-OverlayContent {
     $border = New-Object System.Windows.Controls.Border
     $border.Background = New-OverlayBrush ([double]$o.Opacity)
     # Taille : le texte est dessiné directement à la bonne taille (pixels entiers), pas agrandi après coup (c'était flou à certaines tailles)
-    $k = [math]::Max(0.5, [math]::Min(3, [double]$o.Scale))
-    $px = { param($v) [math]::Max(1, [math]::Round($v * $k)) }
+    $k = [math]::Max([double]0.7, [math]::Min([double]3, [double]$o.Scale))
+    $px = { param($v) [math]::Max([double]1, [math]::Round($v * $k)) }
     $border.CornerRadius = Corner (& $px 8); $border.Padding = Th (& $px 10) (& $px 7) (& $px 12) (& $px 7)
     if ($script:OvEdit) { $border.BorderBrush = Brush '#7C5CFF'; $border.BorderThickness = Th 2 2 2 2 }
     $border.UseLayoutRounding = $true; $border.SnapsToDevicePixels = $true
@@ -3732,7 +3733,7 @@ function Build-OverlayContent {
         $l.FontFamily = 'Segoe UI'
         $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { & $px 20 } else { & $px 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
         $val.FontFamily = 'Segoe UI'
-        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = (& $px 3); $sh.ShadowDepth = [math]::Max(1, [math]::Round($k)); $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
+        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = $(if ($k -lt 1) { 1 } else { & $px 3 }); $sh.ShadowDepth = [math]::Max([double]1, [math]::Round($k)); $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
         $val.Effect = $sh
         [System.Windows.Controls.Grid]::SetRow($l, $i); [System.Windows.Controls.Grid]::SetRow($val, $i); [System.Windows.Controls.Grid]::SetColumn($val, 1)
         Add-Child $grid $l; Add-Child $grid $val
@@ -3763,7 +3764,7 @@ function New-OverlayWindow {
     $w.Title = 'AEROX Overlay'
     $w.Add_SourceInitialized({ $h = (New-Object System.Windows.Interop.WindowInteropHelper($script:Ov)).Handle; [AeroxNative]::SetClickThrough($h, -not $script:OvEdit) })
     $w.Add_MouseLeftButtonDown({ if ($script:OvEdit) { try { $script:Ov.DragMove() } catch {}; $script:Settings.Overlay.X = [math]::Round($script:Ov.Left); $script:Settings.Overlay.Y = [math]::Round($script:Ov.Top); Save-Settings } })
-    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max(0.5, [math]::Min(3, $n)), 1); Save-SettingsSoon; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
+    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max([double]0.7, [math]::Min([double]3, $n)), 1); Save-SettingsSoon; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
     $script:Ov = $w
     Build-OverlayContent
 }
@@ -3930,7 +3931,7 @@ function Add-OverlaySection($sp, $u) {
     $sl = New-Object System.Windows.Controls.Grid; $sl.Margin = Th 0 6 0 0
     foreach ($w in 0, 1, 2, 3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = $(if ($w % 2 -eq 0) { [System.Windows.GridLength]::Auto } else { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) }); $sl.ColumnDefinitions.Add($cd) }
     $l1 = New-Text ("Taille  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Scale * 100)) 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; $l1.MinWidth = 92; Add-Child $sl $l1; $u.ScaleTxt = $l1
-    $s1 = New-Object System.Windows.Controls.Slider; $s1.Minimum = 50; $s1.Maximum = 300; $s1.Value = [double]$script:Settings.Overlay.Scale * 100; $s1.Margin = Th 0 0 24 0; $s1.VerticalAlignment = 'Center'
+    $s1 = New-Object System.Windows.Controls.Slider; $s1.Minimum = 70; $s1.Maximum = 300; $s1.Value = [double]$script:Settings.Overlay.Scale * 100; $s1.Margin = Th 0 0 24 0; $s1.VerticalAlignment = 'Center'
     $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); if ($script:MonUi.ScaleTxt) { $script:MonUi.ScaleTxt.Text = "Taille  {0} %" -f [math]::Round($this.Value) }; Save-SettingsSoon; Build-OverlayContent })
     [System.Windows.Controls.Grid]::SetColumn($s1, 1); Add-Child $sl $s1
     $l2 = New-Text ("Fond  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Opacity * 100)) 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; $l2.MinWidth = 82; $u.OpTxt = $l2; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
@@ -4198,7 +4199,7 @@ function Test-FpsCap([double]$Med, [int]$Hz) {
     if ($Med -le 0) { return $false }
     $caps = @(30, 72, 75, 144, 165, 175) + @(for ($i = 5; $i -le 40; $i++) { $i * 10 })
     if ($Hz -gt 0) { $caps += @($Hz, ($Hz - 3), ($Hz - 4), [math]::Round(3600.0 * $Hz / (3600 + $Hz))) }
-    foreach ($c in $caps) { if ([math]::Abs($Med - $c) -le [math]::Max(1.5, $c * 0.02)) { return $true } }
+    foreach ($c in $caps) { if ([math]::Abs($Med - $c) -le [math]::Max([double]1.5, $c * 0.02)) { return $true } }
     return $false
 }
 # Ce qui limite le jeu pendant la partie
@@ -4390,7 +4391,7 @@ function Show-MainWindow([string]$Page) {
         # Démarré en mode discret : la fenêtre était placée hors de l'écran
         $window.ShowInTaskbar = $true
         $wa = [System.Windows.SystemParameters]::WorkArea
-        $window.Left = $wa.Left + [math]::Max(0, ($wa.Width - $window.ActualWidth) / 2); $window.Top = $wa.Top + [math]::Max(0, ($wa.Height - $window.ActualHeight) / 2)
+        $window.Left = $wa.Left + [math]::Max([double]0, ($wa.Width - $window.ActualWidth) / 2); $window.Top = $wa.Top + [math]::Max([double]0, ($wa.Height - $window.ActualHeight) / 2)
     }
     if ($window.WindowState -eq 'Minimized') { $window.WindowState = 'Normal' }
     $script:InTray = $false
@@ -4549,7 +4550,7 @@ function New-LineChart($Series, [double]$W = 640, [double]$H = 120, [string]$Uni
     $dp = New-Object System.Windows.Controls.DockPanel
     if (-not $all.Count) { return $dp }
     $mx = ($all | Measure-Object -Maximum).Maximum; $mn = ($all | Measure-Object -Minimum).Minimum
-    $lo = [math]::Max(0, [math]::Floor($mn * 0.9 / 10) * 10); $hi = [math]::Ceiling($mx * 1.05 / 10) * 10; if ($hi -le $lo) { $hi = $lo + 10 }
+    $lo = [math]::Max([double]0, [math]::Floor($mn * 0.9 / 10) * 10); $hi = [math]::Ceiling($mx * 1.05 / 10) * 10; if ($hi -le $lo) { $hi = $lo + 10 }
     $ax = New-Object System.Windows.Controls.Grid; $ax.Width = 44; $ax.Height = $H
     $t1 = New-Text ("{0}" -f $hi) 11 '#7A8399'; $t1.VerticalAlignment = 'Top'; Add-Child $ax $t1
     $t2 = New-Text ("{0}" -f $lo) 11 '#7A8399'; $t2.VerticalAlignment = 'Bottom'; Add-Child $ax $t2

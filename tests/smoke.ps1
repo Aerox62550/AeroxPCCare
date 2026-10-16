@@ -236,6 +236,7 @@ function Invoke-Smoke {
     }
     Smoke 'Démarrage : désactivation vérifiée et appli qui se remet toute seule' {
         $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $ap = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+        if (-not (Test-Path -LiteralPath $run)) { New-Item -Path $run -Force | Out-Null }
         New-ItemProperty -Path $run -Name 'AeroxTestDemarrage' -Value "$env:SystemRoot\notepad.exe" -PropertyType String -Force | Out-Null
         $saveOff = @($AppInfo.StartupOff)
         try {
@@ -266,6 +267,9 @@ function Invoke-Smoke {
         $saveSc = $script:Settings.Overlay.Scale
         try {
             if (-not $script:Ov) { New-OverlayWindow }
+            $b = New-OverlayBrush 0.49; $c = New-OverlayBrush 0.51; if ([math]::Abs([int]$c.Color.A - [int]$b.Color.A) -gt 8) { throw "saut du fond entre 49 et 51 % : $($b.Color.A) → $($c.Color.A)" }
+            $script:Settings.Overlay.Scale = 2.5; Build-OverlayContent
+            $fs = @($script:OvRows | ForEach-Object { $_.Lbl.FontSize })[0]; if ($fs -ne [math]::Round(11 * 2.5)) { throw "taille 250 % pas appliquée (texte $fs px)" }
             foreach ($sc in 0.5, 0.85, 1.0, 1.35, 2.2, 3.0) {
                 $script:Settings.Overlay.Scale = $sc; Build-OverlayContent
                 if ($script:OvBorder.LayoutTransform -and -not $script:OvBorder.LayoutTransform.Value.IsIdentity) { throw "overlay agrandi après coup à $sc (flou)" }
