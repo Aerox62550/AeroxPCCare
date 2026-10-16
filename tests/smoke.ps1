@@ -386,7 +386,23 @@ function Invoke-SmokeActions {
         Write-Host "        catégories : $($ids -join ', ')"
         Invoke-DeepClean -Ids $ids
     }
-    Smoke 'Corbeille' { Clear-RecycleBinAll }
+    Smoke 'Corbeille' {
+        # Un fichier à la corbeille de la personne + un faux dossier d'un autre compte (jamais touché)
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $f = Join-Path $env:TEMP 'aerox-corbeille-test.bin'; [IO.File]::WriteAllBytes($f, (New-Object byte[] (3MB)))
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f, 'OnlyErrorDialogs', 'SendToRecycleBin')
+        $other = "$env:SystemDrive\`$Recycle.Bin\S-1-5-21-1111111111-2222222222-3333333333-1999"
+        New-Item -ItemType Directory -Force -Path $other | Out-Null; [IO.File]::WriteAllBytes((Join-Path $other 'autre.bin'), (New-Object byte[] (2MB)))
+        try {
+            $b = Get-RecycleBinSizes
+            Write-Host ("        avant : à toi {0}, autres comptes {1}" -f (Format-Size $b.Mine), (Format-Size $b.Others))
+            if ($b.Mine -lt 2MB) { throw "fichier mis à la corbeille pas compté" }
+            Clear-RecycleBinAll
+            $a = Get-RecycleBinSizes
+            if ($a.Mine -gt 64KB) { throw "corbeille pas vidée ($(Format-Size $a.Mine) restent)" }
+            if (-not (Test-Path -LiteralPath (Join-Path $other 'autre.bin'))) { throw "corbeille d'un autre compte touchée" }
+        } finally { Remove-Item -LiteralPath $other -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     Smoke 'Place gardée par Windows' {
         $ids = @($sync.SpaceScan.Win | Where-Object { $_.Id -ne 'compact' } | ForEach-Object { if ($_.Arg) { "{0}:{1}" -f $_.Id, $_.Arg } else { $_.Id } })
         Write-Host "        éléments : $($ids -join ', ')"

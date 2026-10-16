@@ -2,6 +2,11 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.1.6 : rapport n° 10 (disques, corbeille)
+
+- Rapport n° 10 (« pas de diagnostic sur les autres disques que C ») : le diagnostic détaille maintenant chaque disque dans le journal (et donc dans les rapports de bug) : place libre de chaque lettre (internes, externes, amovibles) et santé de chaque disque physique avec ses lettres (« Samsung SSD 980 (C:, D:) : SSD, état Healthy »). Lettre sans disque physique lisible (clé USB, boîtier) : « santé non lisible par Windows ».
+- Même rapport, autre bug vu dans le journal : analyse « Corbeille : 1,29 Go » puis « Corbeille vidée : 0 Ko ». L'analyse comptait les corbeilles de TOUS les comptes (dont d'anciens comptes ou une ancienne installation de Windows), le vidage ne touche que celle de la personne. Maintenant : taille annoncée = corbeille de la personne (sur tous les disques, amovibles compris), les autres comptes sont indiqués à part et jamais touchés ; vidage disque par disque, puis, si Windows n'a pas tout vidé, dossier de corbeille de la personne vidé par la suppression sûre ; reste éventuel signalé.
+
 ## Publié en 2.1.5 : overlay (retour testeur sur la 2.1.4)
 
 - Cause trouvée (et confirmée par le test Windows) : en PowerShell, [math]::Min(1, 0.49) choisit la version « nombres entiers » et arrondit 0,49 à 0 (et 0,51 à 1). Le fond de l'overlay ne pouvait donc être que transparent (< 50 %) ou noir (≥ 50 %), et la taille était arrondie à 100 %, 200 % ou 300 %. Corrigé partout : premier nombre écrit en décimal ([double]) dans tous les Max/Min.
