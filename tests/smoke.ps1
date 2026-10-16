@@ -225,6 +225,73 @@ function Invoke-Smoke {
             if ($l[1].Ghost) { throw "logiciel inconnu pris pour une trace" }
         } finally { Remove-Item -Path $k -Force -ErrorAction SilentlyContinue }
     }
+    Smoke 'Mises à jour : logiciels qui se mettent à jour tout seuls' {
+        Add-SelfUpdating 'Aerox.TestAuto' '9.9'
+        $l = Add-AppGhostInfo @([ordered]@{ Name = 'Aerox Test Auto'; Id = 'Aerox.TestAuto'; Version = '1'; Available = '9.9' }, [ordered]@{ Name = 'Aerox Test Neuf'; Id = 'Aerox.TestNeuf'; Version = '1'; Available = '2' })
+        if (-not $l[0].Self) { throw "logiciel qui se met à jour seul encore proposé" }
+        if ($l[1].Self) { throw "logiciel normal pris pour un logiciel autonome" }
+        $l = Add-AppGhostInfo @([ordered]@{ Name = 'Aerox Test Auto'; Id = 'Aerox.TestAuto'; Version = '1'; Available = '10.0' })
+        if ($l[0].Self) { throw "nouvelle version pas reproposée" }
+        $f = Get-SelfUpdatingFile; [IO.File]::WriteAllLines($f, [string[]]@(Get-SelfUpdatingKeys | Where-Object { $_ -notlike 'aerox.testauto|*' }))
+    }
+    Smoke 'Démarrage : désactivation vérifiée et appli qui se remet toute seule' {
+        $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $ap = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+        New-ItemProperty -Path $run -Name 'AeroxTestDemarrage' -Value "$env:SystemRoot\notepad.exe" -PropertyType String -Force | Out-Null
+        $saveOff = @($AppInfo.StartupOff)
+        try {
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if (-not $e -or -not $e.Enabled) { throw "élément de test pas vu comme actif" }
+            # Identifiant écrit autrement (clé de la session via HKEY_USERS) : doit désigner le même élément
+            $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            Set-StartupApps -Disable @("Registry::HKEY_USERS\$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run|AeroxTestDemarrage")
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if ($e.Enabled) { throw "toujours actif après désactivation" }
+            if (@($AppInfo.StartupOff) -notcontains $e.Key) { throw "désactivation pas retenue" }
+            # L'appli se remet elle-même au démarrage (comme Discord ou Spotify à leur lancement)
+            New-ItemProperty -Path $ap -Name 'AeroxTestDemarrage' -PropertyType Binary -Value ([byte[]](2,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if (-not (Test-StartupBack $e)) { throw "appli revenue toute seule pas repérée" }
+            Set-StartupApps -Enable @($e.Id)
+            if (@($AppInfo.StartupOff) -contains $e.Key) { throw "réactivée par toi mais encore signalée" }
+            Write-Host "        clé : $($e.Key)"
+        } finally {
+            Remove-ItemProperty -Path $run -Name 'AeroxTestDemarrage' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $ap -Name 'AeroxTestDemarrage' -ErrorAction SilentlyContinue
+            $AppInfo.StartupOff = $saveOff
+        }
+    }
+    Smoke 'Overlay : fond progressif et texte net à toutes les tailles' {
+        $b = New-OverlayBrush 0.5; if ($b.Color.A -lt 120 -or $b.Color.A -gt 135) { throw "fond à 50 % : alpha $($b.Color.A)" }
+        if ((New-OverlayBrush 0).Color.A -ne 0 -or (New-OverlayBrush 1).Color.A -ne 255) { throw "bornes du fond fausses" }
+        $saveSc = $script:Settings.Overlay.Scale
+        try {
+            if (-not $script:Ov) { New-OverlayWindow }
+            foreach ($sc in 0.5, 0.85, 1.0, 1.35, 2.2, 3.0) {
+                $script:Settings.Overlay.Scale = $sc; Build-OverlayContent
+                if ($script:OvBorder.LayoutTransform -and -not $script:OvBorder.LayoutTransform.Value.IsIdentity) { throw "overlay agrandi après coup à $sc (flou)" }
+                foreach ($r in $script:OvRows) { foreach ($t in $r.Val, $r.Lbl) { if ($t.FontSize -ne [math]::Round($t.FontSize)) { throw "taille de texte non entière à $sc : $($t.FontSize)" } } }
+            }
+            $script:OvBorder.Background = New-OverlayBrush 0.2
+        } finally { $script:Settings.Overlay.Scale = $saveSc; Build-OverlayContent }
+    }
+    Smoke 'État du PC : tous les disques' {
+        $d = @(Get-DriveList)
+        if (-not $d.Count -or $d[0].Id -ne $env:SystemDrive) { throw "disque de Windows absent ou pas en premier" }
+        Update-HomeStats
+        Write-Host ("        disques : {0} · tuile : {1} / {2}" -f (($d | ForEach-Object { $_.Id }) -join ' '), $script:Stats.DISK.V, ($script:Stats.DISK.S -replace "`n", ' | '))
+        if ($d.Count -gt 1 -and $script:Stats.DISK.S -notmatch [regex]::Escape($d[1].Id)) { throw "2e disque pas affiché sur l'accueil" }
+    }
+    Smoke 'Composants de mesure : désinstallables' {
+        $d = Join-Path (Get-ToolsDir) 'lhm'; $dll = Join-Path $d 'LibreHardwareMonitorLib.dll'
+        if (Test-Path -LiteralPath $dll) { Write-Host '        (module réel installé : pas touché)'; return }
+        New-Item -ItemType Directory -Force -Path $d | Out-Null; [IO.File]::WriteAllText($dll, 'test')
+        if (-not (Get-ToolStatus).Lhm) { throw "module de test pas vu comme installé" }
+        Uninstall-SensorLib
+        if ((Get-ToolStatus).Lhm -or (Test-Path -LiteralPath $d)) { throw "module toujours là après désinstallation" }
+        $row = New-ToolRow 'Test' 'Test' $true 'Installé' 'inst-lhm' 'uninst-lhm'
+        if (-not @($row.Children | Where-Object { $_ -is [System.Windows.Controls.Button] -and "$($_.Content)" -eq 'Désinstaller' }).Count) { throw "bouton « Désinstaller » absent" }
+        Uninstall-PawnIO
+    }
     Smoke 'Gaming : saccades par heure sur le temps vraiment joué' {
         $f = @(Get-GameFlags @{ Min = 60.0; Act = 10.0; Stut = 8 })
         if ($f -notcontains 'stutter') { throw "8 saccades en 10 min de jeu (50 min d'Alt+Tab) non signalées" }

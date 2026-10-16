@@ -231,6 +231,7 @@ $script:Settings = @{
     IgnoredApps = @()
     IgnoredIssues = @()
     StartupKept = @()
+    StartupOff = @()
     SpeedHistory = @()
     BetaChannel = $false
     PostOptimize = $false
@@ -248,7 +249,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
@@ -257,6 +258,7 @@ function Load-Settings {
     } catch { Write-Bug -Context 'Lecture des réglages' -ErrorRecord $_ }
     $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps | Where-Object { $_ })
     $script:Settings.StartupKept = @($script:Settings.StartupKept | Where-Object { $_ })
+    $script:Settings.StartupOff = @($script:Settings.StartupOff | Where-Object { $_ })
     $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_ -is [hashtable] -and $_.Id })
     $script:Settings.SpeedHistory = @($script:Settings.SpeedHistory | Where-Object { $_ -is [hashtable] })
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
@@ -264,6 +266,7 @@ function Load-Settings {
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
+    $AppInfo.StartupOff = @($script:Settings.StartupOff)
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
 }
@@ -273,6 +276,7 @@ function Save-Settings {
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
+    $script:Settings.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ })
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
 }
 
@@ -867,6 +871,13 @@ function Update-HomeStats {
             RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { '#FFB547' } else { '#FFFFFF' }) }
             DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#FFFFFF' }) }
         }
+        # Les autres disques (internes et externes) sous celui de Windows
+        $others = @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })
+        if ($others.Count) {
+            $script:Stats.DISK.L = 'Disques'
+            $script:Stats.DISK.V = "$env:SystemDrive $(Format-Size $c.FreeSpace) libres"
+            $script:Stats.DISK.S = (@("sur $(Format-Size $c.Size) ($pct %)") + @($others | Select-Object -First 4 | ForEach-Object { "{0} {1} libres sur {2}{3}" -f $_.Id, (Format-Size $_.Free), (Format-Size $_.Size), $(if ($_.Removable) { ' (amovible)' } else { '' }) }) + @($(if ($others.Count -gt 4) { "+ $($others.Count - 4) autre(s)" }) | Where-Object { $_ })) -join "`n"
+        }
     } catch { Write-Bug -Context 'Infos de l''accueil' -ErrorRecord $_ }
 }
 
@@ -1030,6 +1041,7 @@ function Complete-Job {
     $dur = '{0:mm\:ss}' -f ((Get-Date) - $job.Start)
     try { $job.PS.Dispose(); $job.RS.Close(); $job.RS.Dispose() } catch {}
     $script:Job = $null
+    if ((@($AppInfo.StartupOff) -join '|') -ne (@($script:Settings.StartupOff) -join '|')) { Save-Settings }
     $hardStop = $cancelled -and ("$($job.Action)".Trim() -match $script:HardCancel)
     if ($hardStop) { $errs = @() }
     Write-UiLog $(if ($cancelled) { "⏹ Arrêté à ta demande : $($job.Label) (durée $dur)" } elseif ($errs.Count) { "⚠ Terminé avec $($errs.Count) problème(s) : $($job.Label) (durée $dur)" } else { "✅ Terminé : $($job.Label) (durée $dur)" })
@@ -1276,6 +1288,9 @@ function Invoke-UiCommand($T) {
                     'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
+                    'uninst-lhm' { Start-ToolUninstall 'Uninstall-SensorLib' 'le module de températures' "Les températures avancées (processeur, carte graphique, consommation) ne seront plus affichées, ni dans l'overlay ni dans le suivi des parties." }
+                    'uninst-pm' { Start-ToolUninstall 'Uninstall-PresentMon' 'le compteur de FPS' "Les FPS ne seront plus mesurés : plus de FPS dans l'overlay, et le suivi des parties n'aura plus de FPS ni de saccades." }
+                    'uninst-pawn' { Start-ToolUninstall 'Uninstall-PawnIO' 'le pilote PawnIO' "La température du processeur ne sera plus lue (celle de la carte graphique oui, si le module de températures reste installé)." }
                     'inst-pawn' {
                         if (Confirm-Box "Installer le pilote PawnIO ?`n`nC'est un petit pilote signé, utilisé par les logiciels de monitoring connus (LibreHardwareMonitor, FanControl…) pour lire la température du processeur. Il se désinstalle comme un logiciel normal.") {
                             [void](Start-AeroxTask 'Install-PawnIO' 'Installation du pilote PawnIO' 'tools')
@@ -2019,6 +2034,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).", "Overlay : le fond change en douceur quand tu bouges le curseur (avec le pourcentage affiché), et le texte reste net à toutes les tailles.", "État du PC : tous les disques sont affichés et vérifiés (D:, disques et clés USB…), plus seulement C:.")
     '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
@@ -2136,8 +2152,8 @@ function Show-StartupDialog($Issue) {
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $entries = @(Get-StartupEntries)
     if (-not $entries.Count) { [System.Windows.MessageBox]::Show("Aucun programme ne se lance au démarrage.", $AppName, 'OK', 'Information') | Out-Null; return }
-    $order = @{ optional = 0; other = 1; mine = 2; keep = 3 }
-    $kindOf = { param($e) if ((Get-StartupKind $e) -ne 'keep' -and (Test-StartupKept $e)) { 'mine' } else { Get-StartupKind $e } }
+    $order = @{ back = -1; optional = 0; other = 1; mine = 2; keep = 3 }
+    $kindOf = { param($e) if (Test-StartupBack $e) { 'back' } elseif ((Get-StartupKind $e) -ne 'keep' -and (Test-StartupKept $e)) { 'mine' } else { Get-StartupKind $e } }
     $entries = @($entries | Sort-Object @{ Expression = { $order[(& $kindOf $_)] } }, @{ Expression = { $_.Name } })
 
     $w = New-Dialog "$AppName : programmes au démarrage" 640
@@ -2153,12 +2169,13 @@ function Show-StartupDialog($Issue) {
         $kind = & $kindOf $e
         $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
         $dp = New-Object System.Windows.Controls.DockPanel
-        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' '#B9A8FF' '#2A2350' } 'keep' { New-Pill 'À garder' '#4ADE80' '#173326' } 'mine' { New-Pill 'Validé par toi' '#7DD3FC' '#12303F' } default { $null } }
+        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' '#B9A8FF' '#2A2350' } 'keep' { New-Pill 'À garder' '#4ADE80' '#173326' } 'mine' { New-Pill 'Validé par toi' '#7DD3FC' '#12303F' } 'back' { New-Pill 'De nouveau actif' '#FFB547' '#3A2A12' } default { $null } }
         if ($pill) { [System.Windows.Controls.DockPanel]::SetDock($pill, 'Right'); Add-Child $dp $pill }
         $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = [bool]$e.Enabled; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
         $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
         Add-Child $txt (New-Text $e.Name 14 '#FFFFFF' 'SemiBold')
         $cmd = New-Text ($e.Command -replace '"', '') 11 '#7A8399'; $cmd.TextWrapping = 'NoWrap'; $cmd.TextTrimming = 'CharacterEllipsis'; $cmd.MaxWidth = 420; Add-Child $txt $cmd
+        if ($kind -eq 'back') { $bk = New-Text "Tu l'avais décoché, mais il est de nouveau actif : le plus souvent, c'est l'appli qui se remet toute seule au démarrage. Pour que ça tienne : ouvre-la, va dans ses paramètres et désactive son option du type « Lancer au démarrage de Windows »." 11.5 '#FFB547'; $bk.MaxWidth = 440; $bk.Margin = Th 0 3 0 0; Add-Child $txt $bk }
         $cb.Content = $txt
         Add-Child $dp $cb
         $row.Child = $dp; Add-Child $list $row
@@ -2207,6 +2224,9 @@ function Show-StartupDialog($Issue) {
     # Ce qui reste coché est validé : plus signalé aux prochains diagnostics (les applis décochées ne sont plus validées)
     $disKeys = @($script:StartupRows | Where-Object { -not [bool]$_.Check.IsChecked } | ForEach-Object { Get-StartupKey $_.Entry })
     $script:Settings.StartupKept = @(@($script:Settings.StartupKept | Where-Object { $disKeys -notcontains $_ }) + @($c.Kept) | Where-Object { $_ } | Sort-Object -Unique)
+    # Laissé coché alors qu'il était « de nouveau actif » : tu le gardes, il n'est plus signalé
+    $onKeys = @($script:StartupRows | Where-Object { [bool]$_.Check.IsChecked } | ForEach-Object { $_.Entry.Key })
+    $AppInfo.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ -and $onKeys -notcontains $_ })
     Save-Settings
     if ($c.Kept.Count) { Write-UiLog ("✅ {0} appli(s) gardée(s) au démarrage : le diagnostic ne te les signalera plus." -f $c.Kept.Count) }
     if (-not $c.Dis.Count -and -not $c.En.Count) {
@@ -2482,9 +2502,10 @@ function Show-AppUpdatesDialog($Issue) {
             Add-Child $txt (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
             Add-Child $txt (New-Text ("{0}  →  {1}" -f $a.Version, $a.Available) 12 '#8B93A7')
             if ($a.Ghost) { Add-Child $txt (New-Text "Semble déjà désinstallé (il ne reste qu'une trace dans Windows) : le cocher le réinstallerait. Ne le coche que si tu l'utilises encore." 12 '#FFB547') }
+            elseif ($a.Self) { Add-Child $txt (New-Text "Se met à jour tout seul ou par son propre lanceur : l'outil de Microsoft ne peut pas le faire à sa place. Rien à faire." 12 '#8B93A7') }
             $ib = New-DlgButton 'Ignorer' 'TextBtn'; $ib.Tag = $a; $ib.VerticalAlignment = 'Center'
             $ib.Add_Click({ $x = $this.Tag; $x.Ignored = $true; $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps) + $x.Id; Save-Settings; & $script:RenderUpd })
-            $r = New-CheckRow (-not $a.Ghost) $txt $ib
+            $r = New-CheckRow (-not $a.Ghost -and -not $a.Self) $txt $ib
             $r.Check.Add_Click({ & $script:CountUpd })
             Add-Child $script:UpdList $r.Row
             [void]$script:UpdRows.Add(@{ App = $a; Check = $r.Check })
@@ -2519,11 +2540,11 @@ function Show-AppUpdatesDialog($Issue) {
     Update-DiagBadge
     $sel = $script:UpdChoice
     if (-not $sel -or -not $sel.Count) {
-        if ($Issue -and -not @($apps | Where-Object { -not $_.Ignored }).Count) { $Issue.Status = 'done'; Write-UiLog "✅ Mises à jour : tout le reste est ignoré à ta demande."; Update-DiagBadge; Refresh-Page }
+        if ($Issue -and -not @($apps | Where-Object { -not $_.Ignored -and -not $_.Self -and -not $_.Ghost }).Count) { $Issue.Status = 'done'; Write-UiLog "✅ Mises à jour : plus rien à faire (le reste est ignoré à ta demande ou se met à jour tout seul)."; Update-DiagBadge; Refresh-Page }
         return
     }
     if (-not (Confirm-Box ("Mettre à jour $($sel.Count) logiciel(s) ?`n`nFerme-les avant de continuer (regarde aussi les icônes près de l'horloge) : un logiciel ouvert ne peut pas être mis à jour."))) { return }
-    $action = "Update-SelectedApps -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id })) -Names $(ConvertTo-PsList @($sel | ForEach-Object { $_.Name }))"
+    $action = "Update-SelectedApps -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id })) -Names $(ConvertTo-PsList @($sel | ForEach-Object { $_.Name })) -Versions $(ConvertTo-PsList @($sel | ForEach-Object { "$($_.Available)" }))"
     if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
     if (-not (Start-AeroxTask $action ("Mise à jour de {0} logiciel(s)" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
     Refresh-Page
@@ -3668,16 +3689,34 @@ function Get-OverlayRows {
     return $rows
 }
 
+# Fond de l'overlay : de 0 % (invisible) à 100 % (opaque), en douceur
+function New-OverlayBrush([double]$Opacity) {
+    $a = [byte]([math]::Round(255 * [math]::Max(0, [math]::Min(1, $Opacity))))
+    $b = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb($a, 10, 12, 17)); $b.Freeze()
+    return $b
+}
+# Réglages enregistrés une fois le curseur relâché (pas à chaque cran : ça saccadait le curseur et l'aperçu)
+function Save-SettingsSoon {
+    if (-not $script:SaveSoon) {
+        $script:SaveSoon = New-Object System.Windows.Threading.DispatcherTimer; $script:SaveSoon.Interval = [TimeSpan]::FromMilliseconds(700)
+        $script:SaveSoon.Add_Tick({ $script:SaveSoon.Stop(); Save-Settings })
+    }
+    $script:SaveSoon.Stop(); $script:SaveSoon.Start()
+}
 function Build-OverlayContent {
     if (-not $script:Ov) { return }
     $o = $script:Settings.Overlay
     $border = New-Object System.Windows.Controls.Border
-    $a = [byte]([math]::Round(255 * [math]::Max(0, [math]::Min(1, [double]$o.Opacity))))
-    $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb($a, 10, 12, 17))
-    $border.CornerRadius = Corner 8; $border.Padding = Th 10 7 12 7
+    $border.Background = New-OverlayBrush ([double]$o.Opacity)
+    # Taille : le texte est dessiné directement à la bonne taille (pixels entiers), pas agrandi après coup (c'était flou à certaines tailles)
+    $k = [math]::Max(0.5, [math]::Min(3, [double]$o.Scale))
+    $px = { param($v) [math]::Max(1, [math]::Round($v * $k)) }
+    $border.CornerRadius = Corner (& $px 8); $border.Padding = Th (& $px 10) (& $px 7) (& $px 12) (& $px 7)
     if ($script:OvEdit) { $border.BorderBrush = Brush '#7C5CFF'; $border.BorderThickness = Th 2 2 2 2 }
-    $st = New-Object System.Windows.Media.ScaleTransform([double]$o.Scale, [double]$o.Scale)
-    $border.LayoutTransform = $st
+    $border.UseLayoutRounding = $true; $border.SnapsToDevicePixels = $true
+    [System.Windows.Media.TextOptions]::SetTextFormattingMode($border, $(if ($k -le 1.3) { 'Display' } else { 'Ideal' }))
+    [System.Windows.Media.TextOptions]::SetTextHintingMode($border, 'Fixed')
+    $script:OvBorder = $border
     $sp = New-Object System.Windows.Controls.StackPanel
     $grid = New-Object System.Windows.Controls.Grid
     $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::Auto
@@ -3689,11 +3728,11 @@ function Build-OverlayContent {
     $i = 0
     foreach ($r in $rows) {
         $grid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition))
-        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = 11; $l.FontWeight = 'Bold'; $l.Foreground = Brush '#9AA3B8'; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 1 12 1
+        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = (& $px 11); $l.FontWeight = 'Bold'; $l.Foreground = Brush '#9AA3B8'; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 (& $px 1) (& $px 12) (& $px 1)
         $l.FontFamily = 'Segoe UI'
-        $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { 20 } else { 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
+        $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { & $px 20 } else { & $px 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
         $val.FontFamily = 'Segoe UI'
-        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = 3; $sh.ShadowDepth = 1; $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
+        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = (& $px 3); $sh.ShadowDepth = [math]::Max(1, [math]::Round($k)); $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
         $val.Effect = $sh
         [System.Windows.Controls.Grid]::SetRow($l, $i); [System.Windows.Controls.Grid]::SetRow($val, $i); [System.Windows.Controls.Grid]::SetColumn($val, 1)
         Add-Child $grid $l; Add-Child $grid $val
@@ -3701,7 +3740,7 @@ function Build-OverlayContent {
         $i++
     }
     Add-Child $sp $grid
-    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" 10 '#B9A8FF'; $h.Margin = Th 0 4 0 0; Add-Child $sp $h }
+    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" (& $px 10) '#B9A8FF'; $h.Margin = Th 0 (& $px 4) 0 0; Add-Child $sp $h }
     $border.Child = $sp
     $script:Ov.Content = $border
 }
@@ -3724,7 +3763,7 @@ function New-OverlayWindow {
     $w.Title = 'AEROX Overlay'
     $w.Add_SourceInitialized({ $h = (New-Object System.Windows.Interop.WindowInteropHelper($script:Ov)).Handle; [AeroxNative]::SetClickThrough($h, -not $script:OvEdit) })
     $w.Add_MouseLeftButtonDown({ if ($script:OvEdit) { try { $script:Ov.DragMove() } catch {}; $script:Settings.Overlay.X = [math]::Round($script:Ov.Left); $script:Settings.Overlay.Y = [math]::Round($script:Ov.Top); Save-Settings } })
-    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max(0.5, [math]::Min(3, $n)), 1); Save-Settings; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
+    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max(0.5, [math]::Min(3, $n)), 1); Save-SettingsSoon; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
     $script:Ov = $w
     Build-OverlayContent
 }
@@ -3798,9 +3837,21 @@ function Update-MonitorUi {
     $u.Fps.L2.Text = "Temps d'image " + (Format-Val $v['frametime'] '{0:N1}' ' ms')
 }
 
-function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, [string]$Ui) {
+function Start-ToolUninstall([string]$Action, [string]$What, [string]$Effect) {
+    if ($script:GameSess) { [System.Windows.MessageBox]::Show("Une partie est en cours de suivi : attends de l'avoir quittée pour désinstaller $What.", $AppName, 'OK', 'Information') | Out-Null; return }
+    if (-not (Confirm-Box ("Désinstaller $What ?`n`n$Effect`n`nTu pourras le réinstaller quand tu veux, ici même."))) { return }
+    # Mesures arrêtées d'abord : sinon ses fichiers sont utilisés et ne peuvent pas être retirés (relancées après, sans lui)
+    try { Stop-Monitoring } catch {}
+    $lbl = "Désinstallation : $What"
+    [void](Start-AeroxTask $Action ($lbl.Substring(0, 1).ToUpper() + $lbl.Substring(1)) 'tools')
+}
+function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, [string]$Ui, [string]$UninstUi = '') {
     $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
-    if ($Ok) { $p = New-Pill $OkText '#4ADE80' '#173326'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p }
+    if ($Ok) {
+        # Installé : tu peux le retirer quand tu veux (rien n'est obligatoire)
+        if ($UninstUi) { $ub = New-Button 'Désinstaller' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = $UninstUi } } $false; $ub.Margin = Th 8 0 0 0; $ub.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); Add-Child $row $ub }
+        $p = New-Pill $OkText '#4ADE80' '#173326'; $p.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p
+    }
     else { $b = New-Button 'Installer' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = $Ui } }; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b }
     $t = New-Object System.Windows.Controls.StackPanel
     Add-Child $t (New-Text $Title 14 '#FFFFFF' 'SemiBold')
@@ -3845,10 +3896,10 @@ function Build-MonitorPage {
     Add-Child $sp (New-Section 'Composants de mesure')
     $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
     $st = $script:ToolSt
-    Add-Child $cs (New-ToolRow "Températures et capteurs (LibreHardwareMonitor)" "Températures CPU / GPU, consommation, fréquences. Logiciel libre reconnu, téléchargé depuis nuget.org (~2 Mo)." $st.Lhm 'Installé' 'inst-lhm')
-    Add-Child $cs (New-ToolRow "Température du processeur (pilote PawnIO)" "Pilote signé qui permet de lire la température du processeur en toute sécurité (remplace l'ancien WinRing0 bloqué par Windows)." $st.PawnIO 'Installé' 'inst-pawn')
-    Add-Child $cs (New-ToolRow "Compteur de FPS (PresentMon d'Intel)" "Outil officiel d'Intel, installé avec winget (Microsoft). Rien n'est injecté dans les jeux : aucun risque avec les anti-triche." $st.PresentMon 'Installé' 'inst-pm')
-    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer »." }) 12 '#7A8399'
+    Add-Child $cs (New-ToolRow "Températures et capteurs (LibreHardwareMonitor)" "Températures CPU / GPU, consommation, fréquences. Logiciel libre reconnu, téléchargé depuis nuget.org (~2 Mo)." $st.Lhm 'Installé' 'inst-lhm' 'uninst-lhm')
+    Add-Child $cs (New-ToolRow "Température du processeur (pilote PawnIO)" "Pilote signé qui permet de lire la température du processeur en toute sécurité (remplace l'ancien WinRing0 bloqué par Windows)." $st.PawnIO 'Installé' 'inst-pawn' 'uninst-pawn')
+    Add-Child $cs (New-ToolRow "Compteur de FPS (PresentMon d'Intel)" "Outil officiel d'Intel, installé avec winget (Microsoft). Rien n'est injecté dans les jeux : aucun risque avec les anti-triche." $st.PresentMon 'Installé' 'inst-pm' 'uninst-pm')
+    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer ». Tu peux les désinstaller quand tu veux." }) 12 '#7A8399'
     $n.Margin = Th 0 6 0 0; Add-Child $cs $n
     $c.Child = $cs; Add-Child $sp $c
     $script:MonUi = $u
@@ -3878,13 +3929,19 @@ function Add-OverlaySection($sp, $u) {
     Add-Child $os $wp
     $sl = New-Object System.Windows.Controls.Grid; $sl.Margin = Th 0 6 0 0
     foreach ($w in 0, 1, 2, 3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = $(if ($w % 2 -eq 0) { [System.Windows.GridLength]::Auto } else { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) }); $sl.ColumnDefinitions.Add($cd) }
-    $l1 = New-Text 'Taille' 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; Add-Child $sl $l1
+    $l1 = New-Text ("Taille  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Scale * 100)) 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; $l1.MinWidth = 92; Add-Child $sl $l1; $u.ScaleTxt = $l1
     $s1 = New-Object System.Windows.Controls.Slider; $s1.Minimum = 50; $s1.Maximum = 300; $s1.Value = [double]$script:Settings.Overlay.Scale * 100; $s1.Margin = Th 0 0 24 0; $s1.VerticalAlignment = 'Center'
-    $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); Save-Settings; Build-OverlayContent })
+    $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); if ($script:MonUi.ScaleTxt) { $script:MonUi.ScaleTxt.Text = "Taille  {0} %" -f [math]::Round($this.Value) }; Save-SettingsSoon; Build-OverlayContent })
     [System.Windows.Controls.Grid]::SetColumn($s1, 1); Add-Child $sl $s1
-    $l2 = New-Text 'Fond' 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
+    $l2 = New-Text ("Fond  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Opacity * 100)) 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; $l2.MinWidth = 82; $u.OpTxt = $l2; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
     $s2 = New-Object System.Windows.Controls.Slider; $s2.Minimum = 0; $s2.Maximum = 100; $s2.Value = [double]$script:Settings.Overlay.Opacity * 100; $s2.VerticalAlignment = 'Center'
-    $s2.Add_ValueChanged({ $script:Settings.Overlay.Opacity = [math]::Round($this.Value / 100, 2); Save-Settings; Build-OverlayContent })
+    $s2.Add_ValueChanged({
+        $script:Settings.Overlay.Opacity = [math]::Round($this.Value / 100, 2)
+        if ($script:MonUi.OpTxt) { $script:MonUi.OpTxt.Text = "Fond  {0} %" -f [math]::Round($this.Value) }
+        # Seul le fond change : appliqué tout de suite, sans reconstruire l'overlay
+        if ($script:OvBorder) { $script:OvBorder.Background = New-OverlayBrush ([double]$script:Settings.Overlay.Opacity) }
+        Save-SettingsSoon
+    })
     [System.Windows.Controls.Grid]::SetColumn($s2, 3); Add-Child $sl $s2
     Add-Child $os $sl
     # Alerte surchauffe
@@ -4689,6 +4746,7 @@ $window.Add_Closing({
         if ($r -ne 'Yes') { $e.Cancel = $true; return } else { try { $script:Job.PS.Stop() } catch {} }
     }
     try { Stop-GameSession } catch { Write-Bug -Context 'Gaming : fin de partie' -ErrorRecord $_ }
+    try { if ($script:SaveSoon -and $script:SaveSoon.IsEnabled) { $script:SaveSoon.Stop(); Save-Settings } } catch {}
     try { Stop-Monitoring } catch {}
     try { [AeroxHotkey]::Unregister() } catch {}
     try { if ($script:Ov) { $script:Ov.Close() } } catch {}
