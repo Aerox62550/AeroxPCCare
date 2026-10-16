@@ -9,6 +9,8 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Fichiers à toi, sur tous les disques fixes : case à cocher + bouton « Corbeille » par ligne (confirmation, récupérable, la fenêtre reste ouverte, ligne grisée « À la corbeille ✓ »).
 - Fichiers de jeux : nouvelle carte « Les jeux et logiciels qui prennent le plus de place » (nom + taille du dossier), explication, bouton « Voir les logiciels ».
 - Analyse d'un autre disque que C: : bouton « Nettoyage approfondi » et carte « Fichiers inutiles de Windows » masqués (le nettoyage approfondi ne travaille que sur le disque de Windows).
+- Retour testeur (capture) : « Mettre la sélection à la corbeille » sans case cochée fermait la fenêtre puis disait de cocher. Maintenant tout se fait dans la fenêtre : message si rien n'est coché (elle reste ouverte), sinon mise à la corbeille et lignes grisées.
+- Choix du disque (capture : lettre, nom et place libre collés au milieu) : le modèle des boutons ActionBtn respecte HorizontalContentAlignment (Center par défaut, rien ne change ailleurs) ; nom à gauche, place libre à droite avec un espace.
 
 ## Publié en 2.1.6 : rapport n° 10 (disques, corbeille)
 

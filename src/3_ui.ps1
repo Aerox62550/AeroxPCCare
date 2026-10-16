@@ -24,7 +24,7 @@ Set-SplashStep 66 'Création de l''interface…'
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Opacity" Value="0.85"/></Trigger>
@@ -2034,7 +2034,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.")
+    '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.", "« Mettre la sélection à la corbeille » ne ferme plus la fenêtre, et le choix du disque à analyser est bien aligné.")
     '2.1.6' = @("Diagnostic : chaque disque est détaillé dans le journal (place libre et santé), avec ses lettres (C:, D:…), y compris les disques et clés USB.", "Corbeille : elle est vraiment vidée sur tous les disques, et la taille annoncée est bien celle de ta corbeille (celle des autres comptes du PC n'est jamais touchée).")
     '2.1.5' = @("Overlay : le fond passe vraiment en douceur de transparent à opaque (avant, il basculait d'un coup à 50 %), et la taille suit exactement le curseur. Taille minimum relevée à 70 % pour que le texte reste net.", "Correction d'un calcul qui pouvait planter quand plus de 2 Go étaient libérés (OneDrive, nettoyage).")
     '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).", "Overlay : le fond change en douceur quand tu bouges le curseur (avec le pourcentage affiché), et le texte reste net à toutes les tailles.", "État du PC : tous les disques sont affichés et vérifiés (D:, disques et clés USB…), plus seulement C:.")
@@ -2913,7 +2913,7 @@ function Start-SpaceScan {
         $lbl = "{0}  {1}" -f $d.DeviceID, $(if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $env:SystemDrive) { 'Windows' } else { 'Disque local' })
         $b = New-Object System.Windows.Controls.Button; $b.Style = $window.FindResource('ActionBtn'); $b.HorizontalContentAlignment = 'Stretch'; $b.Margin = Th 0 0 0 8; $b.Tag = "$($d.DeviceID)"
         $dp = New-Object System.Windows.Controls.DockPanel; $dp.LastChildFill = $true
-        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) 12.5 $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#A9B0C2' }); [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
+        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) 12.5 $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#A9B0C2' }); $r.Margin = Th 16 0 0 0; $r.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
         Add-Child $dp (New-Text $lbl 14 '#FFFFFF' 'SemiBold')
         $b.Content = $dp
         $b.Add_Click({ $script:DrivePick = [string]$this.Tag; $script:DriveWin.Close() })
@@ -3058,6 +3058,14 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
             $b.Add_Click({
                 $x = $this.Tag
                 switch ($x.A) {
+                    'bigfiles' {
+                        # Dans la fenêtre même : elle reste ouverte, les lignes mises à la corbeille passent en gris
+                        $sel = @($script:BigChecks | Where-Object { $_.Check.IsChecked -and $_.Check.IsEnabled })
+                        if (-not $sel.Count) { [System.Windows.MessageBox]::Show("Coche d'abord les fichiers à mettre à la corbeille (case à gauche de chaque fichier), ou clique sur « Corbeille » sur une ligne.", $AppName, 'OK', 'Information') | Out-Null; return }
+                        if ((Remove-FilesToRecycle @($sel | ForEach-Object { $_.File }) 'gros fichier(s)') -gt 0) {
+                            foreach ($e in $sel) { if (-not (Test-Path -LiteralPath $e.File.Path)) { $e.Check.IsChecked = $false; $e.Check.IsEnabled = $false; $e.Btn.IsEnabled = $false; $e.Btn.Content = 'À la corbeille ✓'; $e.Show.IsEnabled = $false; $e.Row.Opacity = 0.5 } }
+                        }
+                    }
                     'open' { Start-Process explorer.exe ('"{0}"' -f $x.P) }
                     'url'  { [void](Open-Url $x.P) }
                     default { $script:SpaceNext = $x.A; $script:SpaceArg = $x.P; $script:SpaceWin.Close() }
