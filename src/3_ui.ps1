@@ -232,6 +232,7 @@ $script:Settings = @{
     IgnoredIssues = @()
     StartupKept = @()
     StartupOff = @()
+    StabilityFixAt = @{}
     SpeedHistory = @()
     BetaChannel = $false
     PostOptimize = $false
@@ -252,6 +253,7 @@ function Load-Settings {
             foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
+            if ($h.StabilityFixAt -is [hashtable]) { $script:Settings.StabilityFixAt = $h.StabilityFixAt }
         } elseif (Test-Path -LiteralPath $OldSettings) {
             $script:Settings.LogOpen = ((Get-Content -LiteralPath $OldSettings -ErrorAction Stop) -match 'journal=ouvert')
         }
@@ -267,6 +269,7 @@ function Load-Settings {
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     $AppInfo.StartupOff = @($script:Settings.StartupOff)
+    $AppInfo.StabilityFixAt = $script:Settings.StabilityFixAt
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
 }
@@ -277,6 +280,7 @@ function Save-Settings {
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     $script:Settings.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ })
+    $AppInfo.StabilityFixAt = $script:Settings.StabilityFixAt
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
 }
 
@@ -454,6 +458,9 @@ function Add-BilanCard($sp) {
     & $line 'Programmes en fond' $a.Procs $n.Procs $true $num
     & $line 'Mémoire utilisée' $a.RamUsed $n.RamUsed $true $size
     & $line "Espace libre sur $env:SystemDrive" $a.Free $n.Free $false $size
+    if ($a.Drives -is [hashtable] -and $n.Drives -is [hashtable]) {
+        foreach ($k in @($n.Drives.Keys | Sort-Object)) { if ($a.Drives.ContainsKey($k)) { & $line "Espace libre sur $k" ([double]$a.Drives[$k]) ([double]$n.Drives[$k]) $false $size } }
+    }
     Add-Child $cs $g
     $note = "Temps de démarrage : mesuré par Windows au dernier démarrage complet. Après tes réglages, redémarre le PC (« Redémarrer », pas « Arrêter ») puis relance le diagnostic pour le voir changer. Mémoire et programmes en fond varient selon ce qui est ouvert au moment de la mesure."
     $t = New-Text $note 11.5 '#7A8399'; $t.Margin = Th 0 8 0 4; Add-Child $cs $t
@@ -986,10 +993,19 @@ function Start-Background([string]$Code) {
 # Le problème n'est marqué « réglé » que si le contrôle de sa catégorie ne le trouve plus.
 # (Pas pour les problèmes où l'on choisit soi-même quoi faire : programmes au démarrage, logiciels…)
 function Start-IssueCheck($I) {
+    # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
+    # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
+    if ($I.Id -in 'crash', 'bsod', 'power41') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
     return $true
+}
+function Set-StabilityFixed([string]$Id) {
+    if (-not ($script:Settings.StabilityFixAt -is [hashtable])) { $script:Settings.StabilityFixAt = @{} }
+    $script:Settings.StabilityFixAt[$Id] = (Get-Date).ToString('s')
+    Save-Settings
+    Write-UiLog "   Les plantages déjà passés restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouveaux. S'il y en a encore, le prochain diagnostic te le dira."
 }
 function Receive-IssueChecks {
     $line = $null; $changed = $false
@@ -1607,7 +1623,7 @@ function Build-SystemPage {
     $drv = @($i.GpuDrivers)
     if ($drv.Count) {
         foreach ($g in $drv) {
-            $ver = $g.Version + $(if ($g.Date) { "  ·  du " + (Format-Date $g.Date) } else { '' })
+            $ver = $g.Version + $(if ($g.Installed) { "  ·  installé le " + (Format-Date $g.Installed) } elseif ($g.Date) { "  ·  pilote daté du " + (Format-Date $g.Date) } else { '' })
             $pill = switch ($g.Status) { 'ok' { 'À jour' } 'old' { 'Mise à jour dispo' } 'none' { 'Pas de pilote' } default { '' } }
             $pk = switch ($g.Status) { 'ok' { 'ok' } 'old' { 'warn' } 'none' { 'bad' } default { '' } }
             $help = ''
@@ -2034,6 +2050,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.8' = @("Bilan avant / après : la place libre de tous tes disques (D:, E:…) est comparée, pas seulement C:. Visible à partir du prochain bilan.", "« Pas de son » ne relance plus le son de Windows quand il marche : ça coupait le micro et le casque dans Discord. Son et micro te disent maintenant quoi choisir exactement dans Discord (Entrée / Sortie), y compris avec SteelSeries Sonar.", "Navigateurs : « Gérer » ouvre directement la page de l'extension, dans le bon profil.", "Pilotes graphiques : la vraie date d'installation est affichée (la date du pilote, c'est celle du fabricant).", "Plantages : après une réparation ou un nouveau pilote graphique, seuls les nouveaux plantages comptent, et dwm.exe (l'affichage de Windows) est réparé par le pilote graphique, pas par les mises à jour de logiciels.", "Désinstallation : si le désinstalleur d'un logiciel n'existe plus, AEROX te l'explique clairement.")
     '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.", "« Mettre la sélection à la corbeille » ne ferme plus la fenêtre, et le choix du disque à analyser est bien aligné.")
     '2.1.6' = @("Diagnostic : chaque disque est détaillé dans le journal (place libre et santé), avec ses lettres (C:, D:…), y compris les disques et clés USB.", "Corbeille : elle est vraiment vidée sur tous les disques, et la taille annoncée est bien celle de ta corbeille (celle des autres comptes du PC n'est jamais touchée).")
     '2.1.5' = @("Overlay : le fond passe vraiment en douceur de transparent à opaque (avant, il basculait d'un coup à 50 %), et la taille suit exactement le curseur. Taille minimum relevée à 70 % pour que le texte reste net.", "Correction d'un calcul qui pouvait planter quand plus de 2 Go étaient libérés (OneDrive, nettoyage).")
@@ -2729,8 +2746,9 @@ function Invoke-UninstallApp($A) {
         & $script:RenderUni
     } catch {
         Write-UiLog ("❌ Impossible de désinstaller « {0} » : {1}" -f $A.Name, $_.Exception.Message)
-        Write-Bug -Context "Désinstallation $($A.Name)" -ErrorRecord $_ -Type 'erreur'
-        [System.Windows.MessageBox]::Show("Impossible de désinstaller « $($A.Name) » ici :`n$($_.Exception.Message)`n`nEssaie depuis Paramètres > Applications.", $AppName, 'OK', 'Warning') | Out-Null
+        $known = ($_.Exception.Message -like "Le désinstalleur de*")
+        if (-not $known) { Write-Bug -Context "Désinstallation $($A.Name)" -ErrorRecord $_ -Type 'erreur' }
+        [System.Windows.MessageBox]::Show("Impossible de désinstaller « $($A.Name) » ici :`n$($_.Exception.Message)" + $(if ($known) { '' } else { "`n`nEssaie depuis Paramètres > Applications." }), $AppName, 'OK', 'Warning') | Out-Null
     }
 }
 function Start-UninstallList($Issue) {
@@ -3160,8 +3178,9 @@ function Show-DriverDialog($Issue) {
             default { Add-Child $head (New-Pill 'Non vérifiable' '#8B93A7' '#222736') }
         }
         Add-Child $txt $head
-        $info = "Installé : $($g.Version)" + $(if ($g.Date) { " (du " + (Format-Date $g.Date) + ")" } else { '' })
-        if ($g.Latest -and $g.Latest.Version) { $info += "   ·   Dernier officiel : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (du " + (Format-Date $g.Latest.Date) + ")" } else { '' }) }
+        # La date de Windows est celle que le fabricant a donnée au pilote (souvent quelques jours avant sa sortie), pas celle de ton installation
+        $info = "Version installée : $($g.Version)" + $(if ($g.Installed) { ", installée le " + (Format-Date $g.Installed) } else { '' }) + $(if ($g.Date) { " (pilote daté du " + (Format-Date $g.Date) + " par le fabricant)" } else { '' })
+        if ($g.Latest -and $g.Latest.Version) { $info += "   ·   Dernière officielle : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (sortie le " + (Format-Date $g.Latest.Date) + ")" } else { '' }) }
         Add-Child $txt (New-Text $info 12 '#8B93A7')
         if ($g.Tool -and $g.Status -ne 'ok') { $t = New-Text ("Le plus simple : installe « {0} », il garde le pilote à jour tout seul." -f $g.Tool) 12 '#7A8399'; $t.Margin = Th 0 3 0 0; Add-Child $txt $t }
         Add-Child $dp $txt
@@ -3438,8 +3457,14 @@ function Show-BrowserDialog($Issue) {
                 $btn = $null
                 if ($x.Exe -and $x.Page -and ($x.Bad -or $x.Type -in 'firefox', 'ext')) {
                     $btn = New-DlgButton $(if ($x.Type -eq 'ext') { 'Gérer' } else { 'Ouvrir les réglages' }) 'TextBtn'
-                    $btn.Tag = @($x.Exe, $x.Page)
-                    $btn.Add_Click({ $t = $this.Tag; Open-BrowserPage $t[0] $t[1] })
+                    $btn.Tag = @($x.Exe, $x.Page, "$($x.Prof)")
+                    $btn.Add_Click({
+                        $t = $this.Tag
+                        Open-BrowserPage $t[0] $t[1] $t[2]
+                        # Certains navigateurs refusent d'ouvrir leurs pages internes depuis un autre programme : l'adresse est copiée, prête à coller
+                        try { [System.Windows.Clipboard]::SetText($t[1]) } catch {}
+                        Write-UiLog ("→ Si le navigateur ne s'ouvre pas sur la bonne page : clique dans sa barre d'adresse, fais Ctrl+V puis Entrée (l'adresse {0} est copiée)." -f $t[1])
+                    })
                 }
                 if ($x.Locked) { Add-Child $txt (New-Text "PC d'entreprise ou d'école : ces réglages viennent sûrement de l'informaticien, AEROX n'y touche pas." 11.5 '#7A8399') }
                 Add-Child $list (New-BrowserRow $txt $btn)

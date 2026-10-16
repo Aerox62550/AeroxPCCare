@@ -1009,6 +1009,35 @@ function Repair-Printing {
     Add-Change -Kind 'info' -Title "Impression débloquée (service relancé, file d'attente vidée)"
 }
 
+# Nom de l'appareil son par défaut (sortie ou micro) : « Casque (3- Arctis Nova Pro Wireless) »…
+function Get-AudioDefaultName([bool]$Capture, [int]$Role = 0) {
+    $id = [AeroxAudio]::DefaultId($Capture, $Role)
+    if (-not $id) { return '' }
+    $d = @(Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like "*$id" }) | Select-Object -First 1
+    return $(if ($d) { "$($d.FriendlyName)" } else { '' })
+}
+# Ce qu'il faut choisir dans Discord (ou Teams, les jeux…) : les appareils de Windows, ou ceux de SteelSeries Sonar
+# quand il est installé (Sonar fait passer le son des appels par ses propres appareils « Chat » et « Microphone »)
+function Write-VoiceAppAdvice {
+    $all = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "$($_.FriendlyName)" })
+    $sonarOut = @($all | Where-Object { $_ -match '(?i)sonar\s*-\s*chat' }) | Select-Object -First 1
+    $sonarIn  = @($all | Where-Object { $_ -match '(?i)sonar\s*-\s*microphone' }) | Select-Object -First 1
+    if ($sonarOut -and $sonarIn) {
+        Log "   → SteelSeries Sonar est installé : dans Discord > Paramètres > Voix et vidéo, choisis"
+        Log "       Périphérique d'entrée : « $sonarIn »"
+        Log "       Périphérique de sortie : « $sonarOut »"
+        Log "     (c'est ce que demande SteelSeries : Sonar envoie ensuite le son vers ton casque, réglable dans son appli)"
+        return
+    }
+    $in = Get-AudioDefaultName $true 2; if (-not $in) { $in = Get-AudioDefaultName $true 0 }
+    $out = Get-AudioDefaultName $false 2; if (-not $out) { $out = Get-AudioDefaultName $false 0 }
+    if ($in -or $out) {
+        Log "   → Dans Discord > Paramètres > Voix et vidéo, choisis les appareils que Windows utilise :"
+        if ($in) { Log "       Périphérique d'entrée : « $in »" }
+        if ($out) { Log "       Périphérique de sortie : « $out »" }
+        Log "     (« Default » / « Par défaut » marche aussi : il suit ce que Windows utilise)"
+    }
+}
 function Repair-Sound {
     Step "Son : vérification et réparation"
     foreach ($svc in 'AudioEndpointBuilder', 'Audiosrv') {
@@ -1017,8 +1046,13 @@ function Repair-Sound {
             if ($sv.StartType -eq 'Disabled') { Set-Service -Name $svc -StartupType Automatic -ErrorAction Stop; Log "   ✔ Service audio « $svc » était désactivé : réactivé" }
         } catch {}
     }
-    try { Restart-Service -Name Audiosrv -Force -ErrorAction Stop; Log "   ✔ Service audio de Windows relancé" } catch { try { Start-Service -Name Audiosrv -ErrorAction SilentlyContinue } catch {} }
-    Start-Sleep -Seconds 2
+    # Le service du son n'est relancé QUE s'il est arrêté : le relancer quand il marche coupe le son de tout le PC
+    # quelques secondes, et Discord, Teams ou un jeu perdent alors le micro ou le casque (retour testeur)
+    try {
+        $as = Get-Service -Name Audiosrv -ErrorAction Stop
+        if ($as.Status -ne 'Running') { Start-Service -Name Audiosrv -ErrorAction Stop; Log "   ✔ Service audio de Windows était arrêté : redémarré"; Start-Sleep -Seconds 2 }
+        else { Log "   ✔ Service audio de Windows en marche" }
+    } catch { Log "   ⚠ Le service audio de Windows ne démarre pas : $($_.Exception.Message)" }
     [void](Enable-DisabledDevices @('AudioEndpoint') 'Sortie son' '\{0\.0\.0\.')
     $outs = @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '\{0\.0\.0\.' } | ForEach-Object { $_.FriendlyName })
     if ($outs.Count) { Log ("   • Sorties détectées : {0}" -f ($outs -join ' · ')) }
@@ -1034,6 +1068,9 @@ function Repair-Sound {
         Log ("   ✔ Le son {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était presque à zéro ($vol %)" }), [math]::Max($vol, 50))
         Add-Change -Kind 'info' -Title "Son réactivé (sourdine enlevée / volume remonté)"
     } else { Log "   ✔ Volume à $vol %, sourdine désactivée" }
+    $cur = Get-AudioDefaultName $false 0
+    if ($cur) { Log "   • Le son sort actuellement sur : « $cur »" }
+    Write-VoiceAppAdvice
     Log "✅ Si tu n'entends toujours rien : vérifie que le son sort sur le bon appareil (casque, écran ou enceintes) dans Paramètres > Son, et le volume de l'appareil lui-même."
 }
 
@@ -1055,7 +1092,10 @@ function Repair-Microphone {
         Log ("   ✔ Le micro {0} : remis à {1} %" -f $(if ($muted) { 'était coupé (sourdine)' } else { "était très bas ($vol %)" }), [math]::Max($vol, 80))
         Add-Change -Kind 'info' -Title "Micro réactivé (sourdine enlevée / volume remonté)"
     } else { Log "   ✔ Micro à $vol %, sourdine désactivée" }
-    Log "✅ Teste ton micro : Paramètres > Son > ton micro > « Tester le micro ». Dans Discord ou Teams, vérifie aussi que c'est le bon micro qui est choisi."
+    $cur = Get-AudioDefaultName $true 0
+    if ($cur) { Log "   • Micro utilisé par Windows : « $cur »" }
+    Write-VoiceAppAdvice
+    Log "✅ Teste ton micro : Paramètres > Son > ton micro > « Tester le micro ». Dans Discord, le bouton « Vérifions » (Voix et vidéo) te fait entendre ta voix."
 }
 
 function Repair-Webcam {
@@ -1154,10 +1194,12 @@ function Get-BrowserExe($Def, [string]$ProfileRoot) {
 }
 
 # Ouvre une page interne du navigateur (chrome://extensions…) chez la personne devant l'écran
-function Open-BrowserPage([string]$Exe, [string]$Page) {
+function Open-BrowserPage([string]$Exe, [string]$Page, [string]$Profile = '') {
     if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { Log "⚠ Navigateur introuvable : ouvre-le toi-même et tape $Page dans la barre d'adresse."; return }
+    # Le bon profil du navigateur (« Profile 1 »…) : sinon il s'ouvre sur un autre profil, sans la page voulue
+    $arg = $(if ($Profile -match '^(Default|Profile \d+)$') { '--profile-directory="{0}" ' -f $Profile } else { '' }) + $Page
     # Toujours dans la session normale, sans droits admin (le navigateur peut être installé dans le dossier perso)
-    if (-not (Start-AsSessionUser $Exe $Page)) { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
+    if (-not (Start-AsSessionUser $Exe $arg)) { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
 }
 
 # Profils d'un navigateur Chromium : « Default », « Profile 1 »… (Opera : le dossier lui-même)
@@ -1256,7 +1298,7 @@ function Get-BrowserReportList {
                     $ok = Test-HomeUrlOk $x.U
                     $shown = if ($x.N -and $ok) { $x.N } else { Get-UrlHost $x.U }
                     if (-not $shown) { $shown = $x.U }
-                    [void]$items.Add(@{ Type = 'home'; Browser = $def.Key; Where = $whereTxt; Label = "$($x.L) : $shown"; Bad = -not $ok; Exe = $exe; Page = "$($def.Scheme)://settings"
+                    [void]$items.Add(@{ Type = 'home'; Browser = $def.Key; Where = $whereTxt; Label = "$($x.L) : $shown"; Bad = -not $ok; Exe = $exe; Page = "$($def.Scheme)://settings"; Prof = $(if ((Split-Path $pr.Dir -Leaf) -match '^(Default|Profile \d+)$') { Split-Path $pr.Dir -Leaf } else { '' })
                                         Detail = $(if ($ok) { 'Normal' } else { "Pas un site habituel : si tu ne l'as pas choisi toi-même, c'est un pirate de navigateur. Change-le dans les paramètres du navigateur." }) })
                 }
                 # Extensions installées
@@ -1289,7 +1331,7 @@ function Get-BrowserReportList {
                     if ($mi.Hijack) { $flags += "change la page d'accueil, le nouvel onglet ou la recherche" }
                     $off = ($dis -and $dis -ne '[]' -and $dis -ne '0')
                     $bad = (($loc -in '4', '7', '8', '9') -or $mi.Hijack) -and ($nm -notmatch $script:ExtTrusted)
-                    [void]$items.Add(@{ Type = 'ext'; Browser = $def.Key; Where = $whereTxt; Label = $nm + $(if ($off) { ' (désactivée)' } else { '' }); Bad = $bad; Exe = $exe; Page = "$($def.Scheme)://extensions"
+                    [void]$items.Add(@{ Type = 'ext'; Browser = $def.Key; Where = $whereTxt; Label = $nm + $(if ($off) { ' (désactivée)' } else { '' }); Bad = $bad; Exe = $exe; Page = $(if ($def.Scheme -eq 'opera') { 'opera://extensions' } elseif ($id -match '^[a-p]{32}$') { "$($def.Scheme)://extensions/?id=$id" } else { "$($def.Scheme)://extensions" }); Prof = $(if ((Split-Path $pr.Dir -Leaf) -match '^(Default|Profile \d+)$') { Split-Path $pr.Dir -Leaf } else { '' })
                                         Detail = $(if ($flags.Count) { ($flags -join ' · ') } else { 'Installée depuis le magasin' }) })
                 }
             }
@@ -1481,6 +1523,8 @@ function Get-PcSnapshot {
     try { $os = Get-CimInstance Win32_OperatingSystem; $s.RamUsed = [double]($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) * 1KB } catch {}
     try { $s.Procs = @(Get-Process -ErrorAction SilentlyContinue).Count } catch {}
     try { $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"; $s.Free = [double]$d.FreeSpace } catch {}
+    # Les autres disques aussi (D:, E:…), pour voir le gain du nettoyage partout
+    try { $s.Drives = @{}; foreach ($o in @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })) { $s.Drives[$o.Id] = $o.Free } } catch {}
     return $s
 }
 
@@ -2095,8 +2139,16 @@ function Test-SystemState {
     } catch {}
 }
 
+# Après une réparation de plantages / écrans bleus, seuls les NOUVEAUX comptent (les anciens restent dans l'historique
+# de Windows : sans ça, la vérification juste après la réparation les retrouvait toujours)
+function Get-StabilitySince([string]$Id, [datetime]$Default) {
+    try { $h = $AppInfo.StabilityFixAt; if ($h -and $h[$Id]) { $f = [datetime]$h[$Id]; if ($f -gt $Default) { return $f } } } catch {}
+    return $Default
+}
+# Programmes qui font partie de Windows : ils ne se « mettent pas à jour » comme un logiciel
+$script:WinComponents = '(?i)^(dwm|explorer|svchost|sihost|ctfmon|runtimebroker|taskhostw|applicationframehost|shellexperiencehost|startmenuexperiencehost|searchhost|searchapp|searchui|textinputhost|lockapp|systemsettings|winlogon|csrss|lsass|spoolsv|audiodg|fontdrvhost|dllhost|wmiprvse|msedgewebview2|widgets|phoneexperiencehost)\.exe$'
 function Test-Stability {
-    $since = (Get-Date).AddDays(-30)
+    $since = Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)
     $bsod = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since } -ErrorAction SilentlyContinue)
     if ($bsod.Count -gt 0) {
         $codes = foreach ($e in $bsod) {
@@ -2117,7 +2169,7 @@ function Test-Stability {
             -Steps $steps
     } else { Add-Ok "Aucun écran bleu ces 30 derniers jours" }
 
-    $kp = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $since } -ErrorAction SilentlyContinue |
+    $kp = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = (Get-StabilitySince 'power41' (Get-Date).AddDays(-30)) } -ErrorAction SilentlyContinue |
             Where-Object { "$($_.Properties[0].Value)" -eq '0' })
     if ($kp.Count -ge 2) {
         Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" `
@@ -2127,19 +2179,51 @@ function Test-Stability {
     }
 
     # Les plantages d'AEROX PC Care lui-même ne sont pas un problème du PC (ils remontent par les rapports de bug)
-    $crashes = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = (Get-Date).AddDays(-7) } -ErrorAction SilentlyContinue |
+    $crashes = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1000; StartTime = (Get-StabilitySince 'crash' (Get-Date).AddDays(-7)) } -ErrorAction SilentlyContinue |
                  Where-Object { "$($_.Properties[0].Value)" -notmatch '(?i)^(aerox ?pc ?care|aeroxpccare)(_setup)?.*\.exe$' })
     $groups = @($crashes | Group-Object { "$($_.Properties[0].Value)" } | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending)
     if ($groups.Count -gt 0) {
         $g = $groups[0]
         $module = ($g.Group | Group-Object { "$($_.Properties[3].Value)" } | Sort-Object Count -Descending | Select-Object -First 1).Name
-        $cause = if ($module -match '(?i)^(nvwgf|nvogl|nvd3d|nvcuda|atiu|amdx|atidx|igd|ig\d)') { "Le plantage vient du pilote de la carte graphique ($module)." }
+        $gpuMod = ($module -match '(?i)^(nvwgf|nvogl|nvd3d|nvcuda|nvlddmkm|atiu|amdx|atidx|amdkmd|igd|ig\d|dxgi|d3d11|d3d12|dxcore)')
+        $isWin = ($g.Name -match $script:WinComponents)
+        $cause = if ($g.Name -match '(?i)^dwm\.exe$') { "dwm.exe, c'est l'affichage de Windows (fenêtres, bureau, effets) : quand il plante, l'écran clignote ou devient noir un instant. La cause est presque toujours le pilote de la carte graphique ($module)." }
+                 elseif ($isWin -and $gpuMod) { "$($g.Name) fait partie de Windows ; le plantage vient du pilote de la carte graphique ($module)." }
+                 elseif ($isWin) { "$($g.Name) fait partie de Windows ($module) : souvent des fichiers de Windows abîmés ou un pilote." }
+                 elseif ($gpuMod) { "Le plantage vient du pilote de la carte graphique ($module)." }
                  elseif ($module -match '(?i)^(ntdll|kernelbase|ucrtbase|msvcp|vcruntime|clr|coreclr)') { "Le plantage vient du logiciel lui-même ($module) : souvent une version ancienne ou des fichiers abîmés." }
                  else { "Plantages répétés dans « $module » : souvent une version ancienne ou des fichiers du logiciel abîmés." }
         $others = if ($groups.Count -gt 1) { " Autres : " + (($groups | Select-Object -Skip 1 -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', ') + "." } else { '' }
-        Add-Issue -Id 'crash' -Sev 'warn' -Title "$($g.Name) a planté $($g.Count) fois cette semaine" -Detail ("Module en cause : {0}" -f $module) -Cause ($cause + $others) `
-            -Effect "Fermetures soudaines et perte de ce qui n'était pas enregistré." -FixLabel "Mettre à jour mes logiciels" -FixAction 'Update-Apps' `
-            -Steps @("Mets à jour le logiciel (bouton vert) et le pilote graphique (onglet Mises à jour > Pilotes).", "Si ça continue : désinstalle-le puis réinstalle-le depuis son site officiel.")
+        $per = $(if ((Get-StabilitySince 'crash' (Get-Date).AddDays(-7)) -gt (Get-Date).AddDays(-7)) { "depuis ta dernière réparation" } else { "cette semaine" })
+        # Plantage lié à la carte graphique : seuls ceux d'APRÈS l'installation du pilote actuel comptent
+        # (sinon, juste après avoir installé le nouveau pilote, AEROX continuerait d'accuser l'ancien)
+        if ($gpuMod -or $g.Name -match '(?i)^dwm\.exe$') {
+            $last = @((Get-GpuDriverInstallDates).Values | Sort-Object -Descending | Select-Object -First 1)
+            if ($last.Count -and $last[0] -gt (Get-Date).AddDays(-7)) {
+                $after = @($g.Group | Where-Object { $_.TimeCreated -gt $last[0] })
+                if ($after.Count -lt 3) {
+                    Add-Ok ("{0} plantait avant ({1} fois), plus depuis le nouveau pilote graphique installé le {2}" -f $g.Name, $g.Count, $last[0].ToString('dd/MM/yyyy à HH:mm'))
+                    return
+                }
+                $g = @{ Name = $g.Name; Count = $after.Count; Group = $after }; $per = "depuis le nouveau pilote graphique"
+            }
+        }
+        # La bonne réparation selon le coupable : pilote graphique, fichiers de Windows, ou le logiciel lui-même
+        if ($gpuMod -or $g.Name -match '(?i)^dwm\.exe$') {
+            Add-Issue -Id 'crash' -Sev 'warn' -Title "$($g.Name) a planté $($g.Count) fois $per" -Detail ("Module en cause : {0}" -f $module) -Cause ($cause + $others) `
+                -Effect $(if ($isWin) { "Écran qui clignote ou devient noir, fenêtres qui se figent un instant." } else { "Fermetures soudaines et perte de ce qui n'était pas enregistré." }) `
+                -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
+                -Steps @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.", "Si ça continue après la mise à jour, lance « Réparer les fichiers Windows » (onglet Réparer).")
+        } elseif ($isWin) {
+            Add-Issue -Id 'crash' -Sev 'warn' -Title "$($g.Name) a planté $($g.Count) fois $per" -Detail ("Module en cause : {0}" -f $module) -Cause ($cause + $others) `
+                -Effect "Des morceaux de Windows se ferment ou redémarrent tout seuls." `
+                -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert." `
+                -Steps @("Lance « Réparer les fichiers Windows » (bouton vert).", "Installe toutes les mises à jour Windows et le pilote de ta carte graphique.")
+        } else {
+            Add-Issue -Id 'crash' -Sev 'warn' -Title "$($g.Name) a planté $($g.Count) fois $per" -Detail ("Module en cause : {0}" -f $module) -Cause ($cause + $others) `
+                -Effect "Fermetures soudaines et perte de ce qui n'était pas enregistré." -FixLabel "Mettre à jour mes logiciels" -FixAction 'Update-Apps' `
+                -Steps @("Mets à jour le logiciel (bouton vert) et le pilote graphique (onglet Mises à jour > Pilotes).", "Si ça continue : désinstalle-le puis réinstalle-le depuis son site officiel.")
+        }
     } else { Add-Ok "Aucun logiciel ne plante en boucle" }
 }
 
@@ -2440,14 +2524,38 @@ function Test-GpuJustUpdated([string]$Name, [string]$Version) {
     try { [IO.File]::WriteAllLines($f, [string[]]@($map.Keys | ForEach-Object { "{0}|{1}|{2}" -f ($_ -replace '\|', '/'), $map[$_].V, $(if ($map[$_].Up) { '1' } else { '0' }) }), (New-Object System.Text.UTF8Encoding($false))) } catch {}
     return $up
 }
+# Vraie date d'installation du pilote de chaque carte graphique (pas la date donnée par le fabricant).
+# 1) Journal de Windows « Kernel-PnP/Configuration » (événement 400 « appareil configuré ») : le premier événement qui
+#    cite cette carte ET la version de pilote actuelle = son installation. 2) Sinon : création du fichier
+#    C:\Windows\INF\oemNN.inf du pilote. Clé : identifiant PnP de la carte (majuscules).
+function Get-GpuDriverInstallDates {
+    $h = @{}
+    try {
+        $evs = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Kernel-PnP/Configuration'; Id = 400 } -MaxEvents 3000 -ErrorAction SilentlyContinue)
+        foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -Filter "DeviceClass='DISPLAY'" -ErrorAction Stop)) {
+            $id = "$($d.DeviceID)".ToUpperInvariant(); $ver = "$($d.DriverVersion)"
+            if (-not $id) { continue }
+            $hit = @($evs | Where-Object { $vals = @($_.Properties | ForEach-Object { "$($_.Value)" }); ($vals -contains $id) -and $ver -and ($vals -contains $ver) } | Sort-Object TimeCreated | Select-Object -First 1)
+            if ($hit.Count) { $h[$id] = $hit[0].TimeCreated; continue }
+            $inf = "$($d.InfName)"
+            if ($inf -match '^oem\d+\.inf$') {
+                $f = Join-Path $env:SystemRoot "INF\$inf"
+                if (Test-Path -LiteralPath $f) { $h[$id] = (Get-Item -LiteralPath $f -Force).CreationTime }
+            }
+        }
+    } catch {}
+    return $h
+}
 function Get-GpuDrivers {
     $laptop = $false
+    $inst = Get-GpuDriverInstallDates
     try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     $list = New-Object System.Collections.ArrayList
     foreach ($g in @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
         if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage|hyper-v|vmware|virtualbox|parallels|qxl|red hat') { continue }
         $vendor = if ("$($g.PNPDeviceID)" -match 'VEN_10DE' -or $g.Name -match 'NVIDIA') { 'NVIDIA' } elseif ("$($g.PNPDeviceID)" -match 'VEN_1002' -or $g.Name -match 'AMD|Radeon') { 'AMD' } elseif ("$($g.PNPDeviceID)" -match 'VEN_8086' -or $g.Name -match 'Intel') { 'Intel' } else { '' }
-        $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = (ConvertTo-DateSafe $g.DriverDate); AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown' }
+        $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = (ConvertTo-DateSafe $g.DriverDate); AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown'
+                Installed = $inst["$($g.PNPDeviceID)".ToUpperInvariant()] }
         if ($o.Date) { $o.AgeDays = [int]((Get-Date) - $o.Date).TotalDays }
         if ($vendor -eq 'NVIDIA') {
             $digits = $o.Raw -replace '\D', ''
@@ -3051,8 +3159,17 @@ function Uninstall-App([string]$Kind, [string]$Cmd, [string]$Name, [bool]$PerUse
     # SANS les droits admin. Cette entrée peut être écrite par n'importe quel programme de la personne :
     # AEROX ne doit jamais la lancer avec ses droits administrateur.
     if ($PerUser) {
+        $ex2 = $exe -replace '(?i)%USERPROFILE%', (Get-SessionUser).Profile -replace '(?i)%LOCALAPPDATA%', (Get-SessionFolder 'Local AppData') -replace '(?i)%APPDATA%', (Get-SessionFolder 'AppData')
+        if ($ex2 -notmatch '%' -and -not (Test-Path -LiteralPath $ex2 -PathType Leaf)) {
+            throw ("Le désinstalleur de « {0} » n'est plus sur le PC ({1}). Le logiciel a sans doute déjà été supprimé à la main, ou c'est son lanceur qui le gère (Steam, Epic, Bethesda, Ubisoft…) : désinstalle-le depuis ce lanceur. Sinon : Paramètres > Applications > Applications installées." -f $Name, $ex2)
+        }
         if (-not (Start-AsSessionUser $exe $arg)) { throw "Le désinstalleur n'a pas pu être lancé sur ton compte. Désinstalle-le depuis Paramètres > Applications." }
         return
+    }
+    # %ProgramFiles%… écrit tel quel dans le registre : Start-Process ne le remplace pas tout seul
+    $exe = [Environment]::ExpandEnvironmentVariables($exe)
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        throw ("Le désinstalleur de « {0} » n'est plus sur le PC ({1}). Le logiciel a sans doute déjà été supprimé à la main, ou c'est son lanceur qui le gère (Steam, Epic, Bethesda, Ubisoft…) : désinstalle-le depuis ce lanceur. Sinon : Paramètres > Applications > Applications installées." -f $Name, $exe)
     }
     if ($arg) { Start-Process -FilePath $exe -ArgumentList $arg } else { Start-Process -FilePath $exe }
 }

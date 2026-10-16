@@ -2,6 +2,16 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.1.8 : bilan avant / après sur tous les disques (retour testeur)
+
+- Son (rapport n° 12 + retour Sam : « plus entendu sur Discord » juste après « Pas de son ») : PAS une coïncidence. Repair-Sound relançait toujours le service Audiosrv, ce qui coupe le son de tout le PC et fait perdre micro/casque à Discord. Maintenant : relancé seulement s'il est arrêté. Test Windows : le processus du service ne doit pas changer.
+- Son et micro : appareil utilisé par Windows nommé (« Le son sort sur… », « Micro utilisé… », via AeroxAudio.DefaultId + InstanceId PnP), et conseil Discord précis : SteelSeries Sonar présent → Entrée « SteelSeries Sonar - Microphone », Sortie « SteelSeries Sonar - Chat » (recommandation SteelSeries) ; sinon les appareils « communications » de Windows.
+- Extensions (« Gérer » ouvrait juste Chrome) : page de l'extension elle-même (chrome://extensions/?id=…, id vérifié), avec --profile-directory du bon profil ; adresse copiée dans le presse-papiers + consigne Ctrl+V si le navigateur refuse.
+- Pilote graphique (« installé le 30 septembre » alors qu'installé le 16 octobre) : la date de Windows est celle du fabricant. Vraie date d'installation : journal Kernel-PnP/Configuration (événement 400 avec la carte et la version actuelle), sinon création de C:\Windows\INF\oemNN.inf. Affichage : « Version installée : X, installée le …, pilote daté du … par le fabricant ».
+- Plantages (rapport n° 13 : « dwm.exe a planté 6 fois », réparation « Mettre à jour mes logiciels », vérification toujours en échec) : la vérification juste après relisait l'historique des 7 jours, forcément pareil. Maintenant : heure de la réparation retenue (crash, bsod, power41), seuls les plantages d'après comptent ; plantages liés à la carte graphique / dwm.exe : seuls ceux d'après l'installation du pilote actuel comptent ; dwm.exe et modules graphiques → « Vérifier les pilotes » ; autres composants de Windows → « Réparer les fichiers Windows » ; logiciels → mises à jour comme avant.
+- Désinstallation (rapport n° 13 : The Elder Scrolls Online, « fichier spécifié introuvable ») : variables %…% remplacées, et désinstalleur absent → message clair (lanceur Steam/Epic/Bethesda…, ou Paramètres > Applications), pas compté comme bug.
+- Photo du PC (Get-PcSnapshot) : place libre de chaque autre disque (Drives = { 'D:' = octets libres }). Bilan : une ligne « Espace libre sur D: » par disque présent avant ET maintenant. Les bilans commencés avant la 2.1.8 n'ont pas ces valeurs : les lignes apparaissent au bilan suivant (« Repartir de zéro » pour l'avoir tout de suite).
+
 ## Publié en 2.1.7 : espace disque (retour testeur, capture de l'analyse de D:)
 
 - Constat : sur D:, « Tes plus gros fichiers » listait des fichiers de jeux (Epic .egstore, GTA V mods, Electrician Simulator) sans case à cocher : seuls les fichiers de C:\Users\… étaient supprimables. Voulu pour les fichiers de jeux (supprimés seuls, le jeu casse et le lanceur les retélécharge), mais mal expliqué, et les vrais fichiers perso de D: n'étaient pas supprimables non plus.
