@@ -319,7 +319,9 @@ function Invoke-Smoke {
             $d = Get-StabilitySince 'crash' (Get-Date).AddDays(-7)
             if ([math]::Abs(((Get-Date).AddHours(-1) - $d).TotalMinutes) -gt 2) { throw "date de réparation ignorée ($d)" }
             if ((Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)) -gt (Get-Date).AddDays(-29)) { throw "date d'une autre réparation appliquée aux écrans bleus" }
+            $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:IgnoredList = New-Object System.Collections.ArrayList
             Test-Stability
+            Write-Host ("        stabilité : {0} problème(s), OK : {1}" -f $script:Issues.Count, ($script:OkList -join ' | '))
         } finally { $AppInfo.StabilityFixAt = $save }
         $gd = Get-GpuDriverInstallDates
         Write-Host ("        pilotes graphiques installés : {0}" -f (($gd.Keys | ForEach-Object { "{0} le {1:dd/MM/yyyy HH:mm}" -f $_, $gd[$_] }) -join ' · '))
