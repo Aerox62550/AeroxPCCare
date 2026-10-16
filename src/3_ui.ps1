@@ -231,6 +231,7 @@ $script:Settings = @{
     IgnoredApps = @()
     IgnoredIssues = @()
     StartupKept = @()
+    StartupOff = @()
     SpeedHistory = @()
     BetaChannel = $false
     PostOptimize = $false
@@ -248,7 +249,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
         } elseif (Test-Path -LiteralPath $OldSettings) {
@@ -257,6 +258,7 @@ function Load-Settings {
     } catch { Write-Bug -Context 'Lecture des réglages' -ErrorRecord $_ }
     $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps | Where-Object { $_ })
     $script:Settings.StartupKept = @($script:Settings.StartupKept | Where-Object { $_ })
+    $script:Settings.StartupOff = @($script:Settings.StartupOff | Where-Object { $_ })
     $script:Settings.IgnoredIssues = @($script:Settings.IgnoredIssues | Where-Object { $_ -is [hashtable] -and $_.Id })
     $script:Settings.SpeedHistory = @($script:Settings.SpeedHistory | Where-Object { $_ -is [hashtable] })
     $script:Settings.Overlay.Metrics = @($script:Settings.Overlay.Metrics | Where-Object { $_ })
@@ -264,6 +266,7 @@ function Load-Settings {
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
+    $AppInfo.StartupOff = @($script:Settings.StartupOff)
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
     Update-VersionText
 }
@@ -273,6 +276,7 @@ function Save-Settings {
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
+    $script:Settings.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ })
     try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
 }
 
@@ -1030,6 +1034,7 @@ function Complete-Job {
     $dur = '{0:mm\:ss}' -f ((Get-Date) - $job.Start)
     try { $job.PS.Dispose(); $job.RS.Close(); $job.RS.Dispose() } catch {}
     $script:Job = $null
+    if ((@($AppInfo.StartupOff) -join '|') -ne (@($script:Settings.StartupOff) -join '|')) { Save-Settings }
     $hardStop = $cancelled -and ("$($job.Action)".Trim() -match $script:HardCancel)
     if ($hardStop) { $errs = @() }
     Write-UiLog $(if ($cancelled) { "⏹ Arrêté à ta demande : $($job.Label) (durée $dur)" } elseif ($errs.Count) { "⚠ Terminé avec $($errs.Count) problème(s) : $($job.Label) (durée $dur)" } else { "✅ Terminé : $($job.Label) (durée $dur)" })
@@ -2019,6 +2024,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.")
     '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
@@ -2136,8 +2142,8 @@ function Show-StartupDialog($Issue) {
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
     $entries = @(Get-StartupEntries)
     if (-not $entries.Count) { [System.Windows.MessageBox]::Show("Aucun programme ne se lance au démarrage.", $AppName, 'OK', 'Information') | Out-Null; return }
-    $order = @{ optional = 0; other = 1; mine = 2; keep = 3 }
-    $kindOf = { param($e) if ((Get-StartupKind $e) -ne 'keep' -and (Test-StartupKept $e)) { 'mine' } else { Get-StartupKind $e } }
+    $order = @{ back = -1; optional = 0; other = 1; mine = 2; keep = 3 }
+    $kindOf = { param($e) if (Test-StartupBack $e) { 'back' } elseif ((Get-StartupKind $e) -ne 'keep' -and (Test-StartupKept $e)) { 'mine' } else { Get-StartupKind $e } }
     $entries = @($entries | Sort-Object @{ Expression = { $order[(& $kindOf $_)] } }, @{ Expression = { $_.Name } })
 
     $w = New-Dialog "$AppName : programmes au démarrage" 640
@@ -2153,12 +2159,13 @@ function Show-StartupDialog($Issue) {
         $kind = & $kindOf $e
         $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
         $dp = New-Object System.Windows.Controls.DockPanel
-        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' '#B9A8FF' '#2A2350' } 'keep' { New-Pill 'À garder' '#4ADE80' '#173326' } 'mine' { New-Pill 'Validé par toi' '#7DD3FC' '#12303F' } default { $null } }
+        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' '#B9A8FF' '#2A2350' } 'keep' { New-Pill 'À garder' '#4ADE80' '#173326' } 'mine' { New-Pill 'Validé par toi' '#7DD3FC' '#12303F' } 'back' { New-Pill 'De nouveau actif' '#FFB547' '#3A2A12' } default { $null } }
         if ($pill) { [System.Windows.Controls.DockPanel]::SetDock($pill, 'Right'); Add-Child $dp $pill }
         $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = [bool]$e.Enabled; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
         $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
         Add-Child $txt (New-Text $e.Name 14 '#FFFFFF' 'SemiBold')
         $cmd = New-Text ($e.Command -replace '"', '') 11 '#7A8399'; $cmd.TextWrapping = 'NoWrap'; $cmd.TextTrimming = 'CharacterEllipsis'; $cmd.MaxWidth = 420; Add-Child $txt $cmd
+        if ($kind -eq 'back') { $bk = New-Text "Tu l'avais décoché, mais il est de nouveau actif : le plus souvent, c'est l'appli qui se remet toute seule au démarrage. Pour que ça tienne : ouvre-la, va dans ses paramètres et désactive son option du type « Lancer au démarrage de Windows »." 11.5 '#FFB547'; $bk.MaxWidth = 440; $bk.Margin = Th 0 3 0 0; Add-Child $txt $bk }
         $cb.Content = $txt
         Add-Child $dp $cb
         $row.Child = $dp; Add-Child $list $row
@@ -2207,6 +2214,9 @@ function Show-StartupDialog($Issue) {
     # Ce qui reste coché est validé : plus signalé aux prochains diagnostics (les applis décochées ne sont plus validées)
     $disKeys = @($script:StartupRows | Where-Object { -not [bool]$_.Check.IsChecked } | ForEach-Object { Get-StartupKey $_.Entry })
     $script:Settings.StartupKept = @(@($script:Settings.StartupKept | Where-Object { $disKeys -notcontains $_ }) + @($c.Kept) | Where-Object { $_ } | Sort-Object -Unique)
+    # Laissé coché alors qu'il était « de nouveau actif » : tu le gardes, il n'est plus signalé
+    $onKeys = @($script:StartupRows | Where-Object { [bool]$_.Check.IsChecked } | ForEach-Object { $_.Entry.Key })
+    $AppInfo.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ -and $onKeys -notcontains $_ })
     Save-Settings
     if ($c.Kept.Count) { Write-UiLog ("✅ {0} appli(s) gardée(s) au démarrage : le diagnostic ne te les signalera plus." -f $c.Kept.Count) }
     if (-not $c.Dis.Count -and -not $c.En.Count) {
@@ -2482,9 +2492,10 @@ function Show-AppUpdatesDialog($Issue) {
             Add-Child $txt (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
             Add-Child $txt (New-Text ("{0}  →  {1}" -f $a.Version, $a.Available) 12 '#8B93A7')
             if ($a.Ghost) { Add-Child $txt (New-Text "Semble déjà désinstallé (il ne reste qu'une trace dans Windows) : le cocher le réinstallerait. Ne le coche que si tu l'utilises encore." 12 '#FFB547') }
+            elseif ($a.Self) { Add-Child $txt (New-Text "Se met à jour tout seul ou par son propre lanceur : l'outil de Microsoft ne peut pas le faire à sa place. Rien à faire." 12 '#8B93A7') }
             $ib = New-DlgButton 'Ignorer' 'TextBtn'; $ib.Tag = $a; $ib.VerticalAlignment = 'Center'
             $ib.Add_Click({ $x = $this.Tag; $x.Ignored = $true; $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps) + $x.Id; Save-Settings; & $script:RenderUpd })
-            $r = New-CheckRow (-not $a.Ghost) $txt $ib
+            $r = New-CheckRow (-not $a.Ghost -and -not $a.Self) $txt $ib
             $r.Check.Add_Click({ & $script:CountUpd })
             Add-Child $script:UpdList $r.Row
             [void]$script:UpdRows.Add(@{ App = $a; Check = $r.Check })
@@ -2519,11 +2530,11 @@ function Show-AppUpdatesDialog($Issue) {
     Update-DiagBadge
     $sel = $script:UpdChoice
     if (-not $sel -or -not $sel.Count) {
-        if ($Issue -and -not @($apps | Where-Object { -not $_.Ignored }).Count) { $Issue.Status = 'done'; Write-UiLog "✅ Mises à jour : tout le reste est ignoré à ta demande."; Update-DiagBadge; Refresh-Page }
+        if ($Issue -and -not @($apps | Where-Object { -not $_.Ignored -and -not $_.Self -and -not $_.Ghost }).Count) { $Issue.Status = 'done'; Write-UiLog "✅ Mises à jour : plus rien à faire (le reste est ignoré à ta demande ou se met à jour tout seul)."; Update-DiagBadge; Refresh-Page }
         return
     }
     if (-not (Confirm-Box ("Mettre à jour $($sel.Count) logiciel(s) ?`n`nFerme-les avant de continuer (regarde aussi les icônes près de l'horloge) : un logiciel ouvert ne peut pas être mis à jour."))) { return }
-    $action = "Update-SelectedApps -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id })) -Names $(ConvertTo-PsList @($sel | ForEach-Object { $_.Name }))"
+    $action = "Update-SelectedApps -Ids $(ConvertTo-PsList @($sel | ForEach-Object { $_.Id })) -Names $(ConvertTo-PsList @($sel | ForEach-Object { $_.Name })) -Versions $(ConvertTo-PsList @($sel | ForEach-Object { "$($_.Available)" }))"
     if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
     if (-not (Start-AeroxTask $action ("Mise à jour de {0} logiciel(s)" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
     Refresh-Page

@@ -381,7 +381,12 @@ function Get-AppUpdates([switch]$IncludeIgnored) {
 # le « mettre à jour » le réinstallerait (retour d'un testeur : logiciels désinstallés qui revenaient)
 function Add-AppGhostInfo($List) {
     $out = New-Object System.Collections.ArrayList; $seen = @{}
-    foreach ($a in @($List)) { if (-not $a.Id -or $seen.ContainsKey($a.Id)) { continue }; $seen[$a.Id] = $true; $a.Ghost = $false; [void]$out.Add($a) }
+    $selfKeys = @(Get-SelfUpdatingKeys)
+    foreach ($a in @($List)) {
+        if (-not $a.Id -or $seen.ContainsKey($a.Id)) { continue }; $seen[$a.Id] = $true; $a.Ghost = $false
+        $a.Self = ($selfKeys -contains (Get-SelfUpdatingKey $a.Id $a.Available))
+        [void]$out.Add($a)
+    }
     $inst = $null; try { $inst = Get-InstalledApps } catch {}
     if ($inst) {
         $w32 = @(@($inst) | Where-Object { $_.Kind -eq 'win32' })
@@ -394,6 +399,23 @@ function Add-AppGhostInfo($List) {
         }
     }
     return ,$out
+}
+# Logiciels que winget liste mais ne peut pas mettre à jour (Edge, Epic Online Services… : ils se mettent à jour
+# tout seuls ou par leur lanceur ; ou « aucune mise à jour applicable »). Retenus par version : plus proposés
+# ni comptés pour CETTE version, de nouveau proposés dès qu'une autre version sort. Fichier dans le dossier protégé.
+function Get-SelfUpdatingKey([string]$Id, [string]$Version) { return ("$Id|$Version").Trim().ToLowerInvariant() }
+function Get-SelfUpdatingFile { return (Join-Path (Get-SecureDir '') 'maj-geres-par-le-logiciel.txt') }
+function Get-SelfUpdatingKeys {
+    try { $f = Get-SelfUpdatingFile; if (Test-Path -LiteralPath $f) { return @(Get-Content -LiteralPath $f -Encoding UTF8 -ErrorAction Stop | Where-Object { $_ }) } } catch {}
+    return @()
+}
+function Add-SelfUpdating([string]$Id, [string]$Version) {
+    if (-not $Id -or -not $Version) { return }
+    try {
+        $k = Get-SelfUpdatingKey $Id $Version
+        $all = @(Get-SelfUpdatingKeys | Where-Object { $_ -ne $k }) + $k
+        [IO.File]::WriteAllLines((Get-SelfUpdatingFile), [string[]]@($all | Select-Object -Last 200), (New-Object Text.UTF8Encoding($false)))
+    } catch {}
 }
 # Le logiciel est-il encore vraiment sur le PC ? (son désinstalleur ou son dossier existe)
 function Test-AppPresent($App) {
@@ -565,17 +587,26 @@ function Get-StartupEntries {
         if (-not $key) { continue }
         foreach ($n in $key.GetValueNames()) {
             if (-not $n) { continue }
-            [void]$list.Add(@{ Id = "$($s.Approved)|$n"; Name = $n; Command = [string]$key.GetValue($n); Approved = $s.Approved; ValueName = $n; Enabled = (Test-StartupEnabled $s.Approved $n) })
+            [void]$list.Add(@{ Id = "$($s.Approved)|$n"; Key = (Get-StartupIdKey "$($s.Approved)|$n"); Name = $n; Command = [string]$key.GetValue($n); Approved = $s.Approved; ValueName = $n; Enabled = (Test-StartupEnabled $s.Approved $n) })
         }
     }
     foreach ($f in @(@{ Dir = (Get-SessionFolder 'Startup'); Approved = "$hk\$ab\StartupFolder" },
                      @{ Dir = [Environment]::GetFolderPath('CommonStartup'); Approved = "HKLM:\$ab\StartupFolder" })) {
         if (-not $f.Dir -or -not (Test-Path -LiteralPath $f.Dir)) { continue }
         foreach ($file in @(Get-ChildItem -LiteralPath $f.Dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne 'desktop.ini' })) {
-            [void]$list.Add(@{ Id = "$($f.Approved)|$($file.Name)"; Name = $file.BaseName; Command = $file.FullName; Approved = $f.Approved; ValueName = $file.Name; Enabled = (Test-StartupEnabled $f.Approved $file.Name) })
+            [void]$list.Add(@{ Id = "$($f.Approved)|$($file.Name)"; Key = (Get-StartupIdKey "$($f.Approved)|$($file.Name)"); Name = $file.BaseName; Command = $file.FullName; Approved = $f.Approved; ValueName = $file.Name; Enabled = (Test-StartupEnabled $f.Approved $file.Name) })
         }
     }
     return $list
+}
+# Identifiant stable d'un programme au démarrage : « u|run|discord » (session) ou « m|run32|steam » (tout le PC).
+# Ne dépend pas de l'écriture de la clé de la session (HKCU: ou HKEY_USERS\<SID>), pour que la fenêtre et la tâche
+# de fond désignent toujours le même élément (accepte aussi les anciens identifiants de l'historique).
+function Get-StartupIdKey([string]$Id) {
+    $p = $Id.IndexOf('|'); if ($p -lt 1) { return $Id.ToLowerInvariant() }
+    $ap = $Id.Substring(0, $p); $vn = $Id.Substring($p + 1)
+    $scope = if ($ap -match '^(?i)(HKLM:|Registry::HKEY_LOCAL_MACHINE)') { 'm' } else { 'u' }
+    return ("{0}|{1}|{2}" -f $scope, ($ap.TrimEnd('\') -split '\\')[-1], $vn).ToLowerInvariant()
 }
 function Get-StartupKind($Entry) {
     $t = "$($Entry.Name) $($Entry.Command)"
@@ -585,21 +616,37 @@ function Get-StartupKind($Entry) {
 }
 function Set-StartupApps([string[]]$Disable = @(), [string[]]$Enable = @()) {
     Step "Modification des programmes au démarrage"
-    $entries = Get-StartupEntries
+    $entries = @(Get-StartupEntries)
+    $dk = @($Disable | Where-Object { $_ } | ForEach-Object { Get-StartupIdKey $_ })
+    $ek = @($Enable | Where-Object { $_ } | ForEach-Object { Get-StartupIdKey $_ })
+    $found = @{}
     foreach ($e in $entries) {
         $want = $null
-        if ($Disable -contains $e.Id) { $want = 3 } elseif ($Enable -contains $e.Id) { $want = 2 }
+        if ($dk -contains $e.Key) { $want = 3 } elseif ($ek -contains $e.Key) { $want = 2 }
         if ($null -eq $want) { continue }
+        $found[$e.Key] = $true
         try {
             if (-not (Test-Path -LiteralPath $e.Approved)) { New-Item -Path $e.Approved -Force | Out-Null }
             New-ItemProperty -LiteralPath $e.Approved -Name $e.ValueName -PropertyType Binary -Value ([byte[]]($want,0,0,0,0,0,0,0,0,0,0,0)) -Force -ErrorAction Stop | Out-Null
+            # Relu aussitôt : on n'annonce « fait » que si Windows a bien gardé le réglage
+            if ((Test-StartupEnabled $e.Approved $e.ValueName) -ne ($want -eq 2)) {
+                $raw = ''; try { $raw = (@((Get-ItemProperty -LiteralPath $e.Approved -Name $e.ValueName -ErrorAction Stop).($e.ValueName)) | ForEach-Object { '{0:X2}' -f $_ }) -join ' ' } catch { $raw = $_.Exception.Message }
+                throw ("le réglage n'a pas été gardé par Windows (relu : {0} ; clé {1}, valeur « {2} »)" -f $raw, $e.Approved, $e.ValueName)
+            }
             Log ("   ✔ {0} : {1}" -f $e.Name, $(if ($want -eq 3) { 'ne se lance plus au démarrage' } else { 'se lance de nouveau au démarrage' }))
+            # Retenu : si l'appli se remet toute seule au démarrage, le diagnostic le dira au lieu de la recompter en silence
+            $AppInfo.StartupOff = @(@($AppInfo.StartupOff | Where-Object { $_ -and $_ -ne $e.Key }) + $(if ($want -eq 3) { @($e.Key) } else { @() }))
             if ($want -eq 3) { Add-Change -Title ("« {0} » ne se lance plus au démarrage" -f $e.Name) -Detail "L'appli reste installée." -Undo ("Set-StartupApps -Enable @({0})" -f (ConvertTo-PsLiteral $e.Id)) }
             else { Add-Change -Title ("« {0} » se lance de nouveau au démarrage" -f $e.Name) -Undo ("Set-StartupApps -Disable @({0})" -f (ConvertTo-PsLiteral $e.Id)) }
         } catch {
             Add-TaskError -Title "Impossible de modifier « $($e.Name) » au démarrage" -Cause $_.Exception.Message `
-                -FixLabel "Ouvrir le Gestionnaire des tâches" -FixAction "Start-Process taskmgr.exe -ArgumentList '/0 /startup'"
+                -FixLabel "Ouvrir le Gestionnaire des tâches" -FixAction "Start-Process taskmgr.exe -ArgumentList '/0 /startup'" -Bug $_
         }
+    }
+    # Demandé mais plus dans la liste (l'appli s'est retirée elle-même entre-temps, ou a été désinstallée)
+    foreach ($k in @($dk + $ek | Where-Object { -not $found.ContainsKey($_) } | Select-Object -Unique)) {
+        Log ("   • « {0} » n'est plus dans les programmes au démarrage : rien à changer." -f ($k -split '\|', 3)[-1])
+        Write-Bug -Context 'Programmes au démarrage : élément introuvable' -ErrorRecord ("{0} ; présents : {1}" -f $k, (($entries | ForEach-Object { $_.Key }) -join ', ')) -Type 'info'
     }
     Log "   (Les applis restent installées : tu les ouvres quand tu veux. Si l'une se réactive toute seule, décoche l'option « lancer au démarrage » dans ses propres réglages.)"
 }
@@ -2129,7 +2176,7 @@ function Test-Updates {
         Add-Issue -Id 'winget' -Sev 'warn' -Title "L'outil de mise à jour des logiciels est absent" -Detail 'winget introuvable' `
             -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." -Effect "AEROX PC Care ne peut pas mettre tes logiciels à jour automatiquement." `
             -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore' -OpenOnly
-    } elseif ($null -ne $apps -and ($apps = @($apps | Where-Object { -not $_.Ghost })).Count -gt 0) {
+    } elseif ($null -ne $apps -and ($apps = @($apps | Where-Object { -not $_.Ghost -and -not $_.Self })).Count -gt 0) {
         $shown = ($apps | Select-Object -First 4 | ForEach-Object { $_.Name }) -join ', '
         if ($apps.Count -gt 4) { $shown += " et $($apps.Count - 4) autre(s)" }
         $ign = @(Get-IgnoredApps).Count
@@ -2555,12 +2602,21 @@ function Test-Network {
 
 function Get-StartupKey($Entry) { return ("$($Entry.ValueName)").ToLowerInvariant() }
 function Test-StartupKept($Entry) { return (@($AppInfo.StartupKept) -contains (Get-StartupKey $Entry)) }
+# Décoché dans AEROX mais de nouveau actif : l'appli s'est remise elle-même au démarrage (Discord, Spotify, Steam… le font à leur lancement)
+function Test-StartupBack($Entry) { return ($Entry.Enabled -and @($AppInfo.StartupOff) -contains $Entry.Key) }
 
 function Test-Startup {
     $all  = @(Get-StartupEntries | Where-Object { $_.Enabled })
+    $back = @($all | Where-Object { Test-StartupBack $_ })
+    if ($back.Count) {
+        Add-Issue -Id 'startup-back' -Sev 'warn' -Title ("{0} appli(s) que tu avais décochée(s) se lancent de nouveau au démarrage" -f $back.Count) -Detail (($back | ForEach-Object { $_.Name }) -join ', ') `
+            -Cause "Le plus souvent, c'est l'appli elle-même qui se remet au démarrage quand elle se lance : son propre réglage « lancer au démarrage » l'emporte." `
+            -Effect "Elles se lancent de nouveau à chaque allumage." -FixLabel "Choisir les applis" -UiFix 'startup' `
+            -Steps @("Ouvre l'appli concernée, va dans ses paramètres et désactive son option du type « Lancer au démarrage de Windows » (souvent dans « Général », « Windows » ou « Démarrage »).", "Ensuite, décoche-la encore une fois dans « Choisir les applis » : cette fois, ça tiendra.")
+    }
     # Ce que tu as validé (« je le garde ») et l'essentiel (antivirus, pilotes) ne sont plus signalés
     $kept = @($all | Where-Object { Test-StartupKept $_ })
-    $rest = @($all | Where-Object { -not (Test-StartupKept $_) -and (Get-StartupKind $_) -ne 'keep' })
+    $rest = @($all | Where-Object { -not (Test-StartupKept $_) -and -not (Test-StartupBack $_) -and (Get-StartupKind $_) -ne 'keep' })
     $opt  = @($rest | Where-Object { (Get-StartupKind $_) -eq 'optional' })
     $note = if ($kept.Count) { " ($($kept.Count) validé(s) par toi)" } else { '' }
     if ($rest.Count -gt 6 -or $opt.Count -ge 3) {
@@ -3376,25 +3432,35 @@ function Update-Apps {
     $ign = @(Get-IgnoredApps).Count
     if ($ign) { Log "   ($ign logiciel(s) ignoré(s) à ta demande : ils ne seront pas touchés)" }
     foreach ($g in @($apps | Where-Object { $_.Ghost })) { Log ("   • « {0} » semble déjà désinstallé (il ne reste qu'une trace dans Windows) : pas mis à jour, sinon il serait réinstallé." -f $g.Name) }
-    $apps = @($apps | Where-Object { -not $_.Ghost })
+    foreach ($s in @($apps | Where-Object { $_.Self -and -not $_.Ghost })) { Log ("   • « {0} » se met à jour tout seul ou par son propre lanceur : rien à faire." -f $s.Name) }
+    $apps = @($apps | Where-Object { -not $_.Ghost -and -not $_.Self })
     if ($apps.Count -eq 0) { Log "✅ Tous tes logiciels sont à jour."; return }
-    Update-SelectedApps -Ids @($apps | ForEach-Object { $_.Id }) -Names @($apps | ForEach-Object { $_.Name })
+    Update-SelectedApps -Ids @($apps | ForEach-Object { $_.Id }) -Names @($apps | ForEach-Object { $_.Name }) -Versions @($apps | ForEach-Object { "$($_.Available)" })
 }
 
-function Update-SelectedApps([string[]]$Ids, [string[]]$Names) {
+function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versions = @()) {
     $wg = Get-Winget
     if (-not $wg) { Add-WingetError "La mise à jour des logiciels est"; return }
     $extra = Get-WingetExtraArgs $wg
-    $failed = @(); $ok = 0; $n = 0
+    $failed = @(); $ok = 0; $n = 0; $self = 0
     for ($k = 0; $k -lt $Ids.Count; $k++) {
         if ($sync.Cancel) { Log ("⏹ Arrêt demandé : {0} logiciel(s) restant(s) pas mis à jour." -f ($Ids.Count - $k)); break }
         $id = $Ids[$k]; $name = if ($Names -and $k -lt $Names.Count -and $Names[$k]) { $Names[$k] } else { $id }
+        $ver = if ($Versions -and $k -lt $Versions.Count) { "$($Versions[$k])" } else { '' }
         $n++
         Step ("Mise à jour {0}/{1} : {2}" -f $n, $Ids.Count, $name)
         $idArgs = if ($id.EndsWith([string][char]0x2026)) { @('--id', $id.TrimEnd([char]0x2026)) } else { @('--id', $id, '--exact') }
         $ec = Invoke-Native $wg (@('upgrade') + $idArgs + @('--silent', '--accept-package-agreements', '--accept-source-agreements') + $extra) ([System.Text.Encoding]::UTF8)
         if ($ec -eq 0) { $ok++; Log "   ✔ $name mis à jour"; Add-Change -Kind 'info' -Title "« $name » mis à jour" -Detail "Pour revenir à l'ancienne version, il faut la réinstaller depuis le site du logiciel." }
-        elseif ($ec -eq -1978335189) { $ok++; Log "   • $name : déjà à jour" }
+        elseif ($ec -eq -1978335189) {
+            # « Aucune mise à jour applicable » : winget voit une version plus récente qui ne s'applique pas à ce PC
+            $self++; Add-SelfUpdating $id $ver
+            Log "   • $name : déjà à jour (la version proposée ne s'applique pas à ce PC, elle ne sera plus proposée)"
+        } elseif ($ec -eq -1978335090) {
+            # Installé d'une autre façon que celle du catalogue (Edge, Epic Online Services…) : il se met à jour lui-même
+            $self++; Add-SelfUpdating $id $ver
+            Log "   • $name : se met à jour tout seul ou par son propre lanceur, l'outil de Microsoft ne peut pas le faire à sa place. Rien à faire : il ne sera plus proposé pour cette version."
+        }
         else {
             $why = switch ($ec) {
                 -1978334975 { "le logiciel est ouvert, ferme-le puis réessaie" }
@@ -3411,7 +3477,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names) {
             -Effect "Ces logiciels restent dans leur ancienne version. Les autres ont bien été mis à jour." `
             -Steps @("Ferme les logiciels concernés, y compris ceux près de l'horloge (Discord, Steam...), puis réessaie.", "Si un logiciel bloque toujours, mets-le à jour depuis son propre menu ou son site officiel, ou ignore-le dans « Choisir les mises à jour ».")
     }
-    Log ("✅ {0} logiciel(s) mis à jour sur {1}." -f $ok, $Ids.Count)
+    Log ("✅ {0} logiciel(s) mis à jour sur {1}{2}." -f $ok, $Ids.Count, $(if ($self) { " ($self se met(tent) à jour tout seul(s))" } else { '' }))
 }
 
 # Pour la fenêtre de choix : liste complète, ignorés compris

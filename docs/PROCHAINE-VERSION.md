@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.4 : retours de testeurs (démarrage, mises à jour)
+
+- Démarrage (retour d'un testeur : 3 applis décochées, toujours 9 au test suivant et encore cochées en revenant) : chaque désactivation est relue aussitôt (erreur claire + détails dans le rapport de bug si Windows ne l'a pas gardée). Identifiant stable « u|run|nom » / « m|run32|nom » : la fenêtre et la tâche de fond désignent toujours le même élément, quelle que soit l'écriture de la clé de la session (HKCU: ou HKEY_USERS\SID) ; anciens identifiants de l'historique acceptés. Élément demandé mais introuvable : noté dans le journal et le rapport.
+- Démarrage : ce qu'AEROX a désactivé est retenu. Une appli de nouveau active (souvent l'appli elle-même qui se remet au démarrage à son lancement : Discord, Spotify…) est signalée par le diagnostic (« N appli(s) que tu avais décochée(s) se lancent de nouveau au démarrage ») et marquée « De nouveau actif » dans la fenêtre, avec la marche à suivre (désactiver son option « Lancer au démarrage » dans ses réglages). La laisser cochée = gardée, plus signalée. Plus comptée dans « programmes au démarrage à vérifier ».
+- Mises à jour (rapport #9 : Edge et Epic Online Services en échec 0x8A15008E à chaque fois, Hytale « aucune mise à jour applicable ») : ces deux réponses de winget ne sont plus des erreurs. Le logiciel est retenu pour cette version (fichier dans le dossier protégé) : plus proposé ni compté par le diagnostic, affiché décoché avec l'explication dans « Choisir les mises à jour », de nouveau proposé dès qu'une autre version sort.
+
 ## Publié en 2.1.3 : grand ménage sécurité et fiabilité (3e relecture Gemini + passage au crible complet)
 
 - Dossier protégé Program Files\AeroxPCCare\protege (modifiable seulement en administrateur) : outils lancés avec les droits admin (module de températures, test de débit, copie de PresentMon), sauvegardes .reg des navigateurs, installateurs de mise à jour, sceaux des annulations. Avant : dossier perso (n'importe quel programme pouvait remplacer un outil et se faire lancer en administrateur). Ancien module de températures réinstallé tout seul dans le dossier protégé, ancien dossier vidé. Désinstallation : dossier protégé supprimé.

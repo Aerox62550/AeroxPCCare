@@ -225,6 +225,41 @@ function Invoke-Smoke {
             if ($l[1].Ghost) { throw "logiciel inconnu pris pour une trace" }
         } finally { Remove-Item -Path $k -Force -ErrorAction SilentlyContinue }
     }
+    Smoke 'Mises à jour : logiciels qui se mettent à jour tout seuls' {
+        Add-SelfUpdating 'Aerox.TestAuto' '9.9'
+        $l = Add-AppGhostInfo @([ordered]@{ Name = 'Aerox Test Auto'; Id = 'Aerox.TestAuto'; Version = '1'; Available = '9.9' }, [ordered]@{ Name = 'Aerox Test Neuf'; Id = 'Aerox.TestNeuf'; Version = '1'; Available = '2' })
+        if (-not $l[0].Self) { throw "logiciel qui se met à jour seul encore proposé" }
+        if ($l[1].Self) { throw "logiciel normal pris pour un logiciel autonome" }
+        $l = Add-AppGhostInfo @([ordered]@{ Name = 'Aerox Test Auto'; Id = 'Aerox.TestAuto'; Version = '1'; Available = '10.0' })
+        if ($l[0].Self) { throw "nouvelle version pas reproposée" }
+        $f = Get-SelfUpdatingFile; [IO.File]::WriteAllLines($f, [string[]]@(Get-SelfUpdatingKeys | Where-Object { $_ -notlike 'aerox.testauto|*' }))
+    }
+    Smoke 'Démarrage : désactivation vérifiée et appli qui se remet toute seule' {
+        $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'; $ap = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run'
+        New-ItemProperty -Path $run -Name 'AeroxTestDemarrage' -Value "$env:SystemRoot\notepad.exe" -PropertyType String -Force | Out-Null
+        $saveOff = @($AppInfo.StartupOff)
+        try {
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if (-not $e -or -not $e.Enabled) { throw "élément de test pas vu comme actif" }
+            # Identifiant écrit autrement (clé de la session via HKEY_USERS) : doit désigner le même élément
+            $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+            Set-StartupApps -Disable @("Registry::HKEY_USERS\$sid\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run|AeroxTestDemarrage")
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if ($e.Enabled) { throw "toujours actif après désactivation" }
+            if (@($AppInfo.StartupOff) -notcontains $e.Key) { throw "désactivation pas retenue" }
+            # L'appli se remet elle-même au démarrage (comme Discord ou Spotify à leur lancement)
+            New-ItemProperty -Path $ap -Name 'AeroxTestDemarrage' -PropertyType Binary -Value ([byte[]](2,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null
+            $e = @(Get-StartupEntries | Where-Object { $_.ValueName -eq 'AeroxTestDemarrage' })[0]
+            if (-not (Test-StartupBack $e)) { throw "appli revenue toute seule pas repérée" }
+            Set-StartupApps -Enable @($e.Id)
+            if (@($AppInfo.StartupOff) -contains $e.Key) { throw "réactivée par toi mais encore signalée" }
+            Write-Host "        clé : $($e.Key)"
+        } finally {
+            Remove-ItemProperty -Path $run -Name 'AeroxTestDemarrage' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -Path $ap -Name 'AeroxTestDemarrage' -ErrorAction SilentlyContinue
+            $AppInfo.StartupOff = $saveOff
+        }
+    }
     Smoke 'Gaming : saccades par heure sur le temps vraiment joué' {
         $f = @(Get-GameFlags @{ Min = 60.0; Act = 10.0; Stut = 8 })
         if ($f -notcontains 'stutter') { throw "8 saccades en 10 min de jeu (50 min d'Alt+Tab) non signalées" }
