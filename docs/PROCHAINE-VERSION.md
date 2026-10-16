@@ -2,6 +2,16 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.1.7 : espace disque (retour testeur, capture de l'analyse de D:)
+
+- Constat : sur D:, « Tes plus gros fichiers » listait des fichiers de jeux (Epic .egstore, GTA V mods, Electrician Simulator) sans case à cocher : seuls les fichiers de C:\Users\… étaient supprimables. Voulu pour les fichiers de jeux (supprimés seuls, le jeu casse et le lanceur les retélécharge), mais mal expliqué, et les vrais fichiers perso de D: n'étaient pas supprimables non plus.
+- Classement de chaque gros fichier (Get-BigFileKind) : dans le profil (hors AppData) ou dans un dossier perso (Téléchargements, Vidéos, Films, Images, Musique, Documents, Bureau, Sauvegardes…) = à toi ; dossier parent avec un .exe, un .egstore (Epic) ou steamapps = morceau de jeu/logiciel (remonte au dossier du jeu lui-même) ; AppData = jamais proposé.
+- Fichiers à toi, sur tous les disques fixes : case à cocher + bouton « Corbeille » par ligne (confirmation, récupérable, la fenêtre reste ouverte, ligne grisée « À la corbeille ✓ »).
+- Fichiers de jeux : nouvelle carte « Les jeux et logiciels qui prennent le plus de place » (nom + taille du dossier), explication, bouton « Voir les logiciels ».
+- Analyse d'un autre disque que C: : bouton « Nettoyage approfondi » et carte « Fichiers inutiles de Windows » masqués (le nettoyage approfondi ne travaille que sur le disque de Windows).
+- Retour testeur (capture) : « Mettre la sélection à la corbeille » sans case cochée fermait la fenêtre puis disait de cocher. Maintenant tout se fait dans la fenêtre : message si rien n'est coché (elle reste ouverte), sinon mise à la corbeille et lignes grisées.
+- Choix du disque (capture : lettre, nom et place libre collés au milieu) : le modèle des boutons ActionBtn respecte HorizontalContentAlignment (Center par défaut, rien ne change ailleurs) ; nom à gauche, place libre à droite avec un espace.
+
 ## Publié en 2.1.6 : rapport n° 10 (disques, corbeille)
 
 - Rapport n° 10 (« pas de diagnostic sur les autres disques que C ») : le diagnostic détaille maintenant chaque disque dans le journal (et donc dans les rapports de bug) : place libre de chaque lettre (internes, externes, amovibles) et santé de chaque disque physique avec ses lettres (« Samsung SSD 980 (C:, D:) : SSD, état Healthy »). Lettre sans disque physique lisible (clé USB, boîtier) : « santé non lisible par Windows ».
