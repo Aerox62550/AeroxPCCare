@@ -2017,10 +2017,12 @@ function Test-Storage {
             -FixLabel "Nettoyer en profondeur" -UiFix 'clean' `
             -Steps @("Lance le nettoyage approfondi (bouton vert) : tu choisis quoi supprimer, avec la taille de chaque catégorie.", "Onglet Nettoyage > « Ce qui prend de la place » : trouve les plus gros dossiers (jeux, vidéos, téléchargements).", "Désinstalle les jeux et logiciels que tu n'utilises plus, déplace vidéos et photos sur un autre disque.")
     } else { Add-Ok "Disque $env:SystemDrive : $detail" }
+    Log "   • Disque $env:SystemDrive (Windows) : $detail"
     # Les autres disques : internes et externes (USB), chacun affiché ; alerte si un disque interne ou externe fixe est plein
     foreach ($o in @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })) {
         $lbl = "{0}{1}{2}" -f $o.Id, $(if ($o.Name) { " ($($o.Name))" } else { '' }), $(if ($o.Removable) { ', amovible' } else { '' })
         $det = "{0} libres sur {1} ({2} %)" -f (Format-Size $o.Free), (Format-Size $o.Size), $o.Pct
+        Log "   • Disque $lbl : $det"
         if ($o.Pct -lt 5 -and -not $o.Removable) {
             Add-Issue -Id "disk$($o.Id)" -Sev 'warn' -Title "Le disque $($o.Id) est plein" -Detail $det `
                 -Cause "Ce disque n'a presque plus de place." -Effect "Les jeux ou fichiers dessus ne pourront plus se mettre à jour ni s'enregistrer." `
@@ -2640,8 +2642,13 @@ function Test-Startup {
 function Test-DiskHealth {
     try {
         $sysNum = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop | Get-Disk).Number
+        $seen = @{}
         foreach ($pd in @(Get-PhysicalDisk -ErrorAction Stop)) {
-            $name = $pd.FriendlyName
+            # Lettres de ce disque (C:, D:…) pour que tu saches de quel disque on parle
+            $let = @(); try { $let = @(Get-Partition -DiskNumber ([int]"$($pd.DeviceId)") -ErrorAction Stop | Where-Object { $_.DriveLetter -and "$($_.DriveLetter)".Trim() -match '^[A-Z]$' } | ForEach-Object { "$($_.DriveLetter):" }) } catch {}
+            foreach ($l in $let) { $seen[$l] = $true }
+            $name = "$($pd.FriendlyName)" + $(if ($let.Count) { " (" + ($let -join ', ') + ")" } else { '' })
+            Log ("   • {0} : {1}, état {2}" -f $name, $pd.MediaType, $pd.HealthStatus)
             if ($pd.HealthStatus -ne 'Healthy') {
                 Add-Issue -Id "health$($pd.DeviceId)" -Sev 'crit' -Title "Le disque « $name » signale un problème" -Detail ("État : {0}" -f $pd.HealthStatus) `
                     -Cause "Le disque lui-même détecte des secteurs défectueux ou une usure importante." -Effect "Risque de perdre des fichiers, voire tout le disque." `
@@ -2667,6 +2674,10 @@ function Test-DiskHealth {
                     -Cause "Un disque dur mécanique est 5 à 10 fois plus lent qu'un SSD." -Effect "Démarrage, ouverture des logiciels et mises à jour très lents." `
                     -Steps @("Passer à un SSD est LA meilleure amélioration possible pour ce PC (à partir d'environ 40 €).", "Un réparateur peut cloner ton disque actuel sur le SSD sans rien perdre.")
             }
+        }
+        # Disques avec une lettre que Windows ne relie à aucun disque physique (clés USB, certains boîtiers externes) : santé non lisible
+        foreach ($d in @(Get-DriveList | Where-Object { -not $seen.ContainsKey($_.Id) })) {
+            Log ("   • {0} : santé non lisible par Windows (souvent une clé USB ou un boîtier externe)" -f $d.Id)
         }
     } catch {}
 }
@@ -2780,19 +2791,35 @@ function Clear-TempFiles {
     Add-Change -Kind 'info' -Title ("Fichiers temporaires supprimés : {0}" -f (Format-Size ($script:TotalFreed - $before))) -Detail "Fichiers inutiles : Windows les recrée si besoin."
 }
 
+# Corbeille de la personne devant l'écran, sur tous les disques (internes et externes). Celles des autres comptes
+# du PC (ou d'une ancienne installation de Windows) sont comptées à part et jamais touchées.
+function Get-RecycleBinSizes {
+    $su = Get-SessionUser
+    $sid = if ($su.Other -and $su.Sid) { $su.Sid } else { [Security.Principal.WindowsIdentity]::GetCurrent().User.Value }
+    $r = @{ Mine = [double]0; Others = [double]0; Sid = $sid; Dirs = @() }
+    foreach ($d in @(Get-DriveList)) {
+        $root = "{0}\`$Recycle.Bin" -f $d.Id
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($sub in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
+            $sz = [double][AeroxNative]::FolderSize($sub.FullName)
+            if ($sub.Name -eq $sid) { $r.Mine += $sz; $r.Dirs += $sub.FullName } else { $r.Others += $sz }
+        }
+    }
+    return $r
+}
 function Clear-RecycleBinAll {
     Step "Vidage de la corbeille"
-    $drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { $_.DeviceID })
-    $measure = { $t = [double]0; foreach ($d in $drives) { $t += Get-FolderSize ("{0}\`$Recycle.Bin" -f $d) }; $t }
-    $before = & $measure
-    Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-    # Avec le mot de passe d'un autre compte, Windows ne vide que la corbeille de ce compte : on vide aussi celle de la personne
-    $su = Get-SessionUser
-    if ($su.Other -and $su.Sid) { foreach ($d in $drives) { $null = Remove-PathContent ("{0}\`$Recycle.Bin\{1}" -f $d, $su.Sid) } }
-    # Place vraiment libérée (les corbeilles des autres comptes du PC ne sont pas touchées)
-    $size = [math]::Max([double]0, $before - (& $measure))
+    $before = Get-RecycleBinSizes
+    foreach ($d in @(Get-DriveList)) { try { Clear-RecycleBin -DriveLetter $d.Id.TrimEnd(':') -Force -ErrorAction Stop } catch {} }
+    # Si Windows n'a pas tout vidé (ça arrive selon les disques), on vide le dossier de corbeille de la personne, sans suivre aucun lien
+    $mid = Get-RecycleBinSizes
+    if ($mid.Mine -gt 0) { foreach ($dir in $mid.Dirs) { $null = Remove-PathContent $dir } }
+    $after = Get-RecycleBinSizes
+    $size = [math]::Max([double]0, $before.Mine - $after.Mine)
     $script:TotalFreed += $size
     Log ("✅ Corbeille vidée : {0} libérés" -f (Format-Size $size))
+    if ($after.Mine -gt 1MB) { Log ("   • {0} n'ont pas pu être supprimés (fichiers encore utilisés) : redémarre le PC puis relance le nettoyage." -f (Format-Size $after.Mine)) }
+    if ($after.Others -gt 1MB) { Log ("   • {0} sont dans la corbeille d'autres comptes du PC (ou d'une ancienne installation de Windows) : pas touchés." -f (Format-Size $after.Others)) }
     Add-Change -Kind 'info' -Title ("Corbeille vidée : {0}" -f (Format-Size $size)) -Detail "Les fichiers de la corbeille ne sont plus récupérables."
 }
 
@@ -3125,8 +3152,8 @@ function Get-CleanupAnalysis {
               Desc = "Anciennes versions des fichiers Windows remplacées par les mises à jour (outil DISM). Souvent plusieurs Go. 5 à 20 minutes." }
     & $add @{ Id = 'shaders'; Name = 'Cache des shaders (jeux)'; Default = $false; Size = (Get-PathsSize (Get-ShaderCacheDirs))
               Desc = "Cache graphique DirectX / NVIDIA / AMD / Intel. Il se reconstruit tout seul, mais les jeux peuvent saccader un peu au premier lancement. Utile après une mise à jour du pilote graphique ou en cas de bugs graphiques." }
-    $rb = [double]0; foreach ($d in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3') { $rb += [AeroxNative]::FolderSize(("{0}\`$Recycle.Bin" -f $d.DeviceID)) }
-    & $add @{ Id = 'recycle'; Name = 'Corbeille'; Default = $false; Size = $rb; Desc = "Vide la corbeille de tous les disques. Vérifie avant qu'il n'y a rien dedans dont tu as besoin." }
+    $rbs = Get-RecycleBinSizes
+    & $add @{ Id = 'recycle'; Name = 'Corbeille'; Default = $false; Size = $rbs.Mine; Desc = ("Vide ta corbeille sur tous les disques. Vérifie avant qu'il n'y a rien dedans dont tu as besoin." + $(if ($rbs.Others -gt 1MB) { " ({0} dans la corbeille d'autres comptes du PC : pas touchés.)" -f (Format-Size $rbs.Others) } else { '' })) }
     & $add @{ Id = 'resetbase'; Name = 'Sauvegardes des mises à jour Windows'; Default = $false; Size = -1
               Desc = "Libère encore plus de place, mais les mises à jour déjà installées ne pourront plus être désinstallées. À cocher seulement si Windows marche bien." }
     if (@($script:WinOldPaths | Where-Object { Test-Path -LiteralPath $_ }).Count) {
