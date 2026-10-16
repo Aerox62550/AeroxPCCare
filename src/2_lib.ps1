@@ -646,7 +646,6 @@ function Set-StartupApps([string[]]$Disable = @(), [string[]]$Enable = @()) {
     # Demandé mais plus dans la liste (l'appli s'est retirée elle-même entre-temps, ou a été désinstallée)
     foreach ($k in @($dk + $ek | Where-Object { -not $found.ContainsKey($_) } | Select-Object -Unique)) {
         Log ("   • « {0} » n'est plus dans les programmes au démarrage : rien à changer." -f ($k -split '\|', 3)[-1])
-        Write-Bug -Context 'Programmes au démarrage : élément introuvable' -ErrorRecord ("{0} ; présents : {1}" -f $k, (($entries | ForEach-Object { $_.Key }) -join ', ')) -Type 'info'
     }
     Log "   (Les applis restent installées : tu les ouvres quand tu veux. Si l'une se réactive toute seule, décoche l'option « lancer au démarrage » dans ses propres réglages.)"
 }
