@@ -285,6 +285,22 @@ function Invoke-Smoke {
         Write-Host ("        disques : {0} · tuile : {1} / {2}" -f (($d | ForEach-Object { $_.Id }) -join ' '), $script:Stats.DISK.V, ($script:Stats.DISK.S -replace "`n", ' | '))
         if ($d.Count -gt 1 -and $script:Stats.DISK.S -notmatch [regex]::Escape($d[1].Id)) { throw "2e disque pas affiché sur l'accueil" }
     }
+    Smoke 'Espace disque : fichiers de jeu repérés, fichiers perso supprimables' {
+        $base = "$env:SystemDrive\aerox-test-espace"
+        New-Item -ItemType Directory -Force -Path "$base\Jeux\MonJeu\.egstore\bps", "$base\Jeux\AutreJeu\bin\x64", "$base\Films", "$base\Telechargements" | Out-Null
+        [IO.File]::WriteAllText("$base\Jeux\AutreJeu\AutreJeu.exe", 'x'); [IO.File]::WriteAllText("$base\Jeux\AutreJeu\bin\x64\moteur.exe", 'x')
+        [IO.File]::WriteAllText("$base\Telechargements\setup.exe", 'x')
+        try {
+            $c = @{}
+            $k = Get-BigFileKind "$base\Jeux\MonJeu\.egstore\bps\gros.bin" $c
+            if ($k.Kind -ne 'program' -or $k.App -ne 'MonJeu') { throw "fichier de jeu Epic pas repéré ($($k.Kind) $($k.App))" }
+            $k = Get-BigFileKind "$base\Jeux\AutreJeu\bin\x64\data.pak" $c
+            if ($k.Kind -ne 'program' -or $k.App -ne 'AutreJeu') { throw "jeu repéré au mauvais niveau ($($k.App))" }
+            if ((Get-BigFileKind "$base\Films\film.mkv" $c).Kind -ne 'user') { throw "vidéo perso prise pour un jeu" }
+            if ((Get-BigFileKind "$base\Telechargements\film.mkv" $c).Kind -ne 'user') { throw "vidéo à côté d'un installateur prise pour un jeu" }
+            if ((Get-BigFileKind "$env:USERPROFILE\AppData\Local\x.bin" $c).Kind -ne 'system') { throw "fichier d'AppData proposé à la suppression" }
+        } finally { Remove-Item -LiteralPath $base -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     Smoke 'Composants de mesure : désinstallables' {
         $d = Join-Path (Get-ToolsDir) 'lhm'; $dll = Join-Path $d 'LibreHardwareMonitorLib.dll'
         if (Test-Path -LiteralPath $dll) { Write-Host '        (module réel installé : pas touché)'; return }
