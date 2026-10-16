@@ -77,10 +77,22 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 
 # Ouvre une page des Paramètres (ms-settings:), le Store ou une appli Windows. Avec le mot de passe d'un autre
 # compte, elle s'ouvre chez la personne devant l'écran (sinon : dans le compte admin, invisible ou en erreur).
+# Jamais ouvert directement avec les droits admin : le programme associé à un lien ou à un protocole peut être changé
+# sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
-    if (Test-OtherAccount) { if (Start-AsSessionUser (Join-Path $env:SystemRoot 'explorer.exe') $Uri) { return } }
-    Start-Process $Uri
+    if ($Uri -notmatch '^(ms-settings|windowsdefender|ms-windows-store|ms-availablenetworks|shell):') { throw "Lien non autorisé : $Uri" }
+    $explorer = Join-Path $env:SystemRoot 'explorer.exe'
+    if (Test-OtherAccount) { if (Start-AsSessionUser $explorer $Uri) { return } }
+    Start-Process -FilePath $explorer -ArgumentList $Uri
+}
+# Outils de Windows (.msc, .cpl, .exe de System32) lancés par leur chemin complet, jamais par leur association
+function Open-SystemTool([string]$Name) {
+    $sys = Join-Path $env:SystemRoot 'System32'
+    if ($Name -notmatch '^[\w.-]+$') { throw "Outil inconnu : $Name" }
+    if ($Name -like '*.msc') { Start-Process -FilePath (Join-Path $sys 'mmc.exe') -ArgumentList ('"{0}"' -f (Join-Path $sys $Name)); return }
+    if ($Name -like '*.cpl') { Start-Process -FilePath (Join-Path $sys 'control.exe') -ArgumentList $Name; return }
+    Start-Process -FilePath (Join-Path $sys $Name)
 }
 
 # Ouvre une page web sur n'importe quel PC. Start-Process seul échoue (« fichier introuvable ») quand le logiciel
@@ -91,19 +103,11 @@ function Open-Url([string]$Url) {
     if (-not $Url) { return $false }
     # Logiciel ouvert avec le mot de passe d'un autre compte : la page doit s'ouvrir chez la personne devant l'écran,
     # avec SON navigateur, pas dans le compte administrateur (où rien n'apparaît)
+    # Pages web seulement (jamais un fichier ou un autre type de lien)
+    try { $u = [uri]$Url; if ($u.Scheme -notin 'https', 'http') { return $false }; $Url = $u.AbsoluteUri } catch { return $false }
     if (Test-OtherAccount) { if (Open-UrlAsSessionUser $Url) { return $true } }
-    try { Start-Process $Url -ErrorAction Stop; return $true } catch {}
-    $pf86 = ${env:ProgramFiles(x86)}
-    $cands = @(
-        (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'), (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-        (Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'), (Join-Path $pf86 'Google\Chrome\Application\chrome.exe'),
-        (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
-        (Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'), (Join-Path $pf86 'Mozilla Firefox\firefox.exe'),
-        (Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'), (Join-Path $env:ProgramFiles 'Opera\opera.exe')
-    )
-    foreach ($b in $cands) {
-        if ($b -and (Test-Path -LiteralPath $b)) { try { Start-Process -FilePath $b -ArgumentList ('"{0}"' -f $Url) -ErrorAction Stop; return $true } catch {} }
-    }
+    # Le navigateur s'ouvre par l'Explorateur, dans la session normale : jamais avec les droits admin d'AEROX
+    # (le navigateur par défaut peut être changé sans droits admin, et un navigateur ne doit pas tourner en administrateur)
     try { Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"{0}"' -f $Url) -ErrorAction Stop; return $true } catch {}
     try { Set-Clipboard -Value $Url -ErrorAction Stop } catch {}
     Log ("⚠ Impossible d'ouvrir le navigateur sur ce PC. Le lien est copié : colle-le dans ton navigateur (Ctrl+V) → {0}" -f $Url)
@@ -163,28 +167,29 @@ function Get-FolderSize([string]$Path) {
 }
 
 # Suppression sûre : ne suit JAMAIS les liens/jonctions, ignore les fichiers verrouillés
+# Suppression avec les droits admin : jamais à travers un lien (jonction, lien symbolique), même glissé au dernier moment
+# (voir AeroxSafeDelete dans AeroxNative.cs : chaque élément est vérifié puis supprimé par le même accès)
 function Remove-ItemSafe($Item) {
-    $freed = [double]0
-    if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $freed }
-    if ($Item.PSIsContainer) {
-        foreach ($child in @(Get-ChildItem -LiteralPath $Item.FullName -Force -ErrorAction SilentlyContinue)) { $freed += Remove-ItemSafe $child }
-        try { [IO.Directory]::Delete($Item.FullName, $false) } catch {}
-    } else {
-        $len = [double]$Item.Length
-        try {
-            if ($Item.IsReadOnly) { $Item.IsReadOnly = $false }
-            [IO.File]::Delete($Item.FullName)
-            $freed += $len
-        } catch {}
-    }
-    return $freed
+    if (-not $Item) { return [double]0 }
+    return [double][AeroxSafeDelete]::DeleteItem("$($Item.FullName)")
 }
 
 function Remove-PathContent([string]$Path) {
-    $freed = [double]0
-    if (-not (Test-Path -LiteralPath $Path)) { return $freed }
-    foreach ($item in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue)) { $freed += Remove-ItemSafe $item }
-    return $freed
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return [double]0 }
+    return [double][AeroxSafeDelete]::CleanDir($Path)
+}
+# Dossier protégé (créé au besoin) : Program Files\AeroxPCCare\protege\<sous-dossier>
+function Get-SecureDir([string]$Sub) {
+    $d = if ($Sub) { Join-Path $AppInfo.Secure $Sub } else { $AppInfo.Secure }
+    if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Force -Path $d -ErrorAction Stop | Out-Null }
+    return $d
+}
+# Programme signé par l'éditeur attendu (signature Windows valide) ?
+function Test-ToolSignature([string]$Path, [string]$Publisher) {
+    try {
+        $sig = Get-AuthenticodeSignature -FilePath $Path -ErrorAction Stop
+        return ($sig.Status -eq 'Valid' -and "$($sig.SignerCertificate.Subject)" -match ('O=' + [regex]::Escape($Publisher)))
+    } catch { return $false }
 }
 
 function Clear-Location([string]$Path, [string]$Label) {
@@ -221,6 +226,8 @@ function Invoke-Native {
     if ($Encoding) { try { $oldEnc = [Console]::OutputEncoding; [Console]::OutputEncoding = $Encoding } catch { $oldEnc = $null } }
     $script:LastLine = ''
     $script:NativeOutput = New-Object System.Collections.ArrayList
+    # Outil de Windows appelé par son nom : toujours celui de System32 (jamais un fichier du même nom ailleurs)
+    if ($File -notmatch '[\\/]') { $sysf = Join-Path $env:SystemRoot "System32\$File"; if (Test-Path -LiteralPath $sysf) { $File = $sysf } }
     try {
         & $File @Arguments 2>&1 | ForEach-Object {
             $raw   = ("$_") -replace "`0", ''
@@ -252,11 +259,11 @@ function Get-Winget {
     if ($null -ne $script:WingetPath) { if ($script:WingetPath) { return $script:WingetPath } else { return $null } }
     $script:WingetBlocked = $false
     $cands = New-Object System.Collections.ArrayList
-    $w = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($w) { [void]$cands.Add($w.Source) }
-    foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { [void]$cands.Add($p.FullName) }
+    # D'abord la copie officielle dans Program Files (protégée), signée par Microsoft ; le raccourci du dossier perso
+    # (modifiable sans droits admin) seulement en dernier recours. Jamais une recherche par le PATH.
+    foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.DesktopAppInstaller_*__8wekyb3d8bbwe\winget.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { if (Test-ToolSignature $p.FullName 'Microsoft Corporation') { [void]$cands.Add($p.FullName) } }
     $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winget.exe'
-    if (Test-Path -LiteralPath $alias) { [void]$cands.Insert(0, $alias) }
+    if ((Test-Path -LiteralPath $alias) -and ((Get-Item -LiteralPath $alias -Force -ErrorAction SilentlyContinue).Attributes -band [IO.FileAttributes]::ReparsePoint)) { [void]$cands.Add($alias) }
     foreach ($c in $cands) { if (Test-WingetRuns $c) { $script:WingetPath = $c; return $c }; $script:WingetBlocked = $true }
     # Présent sur le PC mais pas pour ce compte : on l'active pour ce compte (commande officielle de Windows), puis on réessaie
     if ($cands.Count -or (Test-Path "$env:ProgramFiles\WindowsApps")) {
@@ -367,7 +374,36 @@ function Get-AppUpdates([switch]$IncludeIgnored) {
         return $null
     }
     if (Test-OtherAccount) { Log "   (AEROX tourne avec un autre compte que la session ouverte : les logiciels installés seulement pour la session de la personne ne sont pas visibles d'ici)" }
-    return ,(ConvertFrom-WingetTable $lines -IncludeIgnored:$IncludeIgnored)
+    return ,(Add-AppGhostInfo (ConvertFrom-WingetTable $lines -IncludeIgnored:$IncludeIgnored))
+}
+# Liste de winget nettoyée : un logiciel n'apparaît qu'une fois (installé pour la session ET pour le PC = 2 lignes),
+# et un logiciel déjà désinstallé dont il ne reste qu'une trace dans Windows est repéré (« Ghost ») :
+# le « mettre à jour » le réinstallerait (retour d'un testeur : logiciels désinstallés qui revenaient)
+function Add-AppGhostInfo($List) {
+    $out = New-Object System.Collections.ArrayList; $seen = @{}
+    foreach ($a in @($List)) { if (-not $a.Id -or $seen.ContainsKey($a.Id)) { continue }; $seen[$a.Id] = $true; $a.Ghost = $false; [void]$out.Add($a) }
+    $inst = $null; try { $inst = Get-InstalledApps } catch {}
+    if ($inst) {
+        $w32 = @(@($inst) | Where-Object { $_.Kind -eq 'win32' })
+        foreach ($a in $out) {
+            $cut = "$($a.Name)".EndsWith([string][char]0x2026)
+            $n = "$($a.Name)".TrimEnd([char]0x2026).Trim()
+            if ($n.Length -lt 3) { continue }
+            $m = @($w32 | Where-Object { $_.Name -eq $n -or ($cut -and $_.Name.StartsWith($n, [StringComparison]::OrdinalIgnoreCase)) })
+            if ($m.Count -and -not @($m | Where-Object { Test-AppPresent $_ }).Count) { $a.Ghost = $true }
+        }
+    }
+    return ,$out
+}
+# Le logiciel est-il encore vraiment sur le PC ? (son désinstalleur ou son dossier existe)
+function Test-AppPresent($App) {
+    if ("$($App.Cmd)" -match '(?i)msiexec') { return $true }      # installé avec Windows Installer : Windows tient sa liste à jour
+    try {
+        $exe = [Environment]::ExpandEnvironmentVariables((Get-ExeFromCommand "$($App.Cmd)"))
+        if ($exe -and (Test-Path -LiteralPath $exe)) { return $true }
+    } catch { return $true }
+    if ($App.Location -and (Test-Path -LiteralPath $App.Location)) { return $true }
+    return $false
 }
 # winget a-t-il donné une vraie réponse ? (un tableau, ou un message « rien à mettre à jour », en français ou en anglais)
 function Test-WingetAnswered([string[]]$Lines) {
@@ -460,7 +496,21 @@ function Add-Change {
         $o = [ordered]@{ id = [guid]::NewGuid().ToString('N').Substring(0, 12); date = (Get-Date).ToString('s'); title = $Title; detail = $Detail; undo = $Undo; kind = $Kind; version = $AppInfo.Version }
         $f = Join-Path $AppInfo.LogDir 'changements.jsonl'
         [IO.File]::AppendAllText($f, (($o | ConvertTo-Json -Compress) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        # Sceau de l'annulation dans le dossier protégé : l'historique (dossier perso) ne peut pas faire exécuter autre chose
+        if ($Undo) { [IO.File]::AppendAllText((Join-Path (Get-SecureDir '') 'annulations.txt'), ((Get-UndoSeal $o.id $Undo) + "`r`n"), [Text.Encoding]::ASCII) }
     } catch {}
+}
+function Get-UndoSeal([string]$Id, [string]$Undo) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id|$Undo")) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $sha.Dispose() }
+}
+# Annulation autorisée ? Action connue et sans danger, ET notée par AEROX lui-même (sceau dans le dossier protégé).
+# Changements notés avant la 2.1.3 (sans sceau) : seulement les réglages sans risque.
+function Test-UndoAuthorized([string]$Id, [string]$Undo) {
+    if (-not (Test-SafeUndo $Undo)) { return $false }
+    $f = Join-Path $AppInfo.Secure 'annulations.txt'
+    if ((Test-Path -LiteralPath $f) -and (@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -contains (Get-UndoSeal $Id $Undo))) { return $true }
+    return (($Undo.Trim() -split '\s+')[0] -notin 'Set-BgItem', 'Restore-RegBackup', 'Set-StartupApps')
 }
 function Get-Changes([int]$Max = 300) {
     $f = Join-Path $AppInfo.LogDir 'changements.jsonl'
@@ -482,7 +532,7 @@ function Set-PowerScheme([string]$Guid, [string]$Name) {
     Step ("Retour au mode d'alimentation « {0} »" -f $Name)
     $null = Invoke-Native 'powercfg.exe' @('/setactive', $Guid)
     if ((Get-PowerStatus).Guid -eq $Guid.ToLower()) { Log "   ✔ Mode « $Name » rétabli." }
-    else { Add-TaskError -Title "Impossible de rétablir le mode « $Name »" -Cause "Ce mode d'alimentation n'existe plus sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'powercfg.cpl'" }
+    else { Add-TaskError -Title "Impossible de rétablir le mode « $Name »" -Cause "Ce mode d'alimentation n'existe plus sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Open-SystemTool 'powercfg.cpl'" }
 }
 function Enable-Hibernation {
     Step "Réactivation de la veille prolongée"
@@ -975,7 +1025,7 @@ function Repair-Webcam {
     foreach ($c in $cams) { Log ("   • {0} : {1}" -f $c.FriendlyName, $(if ($c.Status -eq 'OK') { 'en marche' } else { "problème ($($c.Status))" })) }
     if (@($cams | Where-Object { $_.Status -ne 'OK' }).Count) {
         Add-TaskError -Title "La webcam a un problème de pilote" -Cause "Windows la voit mais n'arrive pas à la faire fonctionner." -Effect "Pas d'image dans les appels vidéo." `
-            -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" -Steps @("Débranche/rebranche la webcam (USB) ou redémarre le PC.", "Onglet Mises à jour > « Pilotes (drivers) » : installe le pilote que Windows propose.")
+            -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Open-SystemTool 'devmgmt.msc'" -Steps @("Débranche/rebranche la webcam (USB) ou redémarre le PC.", "Onglet Mises à jour > « Pilotes (drivers) » : installe le pilote que Windows propose.")
         return
     }
     try { Open-WinUri 'microsoft.windows.camera:' -ErrorAction Stop; Log "   ✔ L'application Caméra de Windows s'ouvre pour tester." } catch {}
@@ -1060,8 +1110,8 @@ function Get-BrowserExe($Def, [string]$ProfileRoot) {
 # Ouvre une page interne du navigateur (chrome://extensions…) chez la personne devant l'écran
 function Open-BrowserPage([string]$Exe, [string]$Page) {
     if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { Log "⚠ Navigateur introuvable : ouvre-le toi-même et tape $Page dans la barre d'adresse."; return }
-    if (Test-OtherAccount) { if (Start-AsSessionUser $Exe $Page) { return } }
-    try { Start-Process -FilePath $Exe -ArgumentList $Page -ErrorAction Stop } catch { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
+    # Toujours dans la session normale, sans droits admin (le navigateur peut être installé dans le dossier perso)
+    if (-not (Start-AsSessionUser $Exe $Page)) { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
 }
 
 # Profils d'un navigateur Chromium : « Default », « Profile 1 »… (Opera : le dossier lui-même)
@@ -1235,9 +1285,11 @@ function Test-RegBackupSafe([string]$Path) {
 }
 # Remet une sauvegarde de réglages imposés (annulation depuis l'historique) : uniquement nos propres sauvegardes
 function Restore-RegBackup([string]$File) {
-    $root = [IO.Path]::GetFullPath((Join-Path $AppInfo.LogDir 'sauvegardes')) + '\'
+    $root = [IO.Path]::GetFullPath((Get-SecureDir 'sauvegardes')) + '\'
+    $old = [IO.Path]::GetFullPath((Join-Path $AppInfo.LogDir 'sauvegardes')) + '\'
     $full = [IO.Path]::GetFullPath($File)
-    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full -notmatch '(?i)\.reg$' -or -not (Test-Path -LiteralPath $full)) { throw "Sauvegarde introuvable : $File" }
+    if ($full.StartsWith($old, [StringComparison]::OrdinalIgnoreCase)) { throw "Cette sauvegarde vient d'une ancienne version d'AEROX, rangée dans un dossier modifiable sans droits admin : elle n'est pas remise, par sécurité. Pour retirer ces réglages, relance « Pubs et fausses alertes de virus » (onglet Réparation)." }
+    if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full -notmatch '(?i)\.reg$' -or -not (Test-Path -LiteralPath $full) -or -not [AeroxSafeDelete]::IsDirectPath($full)) { throw "Sauvegarde introuvable : $File" }
     # Le dossier des sauvegardes est modifiable sans droits admin : on vérifie que le fichier ne touche QUE les réglages
     # imposés des navigateurs (ceux qu'AEROX a sauvegardés), sinon il n'est pas importé
     if (-not (Test-RegBackupSafe $full)) { throw "Cette sauvegarde a été modifiée et touche d'autres réglages de Windows que ceux des navigateurs : elle n'est pas remise, par sécurité." }
@@ -1252,8 +1304,9 @@ function Repair-BrowserItems([string[]]$Items) {
     Step "Nettoyage des navigateurs"
     $notifs = @($Items | Where-Object { $_ -like 'notif|*' })
     $pols = @($Items | Where-Object { $_ -like 'pol|*' })
-    $bkDir = Join-Path $AppInfo.LogDir 'sauvegardes\navigateurs'
+    $bkDir = Join-Path $AppInfo.LogDir 'sauvegardes\navigateurs'     # copies des réglages perso (jamais remises en administrateur)
     New-Item -ItemType Directory -Force -Path $bkDir -ErrorAction SilentlyContinue | Out-Null
+    $regDir = Get-SecureDir 'sauvegardes\navigateurs'                  # sauvegardes du registre : dossier protégé
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $blocked = 0
     if ($notifs.Count) {
@@ -1277,6 +1330,7 @@ function Repair-BrowserItems([string[]]$Items) {
         foreach ($file in $byFile.Keys) {
             $i++
             $g = $byFile[$file]
+            if (-not [AeroxSafeDelete]::IsDirectPath($file)) { Log "   ⚠ Réglages ignorés (lien vers un autre endroit) : $file"; continue }
             $json = Read-JsonFile $file
             if (-not $json -or -not [AeroxJson]::Valid($json)) { Log "   ⚠ Réglages illisibles, rien n'est modifié : $file"; continue }
             $new = $json; $n = 0
@@ -1312,7 +1366,7 @@ function Repair-BrowserItems([string[]]$Items) {
             $i++
             if ($k -notmatch '^Registry::HKEY_(LOCAL_MACHINE|USERS\\S-1-5-21-[\d-]+)\\SOFTWARE\\Policies\\(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave)(\\(RestoreOnStartupURLs|ExtensionInstallForcelist))?$') { continue }
             $regPath = $k -replace '^Registry::', ''
-            $bk = Join-Path $bkDir ("reglages_imposes_{0}_{1}.reg" -f $stamp, $i)
+            $bk = Join-Path $regDir ("reglages_imposes_{0}_{1}.reg" -f $stamp, $i)
             $ex = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\reg.exe') -ArgumentList @('export', ('"{0}"' -f $regPath), ('"{0}"' -f $bk), '/y') -Wait -PassThru -WindowStyle Hidden
             if ($ex.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $bk)) { Log "   ⚠ Sauvegarde impossible, rien n'est retiré : $regPath"; continue }
             $done = @()
@@ -1607,6 +1661,10 @@ function Set-CompactOS([string]$State) {
 # OneDrive : les fichiers restent dans le cloud et s'ouvrent quand on clique dessus (téléchargés à ce moment-là)
 function Set-OneDriveOnlineOnly([string]$Folder) {
     if (@(Get-OneDriveFolders) -notcontains $Folder) { throw "Ce dossier n'est pas un dossier OneDrive de ce PC : $Folder" }
+    # Le dossier OneDrive est indiqué dans le registre de la personne (modifiable sans droits admin) : jamais un dossier
+    # de Windows, des programmes, la racine d'un disque, ni un chemin qui passe par un lien
+    $full = [IO.Path]::GetFullPath($Folder).TrimEnd('\')
+    if ($full -like "$env:SystemRoot*" -or $full -like "$env:ProgramFiles*" -or $full -like "${env:ProgramFiles(x86)}*" -or $full -like "$env:ProgramData*" -or $full -match '^[A-Za-z]:$' -or -not [AeroxSafeDelete]::IsDirectPath($full)) { throw "Ce dossier ne peut pas être un dossier OneDrive : $Folder" }
     # OneDrive doit tourner : c'est lui qui libère la place, et seulement pour les fichiers déjà envoyés en ligne
     if (-not (Get-Process -Name 'OneDrive' -ErrorAction SilentlyContinue)) { throw "OneDrive n'est pas lancé sur ce PC. Ouvre OneDrive, attends qu'il soit à jour (icône du nuage sans flèches), puis recommence." }
     Step "OneDrive : fichiers gardés uniquement en ligne"
@@ -1703,7 +1761,7 @@ function Enable-AutoPagefile {
         Log "   ✔ Mémoire virtuelle gérée automatiquement par Windows. Redémarre le PC pour l'appliquer."
         Add-Change -Kind 'info' -Title "Mémoire virtuelle remise en automatique (réglage d'origine de Windows)"
         Request-Reboot
-    } catch { Add-TaskError -Title "Impossible de réactiver la mémoire virtuelle" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres système avancés" -FixAction "Start-Process SystemPropertiesPerformance.exe" }
+    } catch { Add-TaskError -Title "Impossible de réactiver la mémoire virtuelle" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres système avancés" -FixAction "Open-SystemTool 'SystemPropertiesPerformance.exe'" }
 }
 
 # Mesure en direct pendant ~20 s : processeur, mémoire, disque, et les programmes qui consomment le plus
@@ -2071,7 +2129,7 @@ function Test-Updates {
         Add-Issue -Id 'winget' -Sev 'warn' -Title "L'outil de mise à jour des logiciels est absent" -Detail 'winget introuvable' `
             -Cause "Le « Programme d'installation d'application » de Microsoft n'est pas installé ou trop ancien." -Effect "AEROX PC Care ne peut pas mettre tes logiciels à jour automatiquement." `
             -FixLabel "L'installer (Microsoft Store)" -FixAction 'Open-WingetStore' -OpenOnly
-    } elseif ($apps.Count -gt 0) {
+    } elseif ($null -ne $apps -and ($apps = @($apps | Where-Object { -not $_.Ghost })).Count -gt 0) {
         $shown = ($apps | Select-Object -First 4 | ForEach-Object { $_.Name }) -join ', '
         if ($apps.Count -gt 4) { $shown += " et $($apps.Count - 4) autre(s)" }
         $ign = @(Get-IgnoredApps).Count
@@ -2209,7 +2267,7 @@ function Set-NetAdapterSleep([string]$Name, [bool]$Allow) {
         if ($reboot) { Log "   → Pris en compte au prochain redémarrage du PC." }
         if (-not $Allow) { Add-Change -Title ("Carte réseau « {0} » : plus de mise en veille par Windows" -f $Name) -Undo ("Set-NetAdapterSleep {0} `$true" -f (ConvertTo-PsLiteral $Name)) }
     } catch {
-        Add-TaskError -Title "Impossible de modifier la gestion d'énergie de la carte réseau" -Cause $_.Exception.Message -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Start-Process devmgmt.msc" `
+        Add-TaskError -Title "Impossible de modifier la gestion d'énergie de la carte réseau" -Cause $_.Exception.Message -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Open-SystemTool 'devmgmt.msc'" `
             -Steps @("Dans le Gestionnaire de périphériques, ouvre « Cartes réseau » et double-clique sur ta carte.", "Onglet « Gestion de l'alimentation » : décoche « Autoriser l'ordinateur à éteindre ce périphérique pour économiser l'énergie ».", "Clique sur OK.")
     }
 }
@@ -2252,14 +2310,20 @@ function Get-Displays {
     return $list.ToArray()
 }
 # Contexte d'une partie (carnet de jeu) : carte graphique, version du pilote, fréquence de l'écran
-function Get-GameContext {
-    $c = @{ Gpu = ''; Driver = ''; Hz = 0; MaxHz = 0 }
+function Get-GameContext([string]$Device = '') {
+    $c = @{ Gpu = ''; Driver = ''; Hz = 0; MaxHz = 0; Device = '' }
     try {
         $g = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox|parallels|qxl|red hat|citrix|dameware|mirage' })
         $best = $g | Sort-Object @{ E = { if ($_.Name -match '(?i)nvidia|radeon rx|radeon pro|arc ') { 0 } else { 1 } } }, @{ E = { - [double]$_.AdapterRAM } } | Select-Object -First 1
         if ($best) { $c.Gpu = "$($best.Name)".Trim(); $c.Driver = "$($best.DriverVersion)" }
     } catch {}
-    try { $d = @(Get-Displays) | Where-Object { $_.Primary } | Select-Object -First 1; if ($d) { $c.Hz = [int]$d.Hz; $c.MaxHz = [int]$d.MaxHz } } catch {}
+    # Écran où tourne le jeu (sinon l'écran principal)
+    try {
+        $ds = @(Get-Displays); $d = $null
+        if ($Device) { $d = $ds | Where-Object { $_.Device -eq $Device } | Select-Object -First 1 }
+        if (-not $d) { $d = $ds | Where-Object { $_.Primary } | Select-Object -First 1 }
+        if ($d) { $c.Hz = [int]$d.Hz; $c.MaxHz = [int]$d.MaxHz; $c.Device = $d.Device }
+    } catch {}
     $sync.GameCtx = $c
 }
 function Test-DisplayHzLow($d) { return ($d.MaxHz -ge 100 -and ($d.MaxHz - $d.Hz) -ge 20) }
@@ -2402,7 +2466,7 @@ function Test-Security {
         if ($active.Count -eq 0) {
             Add-Issue -Id 'noav' -Sev 'crit' -Title "Aucun antivirus actif" -Detail "Protection désactivée" `
                 -Cause "Aucun antivirus n'est en marche : il a été désactivé, ou un antivirus tiers a expiré." -Effect "Le PC n'est pas protégé contre les virus et arnaques." `
-                -FixLabel "Ouvrir Sécurité Windows" -FixAction "Start-Process 'windowsdefender:'" -OpenOnly `
+                -FixLabel "Ouvrir Sécurité Windows" -FixAction "Open-WinUri 'windowsdefender:'" -OpenOnly `
                 -Steps @("Dans Sécurité Windows > Protection contre les virus et menaces, active la protection.", "Si un antivirus payant a expiré, désinstalle-le : Windows Defender reprendra la main gratuitement.")
         }
         if ($thirdAv.Count -gt 1) {
@@ -2654,9 +2718,15 @@ function Clear-TempFiles {
 
 function Clear-RecycleBinAll {
     Step "Vidage de la corbeille"
-    $size = [double]0
-    foreach ($d in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3') { $size += Get-FolderSize ("{0}\`$Recycle.Bin" -f $d.DeviceID) }
+    $drives = @(Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { $_.DeviceID })
+    $measure = { $t = [double]0; foreach ($d in $drives) { $t += Get-FolderSize ("{0}\`$Recycle.Bin" -f $d) }; $t }
+    $before = & $measure
     Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+    # Avec le mot de passe d'un autre compte, Windows ne vide que la corbeille de ce compte : on vide aussi celle de la personne
+    $su = Get-SessionUser
+    if ($su.Other -and $su.Sid) { foreach ($d in $drives) { $null = Remove-PathContent ("{0}\`$Recycle.Bin\{1}" -f $d, $su.Sid) } }
+    # Place vraiment libérée (les corbeilles des autres comptes du PC ne sont pas touchées)
+    $size = [math]::Max(0, $before - (& $measure))
     $script:TotalFreed += $size
     Log ("✅ Corbeille vidée : {0} libérés" -f (Format-Size $size))
     Add-Change -Kind 'info' -Title ("Corbeille vidée : {0}" -f (Format-Size $size)) -Detail "Les fichiers de la corbeille ne sont plus récupérables."
@@ -3181,7 +3251,7 @@ function Set-BalancedPower {
         Log "   ✔ Mode « Utilisation normale / Équilibré » activé."
         if ($prev.Guid -and $prev.Perf) { Add-Change -Title "Mode d'alimentation : Équilibré" -Detail ("Avant : {0}" -f $prev.Name) -Undo ("Set-PowerScheme {0} {1}" -f (ConvertTo-PsLiteral $prev.Guid), (ConvertTo-PsLiteral $prev.Name)) }
     }
-    else { Add-TaskError -Title "Impossible de revenir au mode Équilibré" -Cause "Le mode Équilibré n'existe pas sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Start-Process 'powercfg.cpl'" }
+    else { Add-TaskError -Title "Impossible de revenir au mode Équilibré" -Cause "Le mode Équilibré n'existe pas sur ce PC." -FixLabel "Ouvrir les options d'alimentation" -FixAction "Open-SystemTool 'powercfg.cpl'" }
 }
 function Get-VisualFxStatus {
     try { $v = (Get-ItemProperty -LiteralPath "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name VisualFXSetting -ErrorAction Stop).VisualFXSetting } catch { $v = 0 }
@@ -3199,7 +3269,13 @@ function Disable-StorageSense {
 }
 
 # ---------------------------------------------------------------- OUTILS DE MESURE (téléchargés à la demande)
-function Get-ToolsDir { $d = Join-Path $AppInfo.LogDir 'outils'; New-Item -ItemType Directory -Force -Path $d | Out-Null; return $d }
+# Outils téléchargés (températures, test de débit, compteur de FPS) : lancés avec les droits admin, donc rangés
+# dans le dossier protégé, jamais dans le dossier perso (modifiable par n'importe quel programme)
+function Get-ToolsDir { return (Get-SecureDir 'outils') }
+function Get-NvidiaSmi {
+    foreach ($p in @("$env:SystemRoot\System32\nvidia-smi.exe", "$env:ProgramFiles\NVIDIA Corporation\NVSMI\nvidia-smi.exe")) { if (Test-Path -LiteralPath $p) { return $p } }
+    return $null
+}
 function Test-PawnIO {
     if (Get-Service -Name 'PawnIO' -ErrorAction SilentlyContinue) { return $true }
     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') {
@@ -3210,9 +3286,23 @@ function Test-PawnIO {
 function Get-ToolStatus {
     $t = Get-ToolsDir
     return @{ PresentMon = [bool](Find-PresentMon); Lhm = (Test-Path (Join-Path $t 'lhm\LibreHardwareMonitorLib.dll')); PawnIO = (Test-PawnIO)
-              Nvsmi = [bool]((Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue) -or (Test-Path "$env:SystemRoot\System32\nvidia-smi.exe")) }
+              Nvsmi = [bool](Get-NvidiaSmi) }
 }
-function Find-PresentMon {
+# Compteur de FPS : on ne lance que la copie rangée dans le dossier protégé. Elle n'y est copiée que si le programme
+# installé est signé par Intel (ou juste après son installation par AEROX lui-même, $Fresh)
+function Find-PresentMon([bool]$Fresh = $false) {
+    $safe = Join-Path (Get-ToolsDir) 'presentmon\PresentMon.exe'
+    if (Test-Path -LiteralPath $safe) { return $safe }
+    $src = Find-PresentMonInstalled
+    if (-not $src) { return $null }
+    if (-not $Fresh -and -not (Test-ToolSignature $src 'Intel Corporation')) { return $null }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path $safe -Parent) | Out-Null
+        Copy-Item -LiteralPath $src -Destination $safe -Force -ErrorAction Stop
+        return $safe
+    } catch { return $null }
+}
+function Find-PresentMonInstalled {
     foreach ($root in @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages", "$env:ProgramFiles\WinGet\Packages")) {
         $f = Get-ChildItem -Path $root -Directory -Filter 'Intel.PresentMon.Console*' -ErrorAction SilentlyContinue |
              ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'PresentMon*.exe' -Recurse -ErrorAction SilentlyContinue } |
@@ -3235,7 +3325,7 @@ function Install-WingetTool([string]$Id, [string]$Label) {
 function Install-PresentMon {
     Step "Installation du compteur de FPS (PresentMon, outil officiel d'Intel, via winget)"
     $null = Install-WingetTool 'Intel.PresentMon.Console' 'Le compteur de FPS'
-    $pm = Find-PresentMon
+    $pm = Find-PresentMon $true
     if ($pm) { Log "   ✔ PresentMon installé : $pm" }
     else {
         Add-TaskError -Title "Le compteur de FPS n'a pas pu être installé" -Cause "winget n'a pas réussi à installer PresentMon (connexion, ou catalogue winget pas à jour)." -Effect "Les FPS ne seront pas affichés." `
@@ -3248,6 +3338,9 @@ function Install-SensorLib {
     try {
         $dest = Join-Path (Get-ToolsDir) 'lhm'
         $n = [AeroxNuget]::Install('LibreHardwareMonitorLib', '0.9.6', $dest)
+        # Ancien emplacement (dossier perso, modifiable sans droits admin) : plus jamais utilisé, on le vide
+        $old = Join-Path $AppInfo.LogDir 'outils'
+        if (Test-Path -LiteralPath $old) { $null = Remove-PathContent $old; try { [IO.Directory]::Delete($old, $false) } catch {} }
         foreach ($l in [AeroxNuget]::Log) { Log "   • $l" }
         if (-not (Test-Path (Join-Path $dest 'LibreHardwareMonitorLib.dll'))) { throw "Le module n'a pas été trouvé dans le paquet téléchargé." }
         Log ("   ✔ Module installé ({0} paquets)." -f $n)
@@ -3282,6 +3375,8 @@ function Update-Apps {
     if ($null -eq $apps) { Add-WingetError "La mise à jour des logiciels est"; return }
     $ign = @(Get-IgnoredApps).Count
     if ($ign) { Log "   ($ign logiciel(s) ignoré(s) à ta demande : ils ne seront pas touchés)" }
+    foreach ($g in @($apps | Where-Object { $_.Ghost })) { Log ("   • « {0} » semble déjà désinstallé (il ne reste qu'une trace dans Windows) : pas mis à jour, sinon il serait réinstallé." -f $g.Name) }
+    $apps = @($apps | Where-Object { -not $_.Ghost })
     if ($apps.Count -eq 0) { Log "✅ Tous tes logiciels sont à jour."; return }
     Update-SelectedApps -Ids @($apps | ForEach-Object { $_.Id }) -Names @($apps | ForEach-Object { $_.Name })
 }
@@ -3485,7 +3580,7 @@ function Enable-RealtimeProtection {
     if ($on) { Log "   ✔ Protection en temps réel réactivée" }
     else {
         Add-TaskError -Title "La protection en temps réel n'a pas pu être réactivée" -Cause "La « Protection contre les falsifications » de Windows empêche les logiciels de la modifier (c'est normal, c'est une sécurité)." `
-            -Effect "Il faut la réactiver à la main, ça prend 10 secondes." -FixLabel "Ouvrir Sécurité Windows" -FixAction "Start-Process 'windowsdefender://threat'" `
+            -Effect "Il faut la réactiver à la main, ça prend 10 secondes." -FixLabel "Ouvrir Sécurité Windows" -FixAction "Open-WinUri 'windowsdefender://threat'" `
             -Steps @("Dans Sécurité Windows > Protection contre les virus et menaces > Gérer les paramètres.", "Active « Protection en temps réel ».")
     }
 }
@@ -3500,7 +3595,7 @@ function Update-DefenderSignatures {
 function Enable-Firewall {
     Step "Réactivation du pare-feu Windows"
     try { Set-NetFirewallProfile -Profile Domain, Public, Private -Enabled True -ErrorAction Stop; Log "   ✔ Pare-feu réactivé sur tous les réseaux" }
-    catch { Add-TaskError -Title "Le pare-feu n'a pas pu être réactivé" -Cause $_.Exception.Message -FixLabel "Ouvrir les réglages du pare-feu" -FixAction "Start-Process 'windowsdefender://network'" }
+    catch { Add-TaskError -Title "Le pare-feu n'a pas pu être réactivé" -Cause $_.Exception.Message -FixLabel "Ouvrir les réglages du pare-feu" -FixAction "Open-WinUri 'windowsdefender://network'" }
 }
 function Enable-UAC {
     Step "Réactivation du contrôle de compte (UAC)"
@@ -3764,8 +3859,7 @@ function Install-AppUpdate {
     try {
         $sha = if ("$($u.Digest)" -match '^sha256:([0-9a-fA-F]{64})$') { $Matches[1] } else { '' }
         # Dossier du logiciel (Program Files, modifiable seulement en administrateur) : le fichier ne peut pas être échangé
-        $root = if ($AppInfo.Root -and (Test-Path -LiteralPath $AppInfo.Root)) { $AppInfo.Root } else { $AppInfo.LogDir }
-        $dest = Join-Path (Join-Path $root 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
+        $dest = Join-Path (Get-SecureDir 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
         [AeroxUpdate]::Download($u.Setup, $dest, $sha)
         Log ("   ✔ Installateur téléchargé{0}." -f $(if ($sha) { ' et vérifié (empreinte SHA-256 identique à celle publiée)' } else { '' }))
         $sync.UpdateReady = @{ Path = $dest; Sha = $sha }

@@ -173,6 +173,64 @@ function Invoke-Smoke {
         Remove-Item $ok, $ko -Force
         $a = New-SessionShortcutPath '.lnk'; $b = New-SessionShortcutPath '.lnk'; if ($a -eq $b) { throw "nom de raccourci prévisible" }
     }
+    # ---- 2.1.3 : grand ménage sécurité (chaque correction a son contrôle)
+    Smoke 'Sécurité : suppression jamais à travers un lien' {
+        $base = Join-Path $env:TEMP ('aerox-lien-' + [guid]::NewGuid().ToString('N'))
+        $vict = Join-Path $base 'a-proteger'; $clean = Join-Path $base 'a-nettoyer'
+        New-Item -ItemType Directory -Force -Path $vict, (Join-Path $clean 'sous') | Out-Null
+        'garder' | Set-Content (Join-Path $vict 'sentinelle.txt')
+        'x' | Set-Content (Join-Path $clean 'jeter.txt'); 'y' | Set-Content (Join-Path $clean 'sous\jeter2.txt')
+        New-Item -ItemType Junction -Path (Join-Path $clean 'piege') -Target $vict | Out-Null
+        $freed = Remove-PathContent $clean
+        if (-not (Test-Path (Join-Path $vict 'sentinelle.txt'))) { throw "un fichier a été supprimé à travers une jonction" }
+        if ((Test-Path (Join-Path $clean 'jeter.txt')) -or (Test-Path (Join-Path $clean 'sous\jeter2.txt'))) { throw "le nettoyage normal n'a pas marché" }
+        # Dossier à nettoyer qui est lui-même un lien : rien n'est touché
+        $j2 = Join-Path $base 'temp-piege'; New-Item -ItemType Junction -Path $j2 -Target $vict | Out-Null
+        $null = Remove-PathContent $j2
+        if (-not (Test-Path (Join-Path $vict 'sentinelle.txt'))) { throw "dossier-lien nettoyé" }
+        # Fichier atteint par un chemin qui passe par un lien : refusé
+        if ([AeroxSafeDelete]::IsDirectPath((Join-Path $j2 'sentinelle.txt'))) { throw "chemin par une jonction vu comme direct" }
+        if (-not [AeroxSafeDelete]::IsDirectPath((Join-Path $vict 'sentinelle.txt'))) { throw "chemin direct refusé" }
+        $null = Remove-ItemSafe (Get-Item (Join-Path $j2 'sentinelle.txt'))
+        if (-not (Test-Path (Join-Path $vict 'sentinelle.txt'))) { throw "fichier supprimé par un chemin passant par une jonction" }
+        Write-Host ("        {0} octets libérés, fichier protégé intact" -f $freed)
+        [IO.Directory]::Delete((Join-Path $clean 'piege'), $false); [IO.Directory]::Delete($j2, $false); Remove-Item $base -Recurse -Force
+    }
+    Smoke 'Sécurité : outils et sauvegardes dans un dossier protégé' {
+        $t = Get-ToolsDir
+        if ($t -notlike "$env:ProgramFiles\*") { throw "outils hors de Program Files : $t" }
+        $bad = @((Get-Acl -LiteralPath $t).Access | Where-Object { "$($_.IdentityReference)" -match '(?i)\\Users$|Utilisateurs$|Authenticated Users|Everyone|Tout le monde' -and $_.AccessControlType -eq 'Allow' -and ("$($_.FileSystemRights)" -match 'Write|Modify|FullControl|CreateFiles|AppendData') })
+        if ($bad.Count) { throw "les utilisateurs peuvent écrire dans le dossier protégé : $($bad[0].IdentityReference) $($bad[0].FileSystemRights)" }
+        if (@($env:Path -split ';' | Where-Object { $_ -like "$env:SystemDrive\Users\*" }).Count) { throw "PATH avec un dossier perso" }
+        if (@($env:PSModulePath -split ';' | Where-Object { $_ -like "$env:SystemDrive\Users\*" }).Count) { throw "modules PowerShell cherchés dans un dossier perso" }
+        $threw = $false; try { Open-WinUri 'file:///C:/Windows/System32/calc.exe' } catch { $threw = $true }; if (-not $threw) { throw "lien non autorisé accepté" }
+        if (Open-Url 'file:///C:/Windows/System32/calc.exe') { throw "fichier ouvert comme une page web" }
+        Write-Host "        dossier protégé : $t"
+    }
+    Smoke 'Sécurité : annulations scellées' {
+        Add-Change -Title 'Test sceau' -Undo 'Set-CpuMaxState 100'
+        $c = @(Get-Changes 5 | Where-Object { $_.Title -eq 'Test sceau' })[0]
+        if (-not (Test-UndoAuthorized $c.Id $c.Undo)) { throw "annulation notée par AEROX refusée" }
+        if (Test-UndoAuthorized 'faux123' "Set-BgItem 'service' '' 'RemoteRegistry' 'auto'") { throw "annulation trafiquée acceptée" }
+        if (Test-UndoAuthorized $c.Id "Set-BgItem 'task' '\X\' 'Y' 'on'") { throw "annulation remplacée dans l'historique acceptée" }
+    }
+    Smoke 'Mises à jour : doublons et logiciels déjà désinstallés' {
+        $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AeroxTestFantome'
+        New-Item -Path $k -Force | Out-Null
+        Set-ItemProperty -Path $k -Name DisplayName -Value 'AeroxTestFantome'; Set-ItemProperty -Path $k -Name UninstallString -Value '"C:\Program Files\AeroxTestFantome\unins000.exe"'
+        try {
+            $l = Add-AppGhostInfo @([ordered]@{ Name = 'AeroxTestFantome'; Id = 'Test.Fantome'; Version = '1'; Available = '2' }, [ordered]@{ Name = 'AeroxTestFantome'; Id = 'Test.Fantome'; Version = '1'; Available = '2' }, [ordered]@{ Name = 'Inconnu'; Id = 'Test.Autre'; Version = '1'; Available = '2' })
+            if (@($l).Count -ne 2) { throw "doublon pas retiré ($(@($l).Count))" }
+            if (-not $l[0].Ghost) { throw "logiciel déjà désinstallé pas repéré" }
+            if ($l[1].Ghost) { throw "logiciel inconnu pris pour une trace" }
+        } finally { Remove-Item -Path $k -Force -ErrorAction SilentlyContinue }
+    }
+    Smoke 'Gaming : saccades par heure sur le temps vraiment joué' {
+        $f = @(Get-GameFlags @{ Min = 60.0; Act = 10.0; Stut = 8 })
+        if ($f -notcontains 'stutter') { throw "8 saccades en 10 min de jeu (50 min d'Alt+Tab) non signalées" }
+        $f = @(Get-GameFlags @{ Min = 60.0; Act = 60.0; Stut = 8 })
+        if ($f -contains 'stutter') { throw "8 saccades en 1 h signalées à tort" }
+    }
     Smoke 'Nettoyage Windows : pas deux nettoyages en même temps' { if (-not (Wait-WindowsCleanup)) { throw "voie bloquée alors qu'aucun nettoyage ne tourne" } }
     Smoke 'Envoi au relais sans figer la fenêtre' {
         $script:RelayRes = $null
@@ -304,7 +362,7 @@ function Invoke-SmokeActions {
     Smoke 'Annulations depuis l historique' {
         $n = 0
         foreach ($c in @(Get-Changes | Where-Object { $_.Undo })) {
-            if (-not (Test-SafeUndo $c.Undo)) { throw "annulation refusée : $($c.Undo)" }
+            if (-not (Test-UndoAuthorized $c.Id $c.Undo)) { throw "annulation refusée : $($c.Undo)" }
             $script:AeroxUndo = $true
             try { Invoke-Expression $c.Undo } finally { $script:AeroxUndo = $false }
             $n++; Write-Host "        annulé : $($c.Title)"

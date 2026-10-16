@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '2.1.2'
+$AppVersion = '2.1.3'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -31,6 +31,15 @@ if (-not $isAdmin -or -not $isSTA) {
     exit
 }
 
+# Droits admin : modules PowerShell et programmes appelés par leur nom ne sont jamais cherchés dans un dossier
+# modifiable sans droits admin (Documents, PATH de l'utilisateur) : un programme malveillant ne pourrait pas s'y glisser
+try {
+    $env:PSModulePath = (@("$env:ProgramFiles\WindowsPowerShell\Modules", "$env:SystemRoot\System32\WindowsPowerShell\v1.0\Modules") | Where-Object { Test-Path -LiteralPath $_ }) -join ';'
+    $sysDirs = @("$env:SystemRoot\System32", $env:SystemRoot, "$env:SystemRoot\System32\Wbem", "$env:SystemRoot\System32\WindowsPowerShell\v1.0", "$env:SystemRoot\System32\OpenSSH")
+    $machine = @(([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_).TrimEnd('\') } |
+                 Where-Object { $_ -and $_ -notlike "$env:SystemDrive\Users\*" -and $_ -notlike "$env:SystemDrive\ProgramData\*" -and ($_ -like "$env:SystemRoot*" -or $_ -like "$env:ProgramFiles*" -or $_ -like "${env:ProgramFiles(x86)}*") })
+    $env:Path = (@($sysDirs + $machine) | Select-Object -Unique) -join ';'
+} catch {}
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
@@ -51,6 +60,19 @@ if ($PortRoot -and (Test-Path -LiteralPath (Join-Path $PortRoot 'portable.txt'))
     $Portable = $true
 }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+# Dossier perso d'AEROX (modifiable sans droits admin) : aucun lien vers un autre endroit, sinon AEROX, en administrateur,
+# écrirait ses fichiers ailleurs (dans un dossier de Windows par exemple). Un lien trouvé est retiré (le lien seulement).
+if (-not $Portable) {
+    try {
+        foreach ($d in @($LogDir) + @('jeux', 'sauvegardes', 'sauvegardes\navigateurs', 'outils', 'maj' | ForEach-Object { Join-Path $LogDir $_ })) {
+            $it = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
+            if ($it -and ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [IO.Directory]::Delete($d, $false); New-Item -ItemType Directory -Force -Path $d | Out-Null }
+        }
+        foreach ($f in @(Get-ChildItem -LiteralPath $LogDir -Force -ErrorAction SilentlyContinue | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
+            if ($f.PSIsContainer) { [IO.Directory]::Delete($f.FullName, $false) } else { [IO.File]::Delete($f.FullName) }
+        }
+    } catch {}
+}
 
 # Filet de sécurité : si le logiciel plante, l'erreur est écrite dans plantage.txt et affichée
 trap {
@@ -66,7 +88,10 @@ $LastReportFile = Join-Path $LogDir 'dernier_rapport.txt'
 $SettingsFile   = Join-Path $LogDir 'reglages.json'
 $OldSettings    = Join-Path $LogDir 'reglages.txt'
 
-$AppInfo = [hashtable]::Synchronized(@{ Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
+# Dossier protégé (Program Files : modifiable seulement en administrateur) : outils lancés avec les droits admin,
+# sauvegardes remises en administrateur, installateurs de mise à jour
+$SecureRoot = Join-Path $env:ProgramFiles 'AeroxPCCare\protege'
+$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{

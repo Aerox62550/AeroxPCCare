@@ -2,6 +2,21 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.3 : grand ménage sécurité et fiabilité (3e relecture Gemini + passage au crible complet)
+
+- Dossier protégé Program Files\AeroxPCCare\protege (modifiable seulement en administrateur) : outils lancés avec les droits admin (module de températures, test de débit, copie de PresentMon), sauvegardes .reg des navigateurs, installateurs de mise à jour, sceaux des annulations. Avant : dossier perso (n'importe quel programme pouvait remplacer un outil et se faire lancer en administrateur). Ancien module de températures réinstallé tout seul dans le dossier protégé, ancien dossier vidé. Désinstallation : dossier protégé supprimé.
+- PresentMon : seulement la copie du dossier protégé, copiée si signée par Intel (ou juste après son installation par AEROX). winget : la copie officielle de Program Files signée Microsoft d'abord, plus jamais trouvé par le PATH. nvidia-smi : emplacements officiels seulement.
+- Au démarrage : modules PowerShell et PATH limités aux dossiers de Windows et de Program Files (plus de Documents ni de PATH de l'utilisateur) ; outils de Windows appelés par leur chemin System32.
+- Liens, pages Windows et navigateurs ouverts par l'Explorateur (session normale, sans droits admin) : l'association d'un protocole ou le navigateur par défaut peuvent être changés sans droits admin. Pages internes du navigateur (chrome://…) ouvertes sans droits admin. Outils .msc / .cpl par leur chemin complet.
+- Suppression sûre (AeroxSafeDelete) : chaque élément ouvert sans suivre les liens, vrai chemin vérifié (il doit rester dans le dossier nettoyé), supprimé par le même accès. Dossier à nettoyer qui est un lien ou qui passe par un lien : refusé. Utilisé par tout le nettoyage. Fichiers mis à la corbeille (doublons, gros fichiers) et réglages des navigateurs : refusés si un lien est sur le chemin. OneDrive « en ligne » : ne suit jamais une jonction, dossier OneDrive venant du registre vérifié (pas un dossier de Windows ni de programmes).
+- Historique : chaque annulation est scellée (empreinte dans le dossier protégé) ; une annulation trafiquée dans l'historique (dossier perso) est refusée. Anciennes entrées sans sceau : seulement les réglages sans risque (pas les programmes en fond, le démarrage ni les sauvegardes du registre).
+- Dossier perso d'AEROX : liens retirés au démarrage (sinon AEROX écrirait ailleurs). Rapport sur le Bureau : jamais dans un dossier de Windows ou de programmes.
+- Mises à jour des logiciels (retour d'un pote de Sam : Antigravity en double, logiciels désinstallés réinstallés) : doublons retirés ; logiciel dont il ne reste qu'une trace dans Windows (désinstalleur et dossier disparus) repéré, pas mis à jour par « Tout mettre à jour », pas compté par le diagnostic, décoché avec explication dans la liste.
+- Mémoire : les tâches en arrière-plan (vérifications, recherche de mise à jour, contexte des parties) sont libérées à la fin.
+- Corbeille : place vraiment libérée (mesurée avant / après) ; avec le mot de passe d'un autre compte, la corbeille de la personne devant l'écran est vidée aussi.
+- Gaming : saccades par heure calculées sur le temps vraiment joué ; fréquence de l'écran où tourne le jeu (pas toujours le principal), bouton « Passer à X Hz » sur le bon écran ; « Pourquoi mon PC rame » arrête d'abord les outils de mesure d'AEROX.
+- Faux (vérifié) : courbe minute par minute (les pauses sont comptées exprès), conflit au réaffichage depuis la zone de notification.
+
 ## Publié en 2.1.2 : relectures externes (Gemini), points vérifiés et corrigés
 
 - Désinstallation : logiciels et applis du Store de la personne devant l'écran (pas ceux du compte ADMIN) ; désinstalleur d'un logiciel « par utilisateur » lancé sur son compte ; « désinstallé » seulement quand l'entrée de Windows a disparu (vérifié toutes les 2 s, sinon « toujours installé » à la fermeture), problème du diagnostic réglé seulement dans ce cas.

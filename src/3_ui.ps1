@@ -967,7 +967,8 @@ function Start-Background([string]$Code) {
     $rs = [runspacefactory]::CreateRunspace(); $rs.Open()
     $rs.SessionStateProxy.SetVariable('sync', $sync); $rs.SessionStateProxy.SetVariable('AppInfo', $AppInfo)
     $ps = [powershell]::Create(); $ps.Runspace = $rs; [void]$ps.AddScript($TaskLibrary.ToString() + "`n" + $Code)
-    [void]$ps.BeginInvoke()
+    # Libéré par la boucle de l'interface dès que c'est fini (sinon chaque tâche resterait en mémoire)
+    [void]$script:Zombies.Add(@{ PS = $ps; RS = $rs; Handle = $ps.BeginInvoke() })
 }
 
 # ---------------------------------------------------------------- Vérification après chaque réparation
@@ -1259,7 +1260,11 @@ function Invoke-UiCommand($T) {
                     'selfupdate' { Start-SelfUpdate }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
-                    'slow' { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
+                    'slow' {
+                        # Les outils de mesure d'AEROX (capteurs, compteur de FPS) s'arrêtent pendant l'analyse pour ne pas la fausser
+                        if (-not $script:GameSess -and -not $script:GameProbe) { try { Stop-Monitoring } catch {} }
+                        [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog')
+                    }
                     'bgitems' { Start-BgList $null }
                     'dupes' { Start-DuplicateScan }
                     'browser' { Start-BrowserCheck $null }
@@ -1403,7 +1408,7 @@ function Show-HistoryDialog {
     if (-not $c) { return }
     if ($c -eq 'restore') { Start-Process 'rstrui.exe'; Write-UiLog "Restauration du système ouverte : choisis un point de restauration et suis les étapes."; return }
     if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
-    if (-not (Test-SafeUndo $c.Undo)) {
+    if (-not (Test-UndoAuthorized $c.Id $c.Undo)) {
         Write-Bug -Context 'Historique' -ErrorRecord ("Action d'annulation refusée (non reconnue) : " + $c.Undo) -Type 'erreur'
         [System.Windows.MessageBox]::Show("Ce changement ne peut pas être annulé automatiquement (l'historique a été modifié ou vient d'une ancienne version).`n`nTu peux utiliser « Restauration complète de Windows » à la place.", $AppName, 'OK', 'Warning') | Out-Null
         return
@@ -2014,6 +2019,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
     '2.1.0' = @("Interface rafraîchie : une icône pour chaque outil, des cartes qui s'éclairent au survol, des pages qui apparaissent en douceur et des textes plus lisibles.", "Accueil : l'état de ton PC est mis en avant.", "Gaming rangé en 3 onglets : « Mes jeux », « En direct » et « Overlay en jeu ».")
@@ -2099,7 +2105,11 @@ function Show-RemoteHelpDialog {
                     $txt = Build-HelpReport
                     [System.Windows.Clipboard]::SetText($txt)
                     $f = Join-Path (Get-SessionFolder 'Desktop') 'Rapport AEROX PC Care.txt'
-                    try { [IO.File]::WriteAllText($f, $txt, (New-Object System.Text.UTF8Encoding($true))) } catch { $f = $null }
+                    # Le Bureau est indiqué dans le registre de la personne (modifiable sans droits admin) : jamais dans un dossier de Windows
+                    $dd = [IO.Path]::GetFullPath((Split-Path $f -Parent))
+                    if ($dd -like "$env:SystemRoot*" -or $dd -like "$env:ProgramFiles*" -or $dd -like "${env:ProgramFiles(x86)}*" -or $dd -like "$env:ProgramData*" -or -not [AeroxSafeDelete]::IsDirectPath($dd)) { $f = $null }
+                    elseif (Test-Path -LiteralPath $f) { $it = Get-Item -LiteralPath $f -Force; if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { $f = $null } }
+                    if ($f) { try { [IO.File]::WriteAllText($f, $txt, (New-Object System.Text.UTF8Encoding($true))) } catch { $f = $null } }
                     $this.Content = '✔ Rapport copié'
                     Write-UiLog ("Rapport d'aide copié dans le presse-papiers" + $(if ($f) { " et enregistré sur le Bureau (« Rapport AEROX PC Care.txt »)." } else { '.' }))
                     if (-not $script:Diag) { [System.Windows.MessageBox]::Show("Rapport copié.`n`nAstuce : lance d'abord le diagnostic pour que le rapport contienne les problèmes du PC.", $AppName, 'OK', 'Information') | Out-Null }
@@ -2471,9 +2481,10 @@ function Show-AppUpdatesDialog($Issue) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
             Add-Child $txt (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
             Add-Child $txt (New-Text ("{0}  →  {1}" -f $a.Version, $a.Available) 12 '#8B93A7')
+            if ($a.Ghost) { Add-Child $txt (New-Text "Semble déjà désinstallé (il ne reste qu'une trace dans Windows) : le cocher le réinstallerait. Ne le coche que si tu l'utilises encore." 12 '#FFB547') }
             $ib = New-DlgButton 'Ignorer' 'TextBtn'; $ib.Tag = $a; $ib.VerticalAlignment = 'Center'
             $ib.Add_Click({ $x = $this.Tag; $x.Ignored = $true; $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps) + $x.Id; Save-Settings; & $script:RenderUpd })
-            $r = New-CheckRow $true $txt $ib
+            $r = New-CheckRow (-not $a.Ghost) $txt $ib
             $r.Check.Add_Click({ & $script:CountUpd })
             Add-Child $script:UpdList $r.Row
             [void]$script:UpdRows.Add(@{ App = $a; Check = $r.Check })
@@ -2843,7 +2854,8 @@ function Show-SpaceDialog {
 }
 # Met des fichiers à la corbeille (jamais supprimés directement), après confirmation
 function Remove-FilesToRecycle($Files, [string]$What) {
-    $files = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) })
+    # Uniquement des fichiers atteints directement (aucun lien glissé sur le chemin depuis l'analyse)
+    $files = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) -and [AeroxSafeDelete]::IsDirectPath($_.Path) })
     if (-not $files.Count) { return }
     $tot = [double](($files | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
     $list = (@($files | Select-Object -First 12 | ForEach-Object { "•  " + [IO.Path]::GetFileName($_.Path) + "  (" + (Format-Size $_.Size) + ")" }) -join "`n") + $(if ($files.Count -gt 12) { "`n… et $($files.Count - 12) autre(s)" } else { '' })
@@ -3110,7 +3122,7 @@ function Show-DriverDialog($Issue) {
         $script:DrvApply.Content = $(if ($n) { "Installer ($n)" } else { 'Installer' })
         $script:DrvApply.IsEnabled = ($n -gt 0)
     }
-    $bDev.Add_Click({ Start-Process 'devmgmt.msc' })
+    $bDev.Add_Click({ Open-SystemTool 'devmgmt.msc' })
     $bClose.Add_Click({ $script:DrvWin.Close() })
     $bApply.Add_Click({ $script:DrvChoice = @($script:DrvRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.U }); $script:DrvWin.Close() })
     & $script:CountDrv
@@ -3454,7 +3466,7 @@ $SensorLoopCode = @'
 $ErrorActionPreference = 'SilentlyContinue'
 # Les températures sont lues par « AeroxPCCare.exe --capteurs » dans un processus séparé :
 # si le module LibreHardwareMonitor plante, le logiciel reste ouvert et on garde les mesures de base.
-$lhmDir = Join-Path (Join-Path $AppInfo.LogDir 'outils') 'lhm'
+$lhmDir = Join-Path (Join-Path $AppInfo.Secure 'outils') 'lhm'   # dossier protégé (le module est chargé avec les droits admin)
 $sp = $null
 $sync.SensMode = 'basic'; $sync.SensError = ''
 if ((Test-Path (Join-Path $lhmDir 'LibreHardwareMonitorLib.dll')) -and $AppInfo.Launcher -and (Test-Path -LiteralPath $AppInfo.Launcher)) {
@@ -3464,8 +3476,9 @@ if ((Test-Path (Join-Path $lhmDir 'LibreHardwareMonitorLib.dll')) -and $AppInfo.
     $sync.SensError = "Lance le logiciel avec le raccourci AEROX PC Care pour avoir les températures."
 }
 $spWait = 0
-$smi = "$env:SystemRoot\System32\nvidia-smi.exe"
-if (-not (Test-Path $smi)) { $c = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue; $smi = if ($c) { $c.Source } else { $null } }
+# Outil du pilote NVIDIA : seulement à ses emplacements officiels (jamais trouvé par le PATH)
+$smi = $null
+foreach ($p in @("$env:SystemRoot\System32\nvidia-smi.exe", "$env:ProgramFiles\NVIDIA Corporation\NVSMI\nvidia-smi.exe")) { if (-not $smi -and (Test-Path -LiteralPath $p)) { $smi = $p } }
 $cpuName = ((Get-CimInstance Win32_Processor | Select-Object -First 1).Name -replace '\s+', ' ').Trim()
 $tot = [double](Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
 function Pick($sensors, [string]$type, [string[]]$names) {
@@ -4032,6 +4045,7 @@ function Invoke-GameWatch {
     if ($script:GameSkip.ContainsKey($sk)) { return }
     if ($script:GameSkip.Count -gt 500) { $script:GameSkip.Clear() }
     if (@($g.Ignore) -contains $path.ToLowerInvariant()) { $script:GameSkip[$sk] = $true; return }
+    $script:GameDevice = $(if ($f.Count -ge 5) { $f[4] } else { '' })
     $id = Get-GameFromPath $path
     if ($id) { Start-GameSession $gpid $path $id.Name $id.Store; return }
     # Autre programme en plein écran : on vérifie d'abord qu'il affiche des images comme un jeu
@@ -4048,7 +4062,7 @@ function Start-GameSession([int]$GamePid, [string]$Path, [string]$Name, [string]
         N = 0; Fps = (New-Object 'System.Collections.Generic.List[double]'); CpuL = 0.0; GpuL = 0.0; Core = 0.0; NL = 0; NGpu = 0; NCore = 0
         CpuT = $null; GpuT = $null; GpuHot = $null; Vram = $null; Ram = $null }
     $sync.GameCtx = $null
-    try { Start-Background 'Get-GameContext' } catch {}
+    try { Start-Background ('Get-GameContext ' + (ConvertTo-PsLiteral "$script:GameDevice")) } catch {}
     Start-Sensors
     if (Get-PresentMonCached) { Start-FpsCounter; if ($script:Fps) { $script:Fps.BeginSession($GamePid) } }
     Write-UiLog ("🎮 Partie détectée : {0}. AEROX note les performances en silence (rien n'est injecté dans le jeu)." -f $Name)
@@ -4113,7 +4127,9 @@ function New-GameRecord($S, $St, $Mins, [datetime]$End, $Ctx) {
         $r.Med = [math]::Round((Get-Median $a), 1)
         if ($mean -gt 0) { $r.Cv = [math]::Round([math]::Sqrt($var / $a.Count) / $mean, 3) }
     }
-    if ($Ctx) { foreach ($k in 'Gpu', 'Driver', 'Hz', 'MaxHz') { if ($Ctx[$k]) { $r[$k] = $Ctx[$k] } } }
+    if ($Ctx) { foreach ($k in 'Gpu', 'Driver', 'Hz', 'MaxHz', 'Device') { if ($Ctx[$k]) { $r[$k] = $Ctx[$k] } } }
+    # Temps réellement joué (images affichées), pour les saccades par heure : un Alt+Tab ne doit pas les diluer
+    if ($St -and $St[1] -gt 0) { $r.Act = [math]::Round([math]::Min($min, $St[1] / 60.0), 1) }
     $v = Get-GameVerdict $r
     $r.Verdict = $v.Id; if ($v.Cap) { $r.Cap = $v.Cap }
     $r.Flags = @(Get-GameFlags $r)
@@ -4153,6 +4169,7 @@ function Get-GameFlags($R) {
     if ($null -ne (Get-RecValue $R 'Vram') -and (Get-RecValue $R 'Vram') -ge 95) { $f += 'vram' }
     if ($null -ne (Get-RecValue $R 'Ram') -and (Get-RecValue $R 'Ram') -ge 90) { $f += 'ram' }
     $st = Get-RecValue $R 'Stut'; $mn = [double](Get-RecValue $R 'Min')
+    $act = Get-RecValue $R 'Act'; if ($null -ne $act -and [double]$act -ge 1) { $mn = [double]$act }
     if ($null -ne $st -and $st -ge 5 -and $mn -gt 0 -and ($st * 60.0 / $mn) -ge 30) { $f += 'stutter' }
     $hz = [int](Get-RecValue $R 'Hz'); $mx = [int](Get-RecValue $R 'MaxHz')
     if ($hz -gt 0 -and $mx -ge 100 -and ($mx - $hz) -ge 20) { $f += 'hz' }
@@ -4637,7 +4654,7 @@ function Show-GameDialog([string]$Key) {
             }
         }
         'page-perf' { Go-Page 'perf' }
-        'display-fix' { $d = @(Get-Displays) | Where-Object { $_.Primary } | Select-Object -First 1; Set-DisplayWithConfirm $d $null }
+        'display-fix' { $ds = @(Get-Displays); $d = $ds | Where-Object { $_.Device -and $_.Device -eq "$($last.Device)" } | Select-Object -First 1; if (-not $d) { $d = $ds | Where-Object { $_.Primary } | Select-Object -First 1 }; Set-DisplayWithConfirm $d $null }
         default { Invoke-UiCommand @{ Kind = 'ui'; Def = @{ UI = $act } } }
     }
 }
@@ -4725,7 +4742,11 @@ try {
     Save-Settings
 } catch {}
 # Fichiers temporaires d'une mise à jour terminée
-foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'))) { try { Get-ChildItem -LiteralPath $mj -Force -ErrorAction Stop | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue } catch {} }
+foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'), (Join-Path $SecureRoot 'maj'))) { try { if (Test-Path -LiteralPath $mj) { $null = Remove-PathContent $mj } } catch {} }
+# Module de températures installé par une ancienne version dans le dossier perso : réinstallé dans le dossier protégé
+try {
+    if ((Test-Path -LiteralPath (Join-Path $LogDir 'outils\lhm\LibreHardwareMonitorLib.dll')) -and -not (Test-Path -LiteralPath (Join-Path $SecureRoot 'outils\lhm\LibreHardwareMonitorLib.dll'))) { Start-Background 'Install-SensorLib' }
+} catch {}
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique
 try {
     $uk = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare'

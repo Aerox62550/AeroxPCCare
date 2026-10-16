@@ -359,10 +359,10 @@ public static class AeroxGame {
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
-    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice; }
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint flags);
-    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder sb, ref int size);
@@ -383,20 +383,22 @@ public static class AeroxGame {
         try { return ImagePath(h); } finally { CloseHandle(h); }
     }
 
-    // « pid|chemin|1 si la fenêtre couvre tout son écran|classe de la fenêtre » ; vide si rien
+    // « pid|chemin|1 si la fenêtre couvre tout son écran|classe de la fenêtre|écran (\\.\DISPLAY2) » ; vide si rien
     public static string Foreground() {
         try {
             IntPtr w = GetForegroundWindow(); if (w == IntPtr.Zero) return "";
             uint pid; GetWindowThreadProcessId(w, out pid); if (pid == 0) return "";
             StringBuilder cls = new StringBuilder(256); GetClassName(w, cls, 256);
-            bool full = false; RECT r;
+            bool full = false; RECT r; string dev = "";
             if (GetWindowRect(w, out r)) {
                 MONITORINFO mi = new MONITORINFO(); mi.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
                 IntPtr m = MonitorFromWindow(w, 2);
-                if (m != IntPtr.Zero && GetMonitorInfo(m, ref mi))
+                if (m != IntPtr.Zero && GetMonitorInfo(m, ref mi)) {
                     full = r.L <= mi.rcMonitor.L && r.T <= mi.rcMonitor.T && r.R >= mi.rcMonitor.R && r.B >= mi.rcMonitor.B;
+                    dev = mi.szDevice ?? "";
+                }
             }
-            return pid + "|" + ProcessPath((int)pid) + "|" + (full ? "1" : "0") + "|" + cls.ToString();
+            return pid + "|" + ProcessPath((int)pid) + "|" + (full ? "1" : "0") + "|" + cls.ToString().Replace("|", "/") + "|" + dev;
         } catch { return ""; }
     }
 
@@ -1088,6 +1090,140 @@ public static class AeroxJson {
 // =====================================================================
 //  Fichiers : doublons et place gardée sur le PC par OneDrive
 // =====================================================================
+// Suppression sûre avec les droits admin : jamais à travers un lien (jonction, lien symbolique), même si un lien
+// est glissé entre l'analyse et la suppression. Chaque élément est ouvert SANS suivre les liens, son vrai chemin
+// est vérifié (il doit rester dans le dossier nettoyé), puis il est supprimé par ce même accès : impossible de
+// le rediriger entre la vérification et la suppression.
+public static class AeroxSafeDelete {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(Microsoft.Win32.SafeHandles.SafeFileHandle h, StringBuilder sb, uint n, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetLongPathNameW(string shortPath, StringBuilder sb, uint n);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, out FileInfoH info);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, int cls, ref uint info, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle h, int cls, ref byte info, int size);
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]   // FILETIME = 2 × 32 bits : pas d'alignement sur 8
+    struct FileInfoH { public uint Attr; public long Created, Accessed, Written; public uint Vol, SizeHigh, SizeLow, Links, IdxHigh, IdxLow; }
+    const uint DELETE = 0x10000, READ_ATTR = 0x80, SHARE_ALL = 7, OPEN_EXISTING = 3, BACKUP = 0x02000000, OPEN_REPARSE = 0x00200000;
+    const uint ATTR_DIR = 0x10, ATTR_REPARSE = 0x400;
+
+    static Microsoft.Win32.SafeHandles.SafeFileHandle Open(string path, uint access) {
+        return CreateFileW(path, access, SHARE_ALL, IntPtr.Zero, OPEN_EXISTING, BACKUP | OPEN_REPARSE, IntPtr.Zero);
+    }
+    static string Final(Microsoft.Win32.SafeHandles.SafeFileHandle h) {
+        StringBuilder sb = new StringBuilder(1024);
+        uint n = GetFinalPathNameByHandleW(h, sb, (uint)sb.Capacity, 0);
+        if (n == 0 || n >= sb.Capacity) return null;
+        string f = sb.ToString(0, (int)n);
+        if (f.StartsWith(@"\\?\UNC\")) return @"\\" + f.Substring(8);
+        if (f.StartsWith(@"\\?\")) return f.Substring(4);
+        return f;
+    }
+    // Chemin complet en noms longs (les dossiers Windows sont parfois donnés en noms courts : SAMUEL~1)
+    static string Long(string path) {
+        string full = Path.GetFullPath(path).TrimEnd('\\');
+        StringBuilder sb = new StringBuilder(1024);
+        uint n = GetLongPathNameW(full, sb, (uint)sb.Capacity);
+        return (n > 0 && n < sb.Capacity) ? sb.ToString(0, (int)n).TrimEnd('\\') : full;
+    }
+    static bool Under(string p, string root) { return p.StartsWith(root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase); }
+
+    // Vrai si le chemin mène directement à l'élément, sans aucun lien sur le trajet
+    public static bool IsDirectPath(string path) {
+        try {
+            using (Microsoft.Win32.SafeHandles.SafeFileHandle h = CreateFileW(path, READ_ATTR, SHARE_ALL, IntPtr.Zero, OPEN_EXISTING, BACKUP, IntPtr.Zero)) {
+                if (h.IsInvalid) return false;
+                string f = Final(h);
+                return f != null && string.Equals(f.TrimEnd('\\'), Long(path), StringComparison.OrdinalIgnoreCase);
+            }
+        } catch { return false; }
+    }
+    // Dossier racine sûr : pas un lien, et son vrai chemin est bien celui demandé (aucun lien plus haut)
+    static string SafeRoot(string dir) {
+        if (string.IsNullOrEmpty(dir)) return null;
+        try {
+            using (Microsoft.Win32.SafeHandles.SafeFileHandle h = Open(dir, READ_ATTR)) {
+                if (h.IsInvalid) return null;
+                FileInfoH fi; if (!GetFileInformationByHandle(h, out fi)) return null;
+                if ((fi.Attr & ATTR_REPARSE) != 0 || (fi.Attr & ATTR_DIR) == 0) return null;
+                string f = Final(h);
+                if (f == null || !string.Equals(f.TrimEnd('\\'), Long(dir), StringComparison.OrdinalIgnoreCase)) return null;
+                return f.TrimEnd('\\');
+            }
+        } catch { return null; }
+    }
+    public static string LastRefused = "";
+
+    // Vide un dossier (le dossier lui-même reste). Renvoie les octets libérés.
+    public static double CleanDir(string dir) {
+        string root = SafeRoot(dir);
+        if (root == null) { LastRefused = dir; return 0; }
+        return Inner(dir, root, 0);
+    }
+    // Supprime un élément (fichier ou dossier et son contenu) de son dossier parent
+    public static double DeleteItem(string path) {
+        string parent = Path.GetDirectoryName(Path.GetFullPath(path).TrimEnd('\\'));
+        string root = SafeRoot(parent);
+        if (root == null) { LastRefused = path; return 0; }
+        return DeleteOne(path, root, 0);
+    }
+    static double Inner(string dir, string root, int depth) {
+        if (depth > 64) return 0;
+        string[] entries;
+        try { entries = Directory.GetFileSystemEntries(dir); } catch { return 0; }
+        double freed = 0;
+        foreach (string e in entries) {
+            if (AeroxNative.StopScan) break;
+            freed += DeleteOne(e, root, depth);
+        }
+        return freed;
+    }
+    static double DeleteOne(string path, string root, int depth) {
+        try {
+            using (Microsoft.Win32.SafeHandles.SafeFileHandle h = Open(path, DELETE | READ_ATTR)) {
+                if (h.IsInvalid) return 0;
+                FileInfoH fi; if (!GetFileInformationByHandle(h, out fi)) return 0;
+                if ((fi.Attr & ATTR_REPARSE) != 0) return 0;            // lien : jamais suivi, laissé en place
+                string f = Final(h);
+                if (f == null || !Under(f, root)) return 0;             // en dehors du dossier nettoyé : on n'y touche pas
+                if ((fi.Attr & ATTR_DIR) != 0) {
+                    double freed = Inner(f, root, depth + 1);
+                    MarkDelete(h);                                      // ne réussit que si le dossier est vide
+                    return freed;
+                }
+                double size = (double)fi.SizeHigh * 4294967296.0 + fi.SizeLow;
+                return MarkDelete(h) ? size : 0;
+            }
+        } catch { return 0; }
+    }
+    static bool MarkDelete(Microsoft.Win32.SafeHandles.SafeFileHandle h) {
+        uint ex = 0x1 | 0x2 | 0x10;   // supprimer, tout de suite (POSIX), même en lecture seule
+        if (SetFileInformationByHandle(h, 21, ref ex, 4)) return true;
+        byte d = 1;                   // Windows plus ancien : sans les options
+        return SetFileInformationByHandle(h, 4, ref d, 1);
+    }
+
+    // Lien vers un autre endroit (jonction / lien symbolique) ? Les fichiers OneDrive « en ligne » sont aussi des
+    // points d'analyse, mais d'un autre type : ceux-là ne sont pas des liens.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode, Pack = 4)]
+    struct FindData { public uint Attr; public long C, A, W; public uint SizeHigh, SizeLow, Reserved0, Reserved1;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Name; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string Alt; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr FindFirstFileW(string name, out FindData data);
+    [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr h);
+    public static bool IsLink(string path) {
+        FindData d; IntPtr h = FindFirstFileW(path.TrimEnd('\\'), out d);
+        if (h == new IntPtr(-1)) return true;   // illisible : traité comme un lien (on n'y va pas)
+        FindClose(h);
+        if ((d.Attr & ATTR_REPARSE) == 0) return false;
+        return d.Reserved0 == 0xA0000003 || d.Reserved0 == 0xA000000C;   // jonction / lien symbolique
+    }
+}
+
 public static class AeroxFiles {
     const int RecallOnData = 0x400000, RecallOnOpen = 0x40000, Offline = 0x1000;
     static bool CloudOnly(FileSystemInfo f) { int a = (int)f.Attributes; return (a & (RecallOnData | RecallOnOpen | Offline)) != 0; }
@@ -1107,6 +1243,7 @@ public static class AeroxFiles {
                 try {
                     FileAttributes a = fi.Attributes;
                     if ((a & PinnedAttr) != 0) { c[1]++; continue; }
+                    if ((a & FileAttributes.ReparsePoint) != 0 && AeroxSafeDelete.IsLink(fi.FullName)) continue;   // lien vers ailleurs : jamais suivi
                     if ((a & FileAttributes.Directory) != 0) Online(fi.FullName, depth + 1, c);
                     if ((a & UnpinnedAttr) == 0) { File.SetAttributes(fi.FullName, (a & Settable) | UnpinnedAttr); c[0]++; }
                 } catch { }
