@@ -810,6 +810,8 @@ public static class AeroxAudio {
     [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDevice {
         [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+        [PreserveSig] int OpenPropertyStore(int access, out IntPtr store);
+        [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
     }
     [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IAudioEndpointVolume {
@@ -844,6 +846,18 @@ public static class AeroxAudio {
             float l; bool m;
             v.GetMasterVolumeLevelScalar(out l); v.GetMute(out m);
             return ((int)Math.Round(l * 100)).ToString() + "|" + (m ? "1" : "0");
+        } catch { return ""; }
+    }
+    // Identifiant de l'appareil par défaut (role : 0 = par défaut, 2 = communications), "" si aucun.
+    // Il se retrouve dans l'InstanceId du périphérique (SWD\MMDEVAPI\<id>) pour avoir son nom.
+    public static string DefaultId(bool capture, int role) {
+        try {
+            IMMDeviceEnumerator en = (IMMDeviceEnumerator)(new MMDeviceEnumeratorCom());
+            IMMDevice dev;
+            if (en.GetDefaultAudioEndpoint(capture ? 1 : 0, role, out dev) != 0 || dev == null) return "";
+            string id;
+            if (dev.GetId(out id) != 0 || id == null) return "";
+            return id;
         } catch { return ""; }
     }
     // Enlève la sourdine et remonte le volume au minimum demandé (sans jamais le baisser)

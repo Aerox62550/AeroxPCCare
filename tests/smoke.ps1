@@ -312,6 +312,22 @@ function Invoke-Smoke {
         if (-not @($row.Children | Where-Object { $_ -is [System.Windows.Controls.Button] -and "$($_.Content)" -eq 'Désinstaller' }).Count) { throw "bouton « Désinstaller » absent" }
         Uninstall-PawnIO
     }
+    Smoke 'Stabilité : seuls les plantages après la réparation comptent' {
+        $save = $AppInfo.StabilityFixAt
+        try {
+            $AppInfo.StabilityFixAt = @{ crash = (Get-Date).AddHours(-1).ToString('s') }
+            $d = Get-StabilitySince 'crash' (Get-Date).AddDays(-7)
+            if ([math]::Abs(((Get-Date).AddHours(-1) - $d).TotalMinutes) -gt 2) { throw "date de réparation ignorée ($d)" }
+            if ((Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)) -gt (Get-Date).AddDays(-29)) { throw "date d'une autre réparation appliquée aux écrans bleus" }
+            Test-Stability
+        } finally { $AppInfo.StabilityFixAt = $save }
+        $gd = Get-GpuDriverInstallDates
+        Write-Host ("        pilotes graphiques installés : {0}" -f (($gd.Keys | ForEach-Object { "{0} le {1:dd/MM/yyyy HH:mm}" -f $_, $gd[$_] }) -join ' · '))
+    }
+    Smoke 'Désinstallation : désinstalleur disparu expliqué' {
+        try { Uninstall-App 'win32' '"C:\Program Files\AeroxRienDuTout\unins000.exe" /SILENT' 'Logiciel test'; throw "pas d'erreur" }
+        catch { if ($_.Exception.Message -notlike 'Le désinstalleur de*') { throw "message pas clair : $($_.Exception.Message)" } }
+    }
     Smoke 'Gaming : saccades par heure sur le temps vraiment joué' {
         $f = @(Get-GameFlags @{ Min = 60.0; Act = 10.0; Stut = 8 })
         if ($f -notcontains 'stutter') { throw "8 saccades en 10 min de jeu (50 min d'Alt+Tab) non signalées" }
@@ -459,7 +475,14 @@ function Invoke-SmokeActions {
         $x = @($sync.BgItems | Where-Object { $_.Verdict -ne 'keep' -and $_.Kind -eq 'task' }) | Select-Object -First 1
         if ($x) { Disable-BgItems -Items @(("{0}|{1}|{2}|{3}" -f $x.Kind, $x.Path, $x.Name, $x.Name)) } else { Write-Host '        (aucune tâche à couper)' }
     }
-    Smoke 'Dépannage : son' { Repair-Sound }
+    Smoke 'Dépannage : son' {
+        # Le service du son ne doit PAS être relancé s'il marche (Discord perdait le micro)
+        $p0 = (Get-CimInstance Win32_Service -Filter "Name='Audiosrv'").ProcessId
+        Repair-Sound
+        $p1 = (Get-CimInstance Win32_Service -Filter "Name='Audiosrv'").ProcessId
+        Write-Host "        service audio : processus $p0 → $p1 · sortie par défaut : « $(Get-AudioDefaultName $false 0) »"
+        if ($p0 -and $p1 -and $p0 -ne $p1) { throw "le service audio a été relancé alors qu'il marchait" }
+    }
     Smoke 'Dépannage : micro' { Repair-Microphone }
     Smoke 'Dépannage : webcam' { Repair-Webcam }
     Smoke 'Dépannage : imprimante' { Repair-Printing }

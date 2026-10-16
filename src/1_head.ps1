@@ -91,7 +91,7 @@ $OldSettings    = Join-Path $LogDir 'reglages.txt'
 # Dossier protégé (Program Files : modifiable seulement en administrateur) : outils lancés avec les droits admin,
 # sauvegardes remises en administrateur, installateurs de mise à jour
 $SecureRoot = Join-Path $env:ProgramFiles 'AeroxPCCare\protege'
-$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
+$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); StabilityFixAt = @{}; Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{
