@@ -260,6 +260,17 @@ function Invoke-Smoke {
             $AppInfo.StartupOff = $saveOff
         }
     }
+    Smoke 'Composants de mesure : désinstallables' {
+        $d = Join-Path (Get-ToolsDir) 'lhm'; $dll = Join-Path $d 'LibreHardwareMonitorLib.dll'
+        if (Test-Path -LiteralPath $dll) { Write-Host '        (module réel installé : pas touché)'; return }
+        New-Item -ItemType Directory -Force -Path $d | Out-Null; [IO.File]::WriteAllText($dll, 'test')
+        if (-not (Get-ToolStatus).Lhm) { throw "module de test pas vu comme installé" }
+        Uninstall-SensorLib
+        if ((Get-ToolStatus).Lhm -or (Test-Path -LiteralPath $d)) { throw "module toujours là après désinstallation" }
+        $row = New-ToolRow 'Test' 'Test' $true 'Installé' 'inst-lhm' 'uninst-lhm'
+        if (-not @($row.Children | Where-Object { $_ -is [System.Windows.Controls.Button] -and "$($_.Content)" -eq 'Désinstaller' }).Count) { throw "bouton « Désinstaller » absent" }
+        Uninstall-PawnIO
+    }
     Smoke 'Gaming : saccades par heure sur le temps vraiment joué' {
         $f = @(Get-GameFlags @{ Min = 60.0; Act = 10.0; Stut = 8 })
         if ($f -notcontains 'stutter') { throw "8 saccades en 10 min de jeu (50 min d'Alt+Tab) non signalées" }

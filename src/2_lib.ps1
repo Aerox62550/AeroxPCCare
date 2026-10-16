@@ -3419,6 +3419,56 @@ function Install-PawnIO {
     }
 }
 
+# Désinstallation des composants de mesure (au choix de la personne : rien n'est obligatoire).
+# L'interface arrête les mesures avant (processus des capteurs et compteur de FPS), sinon les fichiers seraient verrouillés.
+function Uninstall-WingetTool([string]$Id) {
+    $wg = Get-Winget
+    if (-not $wg) { return $false }
+    $ec = Invoke-Native $wg (@('uninstall', '--id', $Id, '--exact', '--silent', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) ([System.Text.Encoding]::UTF8)
+    return ($ec -eq 0 -or $ec -eq -1978335212)   # 0x8A150014 : déjà plus installé
+}
+function Uninstall-SensorLib {
+    Step "Désinstallation du module de températures (LibreHardwareMonitor)"
+    $d = Join-Path (Get-ToolsDir) 'lhm'
+    # Ancien emplacement aussi (sinon le module serait réinstallé tout seul au prochain lancement)
+    $old = Join-Path $AppInfo.LogDir 'outils'
+    if (Test-Path -LiteralPath $old) { $null = Remove-PathContent $old; try { [IO.Directory]::Delete($old, $false) } catch {} }
+    if (Test-Path -LiteralPath $d) { $null = Remove-PathContent $d; try { [IO.Directory]::Delete($d, $false) } catch {} }
+    if (Test-Path -LiteralPath (Join-Path $d 'LibreHardwareMonitorLib.dll')) {
+        Add-TaskError -Title "Le module de températures n'a pas pu être entièrement retiré" -Cause "Un de ses fichiers est encore utilisé." -Effect "Il reste installé pour l'instant." `
+            -FixLabel "Réessayer" -FixAction 'Uninstall-SensorLib' -Steps @("Ferme AEROX PC Care (y compris l'icône près de l'horloge), relance-le, puis réessaie.")
+        return
+    }
+    Log "   ✔ Module de températures désinstallé. Il reste les mesures de base (processeur, mémoire) et la carte NVIDIA via son pilote."
+    Add-Change -Kind 'info' -Title "Module de températures désinstallé" -Detail "Tu peux le réinstaller quand tu veux depuis Gaming > En direct."
+}
+function Uninstall-PresentMon {
+    Step "Désinstallation du compteur de FPS (PresentMon)"
+    $ok = Uninstall-WingetTool 'Intel.PresentMon.Console'
+    $d = Join-Path (Get-ToolsDir) 'presentmon'
+    if (Test-Path -LiteralPath $d) { $null = Remove-PathContent $d; try { [IO.Directory]::Delete($d, $false) } catch {} }
+    if ((Test-Path -LiteralPath (Join-Path $d 'PresentMon.exe')) -or (Find-PresentMonInstalled)) {
+        Add-TaskError -Title "Le compteur de FPS n'a pas pu être entièrement désinstallé" -Cause $(if ($ok) { "Un de ses fichiers est encore utilisé." } else { "L'outil de Microsoft (winget) n'a pas réussi à le désinstaller." }) `
+            -Effect "Il reste installé pour l'instant." -FixLabel "Réessayer" -FixAction 'Uninstall-PresentMon' -Steps @("Ferme AEROX PC Care (y compris l'icône près de l'horloge), relance-le, puis réessaie.")
+        return
+    }
+    Log "   ✔ Compteur de FPS désinstallé. Les FPS ne seront plus mesurés (ni le suivi des parties)."
+    Add-Change -Kind 'info' -Title "Compteur de FPS désinstallé" -Detail "Tu peux le réinstaller quand tu veux depuis Gaming > En direct."
+}
+function Uninstall-PawnIO {
+    Step "Désinstallation du pilote PawnIO"
+    if (-not (Test-PawnIO)) { Log "   • PawnIO n'est pas installé."; return }
+    $null = Uninstall-WingetTool 'namazso.PawnIO'
+    if (Test-PawnIO) {
+        Add-TaskError -Title "Le pilote PawnIO n'a pas pu être désinstallé d'ici" -Cause "L'outil de Microsoft (winget) n'a pas réussi à le retirer (installé autrement, ou un redémarrage est nécessaire)." `
+            -Effect "Il reste installé pour l'instant." -FixLabel "Ouvrir les applications installées" -FixAction "Open-WinUri 'ms-settings:appsfeatures'" `
+            -Steps @("Redémarre le PC puis réessaie.", "Sinon : Paramètres > Applications > Applications installées > PawnIO > Désinstaller.")
+        return
+    }
+    Log "   ✔ Pilote PawnIO désinstallé. La température du processeur ne sera plus lue."
+    Add-Change -Kind 'info' -Title "Pilote PawnIO désinstallé" -Detail "Tu peux le réinstaller quand tu veux depuis Gaming > En direct."
+}
+
 # ---------------------------------------------------------------- MISES À JOUR
 function Open-WingetStore {
     Log "   → J'ouvre le Microsoft Store : installe ou mets à jour « Programme d'installation d'application », puis relance AEROX PC Care."

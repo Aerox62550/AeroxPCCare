@@ -1281,6 +1281,9 @@ function Invoke-UiCommand($T) {
                     'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
+                    'uninst-lhm' { Start-ToolUninstall 'Uninstall-SensorLib' 'le module de températures' "Les températures avancées (processeur, carte graphique, consommation) ne seront plus affichées, ni dans l'overlay ni dans le suivi des parties." }
+                    'uninst-pm' { Start-ToolUninstall 'Uninstall-PresentMon' 'le compteur de FPS' "Les FPS ne seront plus mesurés : plus de FPS dans l'overlay, et le suivi des parties n'aura plus de FPS ni de saccades." }
+                    'uninst-pawn' { Start-ToolUninstall 'Uninstall-PawnIO' 'le pilote PawnIO' "La température du processeur ne sera plus lue (celle de la carte graphique oui, si le module de températures reste installé)." }
                     'inst-pawn' {
                         if (Confirm-Box "Installer le pilote PawnIO ?`n`nC'est un petit pilote signé, utilisé par les logiciels de monitoring connus (LibreHardwareMonitor, FanControl…) pour lire la température du processeur. Il se désinstalle comme un logiciel normal.") {
                             [void](Start-AeroxTask 'Install-PawnIO' 'Installation du pilote PawnIO' 'tools')
@@ -2024,7 +2027,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.")
+    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).")
     '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
@@ -3809,9 +3812,21 @@ function Update-MonitorUi {
     $u.Fps.L2.Text = "Temps d'image " + (Format-Val $v['frametime'] '{0:N1}' ' ms')
 }
 
-function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, [string]$Ui) {
+function Start-ToolUninstall([string]$Action, [string]$What, [string]$Effect) {
+    if ($script:GameSess) { [System.Windows.MessageBox]::Show("Une partie est en cours de suivi : attends de l'avoir quittée pour désinstaller $What.", $AppName, 'OK', 'Information') | Out-Null; return }
+    if (-not (Confirm-Box ("Désinstaller $What ?`n`n$Effect`n`nTu pourras le réinstaller quand tu veux, ici même."))) { return }
+    # Mesures arrêtées d'abord : sinon ses fichiers sont utilisés et ne peuvent pas être retirés (relancées après, sans lui)
+    try { Stop-Monitoring } catch {}
+    $lbl = "Désinstallation : $What"
+    [void](Start-AeroxTask $Action ($lbl.Substring(0, 1).ToUpper() + $lbl.Substring(1)) 'tools')
+}
+function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, [string]$Ui, [string]$UninstUi = '') {
     $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
-    if ($Ok) { $p = New-Pill $OkText '#4ADE80' '#173326'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p }
+    if ($Ok) {
+        # Installé : tu peux le retirer quand tu veux (rien n'est obligatoire)
+        if ($UninstUi) { $ub = New-Button 'Désinstaller' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = $UninstUi } } $false; $ub.Margin = Th 8 0 0 0; $ub.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); Add-Child $row $ub }
+        $p = New-Pill $OkText '#4ADE80' '#173326'; $p.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p
+    }
     else { $b = New-Button 'Installer' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = $Ui } }; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b }
     $t = New-Object System.Windows.Controls.StackPanel
     Add-Child $t (New-Text $Title 14 '#FFFFFF' 'SemiBold')
@@ -3856,10 +3871,10 @@ function Build-MonitorPage {
     Add-Child $sp (New-Section 'Composants de mesure')
     $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
     $st = $script:ToolSt
-    Add-Child $cs (New-ToolRow "Températures et capteurs (LibreHardwareMonitor)" "Températures CPU / GPU, consommation, fréquences. Logiciel libre reconnu, téléchargé depuis nuget.org (~2 Mo)." $st.Lhm 'Installé' 'inst-lhm')
-    Add-Child $cs (New-ToolRow "Température du processeur (pilote PawnIO)" "Pilote signé qui permet de lire la température du processeur en toute sécurité (remplace l'ancien WinRing0 bloqué par Windows)." $st.PawnIO 'Installé' 'inst-pawn')
-    Add-Child $cs (New-ToolRow "Compteur de FPS (PresentMon d'Intel)" "Outil officiel d'Intel, installé avec winget (Microsoft). Rien n'est injecté dans les jeux : aucun risque avec les anti-triche." $st.PresentMon 'Installé' 'inst-pm')
-    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer »." }) 12 '#7A8399'
+    Add-Child $cs (New-ToolRow "Températures et capteurs (LibreHardwareMonitor)" "Températures CPU / GPU, consommation, fréquences. Logiciel libre reconnu, téléchargé depuis nuget.org (~2 Mo)." $st.Lhm 'Installé' 'inst-lhm' 'uninst-lhm')
+    Add-Child $cs (New-ToolRow "Température du processeur (pilote PawnIO)" "Pilote signé qui permet de lire la température du processeur en toute sécurité (remplace l'ancien WinRing0 bloqué par Windows)." $st.PawnIO 'Installé' 'inst-pawn' 'uninst-pawn')
+    Add-Child $cs (New-ToolRow "Compteur de FPS (PresentMon d'Intel)" "Outil officiel d'Intel, installé avec winget (Microsoft). Rien n'est injecté dans les jeux : aucun risque avec les anti-triche." $st.PresentMon 'Installé' 'inst-pm' 'uninst-pm')
+    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer ». Tu peux les désinstaller quand tu veux." }) 12 '#7A8399'
     $n.Margin = Th 0 6 0 0; Add-Child $cs $n
     $c.Child = $cs; Add-Child $sp $c
     $script:MonUi = $u
