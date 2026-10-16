@@ -871,6 +871,13 @@ function Update-HomeStats {
             RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { '#FFB547' } else { '#FFFFFF' }) }
             DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#FFFFFF' }) }
         }
+        # Les autres disques (internes et externes) sous celui de Windows
+        $others = @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })
+        if ($others.Count) {
+            $script:Stats.DISK.L = 'Disques'
+            $script:Stats.DISK.V = "$env:SystemDrive $(Format-Size $c.FreeSpace) libres"
+            $script:Stats.DISK.S = (@("sur $(Format-Size $c.Size) ($pct %)") + @($others | Select-Object -First 4 | ForEach-Object { "{0} {1} libres sur {2}{3}" -f $_.Id, (Format-Size $_.Free), (Format-Size $_.Size), $(if ($_.Removable) { ' (amovible)' } else { '' }) }) + @($(if ($others.Count -gt 4) { "+ $($others.Count - 4) autre(s)" }) | Where-Object { $_ })) -join "`n"
+        }
     } catch { Write-Bug -Context 'Infos de l''accueil' -ErrorRecord $_ }
 }
 
@@ -2027,7 +2034,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).")
+    '2.1.4' = @("Programmes au démarrage : chaque appli décochée est vérifiée tout de suite, et si une appli se remet toute seule au démarrage (Discord, Spotify…), AEROX te le dit et t'explique comment l'en empêcher.", "Mises à jour des logiciels : les logiciels qui se mettent à jour tout seuls ou par leur lanceur (Microsoft Edge, Epic Online Services…) ne sont plus proposés ni comptés comme des erreurs.", "Gaming : le module de températures, le pilote PawnIO et le compteur de FPS se désinstallent d'un clic si tu n'en veux plus (Gaming > En direct).", "Overlay : le fond change en douceur quand tu bouges le curseur (avec le pourcentage affiché), et le texte reste net à toutes les tailles.", "État du PC : tous les disques sont affichés et vérifiés (D:, disques et clés USB…), plus seulement C:.")
     '2.1.3' = @("Grand contrôle de sécurité : les outils téléchargés (températures, FPS, test de débit) et les sauvegardes sont rangés dans un dossier protégé, et AEROX n'ouvre plus jamais un lien, un navigateur ou un fichier modifiable par un autre programme avec ses droits administrateur.", "Nettoyage : AEROX ne peut jamais supprimer quoi que ce soit en dehors du dossier qu'il nettoie, même si un lien vers un autre dossier y a été glissé.", "Mises à jour des logiciels : un logiciel n'apparaît plus en double, et un logiciel déjà désinstallé (il ne reste qu'une trace dans Windows) n'est plus réinstallé.", "Corbeille : la place annoncée est celle vraiment libérée. Gaming : saccades comptées sur le temps vraiment joué, et fréquence de l'écran où tourne le jeu.")
     '2.1.2' = @("Sécurité renforcée : AEROX ne lance plus jamais avec ses droits administrateur un désinstalleur ou une sauvegarde qu'un autre programme aurait pu modifier.")
     '2.1.1' = @("Désinstallation : un logiciel n'est marqué « désinstallé » que quand il a vraiment disparu (si tu annules dans son désinstalleur, AEROX te le dit).", "OneDrive : les dossiers que tu as choisis de « toujours conserver sur cet appareil » ne sont plus jamais touchés.", "Nettoyage approfondi : « Annuler » arrête vraiment le nettoyage de Windows, et deux nettoyages ne se lancent plus en même temps.", "L'envoi d'un rapport de bug ou d'un avis ne fige plus la fenêtre.")
@@ -3682,16 +3689,34 @@ function Get-OverlayRows {
     return $rows
 }
 
+# Fond de l'overlay : de 0 % (invisible) à 100 % (opaque), en douceur
+function New-OverlayBrush([double]$Opacity) {
+    $a = [byte]([math]::Round(255 * [math]::Max(0, [math]::Min(1, $Opacity))))
+    $b = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb($a, 10, 12, 17)); $b.Freeze()
+    return $b
+}
+# Réglages enregistrés une fois le curseur relâché (pas à chaque cran : ça saccadait le curseur et l'aperçu)
+function Save-SettingsSoon {
+    if (-not $script:SaveSoon) {
+        $script:SaveSoon = New-Object System.Windows.Threading.DispatcherTimer; $script:SaveSoon.Interval = [TimeSpan]::FromMilliseconds(700)
+        $script:SaveSoon.Add_Tick({ $script:SaveSoon.Stop(); Save-Settings })
+    }
+    $script:SaveSoon.Stop(); $script:SaveSoon.Start()
+}
 function Build-OverlayContent {
     if (-not $script:Ov) { return }
     $o = $script:Settings.Overlay
     $border = New-Object System.Windows.Controls.Border
-    $a = [byte]([math]::Round(255 * [math]::Max(0, [math]::Min(1, [double]$o.Opacity))))
-    $border.Background = New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb($a, 10, 12, 17))
-    $border.CornerRadius = Corner 8; $border.Padding = Th 10 7 12 7
+    $border.Background = New-OverlayBrush ([double]$o.Opacity)
+    # Taille : le texte est dessiné directement à la bonne taille (pixels entiers), pas agrandi après coup (c'était flou à certaines tailles)
+    $k = [math]::Max(0.5, [math]::Min(3, [double]$o.Scale))
+    $px = { param($v) [math]::Max(1, [math]::Round($v * $k)) }
+    $border.CornerRadius = Corner (& $px 8); $border.Padding = Th (& $px 10) (& $px 7) (& $px 12) (& $px 7)
     if ($script:OvEdit) { $border.BorderBrush = Brush '#7C5CFF'; $border.BorderThickness = Th 2 2 2 2 }
-    $st = New-Object System.Windows.Media.ScaleTransform([double]$o.Scale, [double]$o.Scale)
-    $border.LayoutTransform = $st
+    $border.UseLayoutRounding = $true; $border.SnapsToDevicePixels = $true
+    [System.Windows.Media.TextOptions]::SetTextFormattingMode($border, $(if ($k -le 1.3) { 'Display' } else { 'Ideal' }))
+    [System.Windows.Media.TextOptions]::SetTextHintingMode($border, 'Fixed')
+    $script:OvBorder = $border
     $sp = New-Object System.Windows.Controls.StackPanel
     $grid = New-Object System.Windows.Controls.Grid
     $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::Auto
@@ -3703,11 +3728,11 @@ function Build-OverlayContent {
     $i = 0
     foreach ($r in $rows) {
         $grid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition))
-        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = 11; $l.FontWeight = 'Bold'; $l.Foreground = Brush '#9AA3B8'; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 1 12 1
+        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = (& $px 11); $l.FontWeight = 'Bold'; $l.Foreground = Brush '#9AA3B8'; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 (& $px 1) (& $px 12) (& $px 1)
         $l.FontFamily = 'Segoe UI'
-        $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { 20 } else { 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
+        $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { & $px 20 } else { & $px 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
         $val.FontFamily = 'Segoe UI'
-        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = 3; $sh.ShadowDepth = 1; $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
+        $sh = New-Object System.Windows.Media.Effects.DropShadowEffect; $sh.BlurRadius = (& $px 3); $sh.ShadowDepth = [math]::Max(1, [math]::Round($k)); $sh.Opacity = 0.9; $sh.Color = [System.Windows.Media.Colors]::Black
         $val.Effect = $sh
         [System.Windows.Controls.Grid]::SetRow($l, $i); [System.Windows.Controls.Grid]::SetRow($val, $i); [System.Windows.Controls.Grid]::SetColumn($val, 1)
         Add-Child $grid $l; Add-Child $grid $val
@@ -3715,7 +3740,7 @@ function Build-OverlayContent {
         $i++
     }
     Add-Child $sp $grid
-    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" 10 '#B9A8FF'; $h.Margin = Th 0 4 0 0; Add-Child $sp $h }
+    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" (& $px 10) '#B9A8FF'; $h.Margin = Th 0 (& $px 4) 0 0; Add-Child $sp $h }
     $border.Child = $sp
     $script:Ov.Content = $border
 }
@@ -3738,7 +3763,7 @@ function New-OverlayWindow {
     $w.Title = 'AEROX Overlay'
     $w.Add_SourceInitialized({ $h = (New-Object System.Windows.Interop.WindowInteropHelper($script:Ov)).Handle; [AeroxNative]::SetClickThrough($h, -not $script:OvEdit) })
     $w.Add_MouseLeftButtonDown({ if ($script:OvEdit) { try { $script:Ov.DragMove() } catch {}; $script:Settings.Overlay.X = [math]::Round($script:Ov.Left); $script:Settings.Overlay.Y = [math]::Round($script:Ov.Top); Save-Settings } })
-    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max(0.5, [math]::Min(3, $n)), 1); Save-Settings; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
+    $w.Add_MouseWheel({ param($s, $e) if ($script:OvEdit) { $n = [double]$script:Settings.Overlay.Scale + $(if ($e.Delta -gt 0) { 0.1 } else { -0.1 }); $script:Settings.Overlay.Scale = [math]::Round([math]::Max(0.5, [math]::Min(3, $n)), 1); Save-SettingsSoon; Build-OverlayContent; if ($script:Cur -eq 'monitor' -and $script:MonUi -and $script:MonUi.Scale) { $script:MonUi.Scale.Value = $script:Settings.Overlay.Scale * 100 } } })
     $script:Ov = $w
     Build-OverlayContent
 }
@@ -3904,13 +3929,19 @@ function Add-OverlaySection($sp, $u) {
     Add-Child $os $wp
     $sl = New-Object System.Windows.Controls.Grid; $sl.Margin = Th 0 6 0 0
     foreach ($w in 0, 1, 2, 3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = $(if ($w % 2 -eq 0) { [System.Windows.GridLength]::Auto } else { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) }); $sl.ColumnDefinitions.Add($cd) }
-    $l1 = New-Text 'Taille' 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; Add-Child $sl $l1
+    $l1 = New-Text ("Taille  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Scale * 100)) 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; $l1.MinWidth = 92; Add-Child $sl $l1; $u.ScaleTxt = $l1
     $s1 = New-Object System.Windows.Controls.Slider; $s1.Minimum = 50; $s1.Maximum = 300; $s1.Value = [double]$script:Settings.Overlay.Scale * 100; $s1.Margin = Th 0 0 24 0; $s1.VerticalAlignment = 'Center'
-    $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); Save-Settings; Build-OverlayContent })
+    $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); if ($script:MonUi.ScaleTxt) { $script:MonUi.ScaleTxt.Text = "Taille  {0} %" -f [math]::Round($this.Value) }; Save-SettingsSoon; Build-OverlayContent })
     [System.Windows.Controls.Grid]::SetColumn($s1, 1); Add-Child $sl $s1
-    $l2 = New-Text 'Fond' 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
+    $l2 = New-Text ("Fond  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Opacity * 100)) 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; $l2.MinWidth = 82; $u.OpTxt = $l2; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
     $s2 = New-Object System.Windows.Controls.Slider; $s2.Minimum = 0; $s2.Maximum = 100; $s2.Value = [double]$script:Settings.Overlay.Opacity * 100; $s2.VerticalAlignment = 'Center'
-    $s2.Add_ValueChanged({ $script:Settings.Overlay.Opacity = [math]::Round($this.Value / 100, 2); Save-Settings; Build-OverlayContent })
+    $s2.Add_ValueChanged({
+        $script:Settings.Overlay.Opacity = [math]::Round($this.Value / 100, 2)
+        if ($script:MonUi.OpTxt) { $script:MonUi.OpTxt.Text = "Fond  {0} %" -f [math]::Round($this.Value) }
+        # Seul le fond change : appliqué tout de suite, sans reconstruire l'overlay
+        if ($script:OvBorder) { $script:OvBorder.Background = New-OverlayBrush ([double]$script:Settings.Overlay.Opacity) }
+        Save-SettingsSoon
+    })
     [System.Windows.Controls.Grid]::SetColumn($s2, 3); Add-Child $sl $s2
     Add-Child $os $sl
     # Alerte surchauffe
@@ -4715,6 +4746,7 @@ $window.Add_Closing({
         if ($r -ne 'Yes') { $e.Cancel = $true; return } else { try { $script:Job.PS.Stop() } catch {} }
     }
     try { Stop-GameSession } catch { Write-Bug -Context 'Gaming : fin de partie' -ErrorRecord $_ }
+    try { if ($script:SaveSoon -and $script:SaveSoon.IsEnabled) { $script:SaveSoon.Stop(); Save-Settings } } catch {}
     try { Stop-Monitoring } catch {}
     try { [AeroxHotkey]::Unregister() } catch {}
     try { if ($script:Ov) { $script:Ov.Close() } } catch {}

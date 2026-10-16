@@ -260,6 +260,27 @@ function Invoke-Smoke {
             $AppInfo.StartupOff = $saveOff
         }
     }
+    Smoke 'Overlay : fond progressif et texte net à toutes les tailles' {
+        $b = New-OverlayBrush 0.5; if ($b.Color.A -lt 120 -or $b.Color.A -gt 135) { throw "fond à 50 % : alpha $($b.Color.A)" }
+        if ((New-OverlayBrush 0).Color.A -ne 0 -or (New-OverlayBrush 1).Color.A -ne 255) { throw "bornes du fond fausses" }
+        $saveSc = $script:Settings.Overlay.Scale
+        try {
+            if (-not $script:Ov) { New-OverlayWindow }
+            foreach ($sc in 0.5, 0.85, 1.0, 1.35, 2.2, 3.0) {
+                $script:Settings.Overlay.Scale = $sc; Build-OverlayContent
+                if ($script:OvBorder.LayoutTransform -and -not $script:OvBorder.LayoutTransform.Value.IsIdentity) { throw "overlay agrandi après coup à $sc (flou)" }
+                foreach ($r in $script:OvRows) { foreach ($t in $r.Val, $r.Lbl) { if ($t.FontSize -ne [math]::Round($t.FontSize)) { throw "taille de texte non entière à $sc : $($t.FontSize)" } } }
+            }
+            $script:OvBorder.Background = New-OverlayBrush 0.2
+        } finally { $script:Settings.Overlay.Scale = $saveSc; Build-OverlayContent }
+    }
+    Smoke 'État du PC : tous les disques' {
+        $d = @(Get-DriveList)
+        if (-not $d.Count -or $d[0].Id -ne $env:SystemDrive) { throw "disque de Windows absent ou pas en premier" }
+        Update-HomeStats
+        Write-Host ("        disques : {0} · tuile : {1} / {2}" -f (($d | ForEach-Object { $_.Id }) -join ' '), $script:Stats.DISK.V, ($script:Stats.DISK.S -replace "`n", ' | '))
+        if ($d.Count -gt 1 -and $script:Stats.DISK.S -notmatch [regex]::Escape($d[1].Id)) { throw "2e disque pas affiché sur l'accueil" }
+    }
     Smoke 'Composants de mesure : désinstallables' {
         $d = Join-Path (Get-ToolsDir) 'lhm'; $dll = Join-Path $d 'LibreHardwareMonitorLib.dll'
         if (Test-Path -LiteralPath $dll) { Write-Host '        (module réel installé : pas touché)'; return }

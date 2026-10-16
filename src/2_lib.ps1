@@ -1992,6 +1992,14 @@ function Add-Issue {
 }
 function Add-Ok([string]$Text) { [void]$script:OkList.Add($Text) }
 
+# Tous les disques avec une lettre : internes (C:, D:…) et externes (disque USB, clé USB, carte SD). Windows d'abord.
+function Get-DriveList {
+    $l = @(Get-CimInstance Win32_LogicalDisk -OperationTimeoutSec 4 -ErrorAction SilentlyContinue | Where-Object { ($_.DriveType -eq 3 -or $_.DriveType -eq 2) -and [double]$_.Size -gt 0 })
+    return @($l | Sort-Object @{ Expression = { $_.DeviceID -ne $env:SystemDrive } }, @{ Expression = { $_.DeviceID } } | ForEach-Object {
+        $kind = if ($_.DeviceID -eq $env:SystemDrive) { 'Windows' } elseif ($_.DriveType -eq 2) { 'amovible' } else { '' }
+        @{ Id = $_.DeviceID; Name = "$($_.VolumeName)".Trim(); Free = [double]$_.FreeSpace; Size = [double]$_.Size; Pct = [math]::Round([double]$_.FreeSpace / [double]$_.Size * 100); Kind = $kind; Removable = ($_.DriveType -eq 2) }
+    })
+}
 function Test-Storage {
     $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
     $pct = [math]::Round($d.FreeSpace / $d.Size * 100)
@@ -2010,14 +2018,15 @@ function Test-Storage {
             -FixLabel "Nettoyer en profondeur" -UiFix 'clean' `
             -Steps @("Lance le nettoyage approfondi (bouton vert) : tu choisis quoi supprimer, avec la taille de chaque catégorie.", "Onglet Nettoyage > « Ce qui prend de la place » : trouve les plus gros dossiers (jeux, vidéos, téléchargements).", "Désinstalle les jeux et logiciels que tu n'utilises plus, déplace vidéos et photos sur un autre disque.")
     } else { Add-Ok "Disque $env:SystemDrive : $detail" }
-    foreach ($o in Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3') {
-        if ($o.DeviceID -eq $env:SystemDrive -or -not $o.Size) { continue }
-        $p = [math]::Round($o.FreeSpace / $o.Size * 100)
-        if ($p -lt 5) {
-            Add-Issue -Id "disk$($o.DeviceID)" -Sev 'warn' -Title "Le disque $($o.DeviceID) est plein" -Detail ("{0} libres ({1} %)" -f (Format-Size $o.FreeSpace), $p) `
+    # Les autres disques : internes et externes (USB), chacun affiché ; alerte si un disque interne ou externe fixe est plein
+    foreach ($o in @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })) {
+        $lbl = "{0}{1}{2}" -f $o.Id, $(if ($o.Name) { " ($($o.Name))" } else { '' }), $(if ($o.Removable) { ', amovible' } else { '' })
+        $det = "{0} libres sur {1} ({2} %)" -f (Format-Size $o.Free), (Format-Size $o.Size), $o.Pct
+        if ($o.Pct -lt 5 -and -not $o.Removable) {
+            Add-Issue -Id "disk$($o.Id)" -Sev 'warn' -Title "Le disque $($o.Id) est plein" -Detail $det `
                 -Cause "Ce disque n'a presque plus de place." -Effect "Les jeux ou fichiers dessus ne pourront plus se mettre à jour ni s'enregistrer." `
                 -Steps @("Supprime ou déplace ce dont tu n'as plus besoin sur ce disque.", "Pour les jeux : désinstalle ceux auxquels tu ne joues plus depuis Steam / Epic.")
-        }
+        } else { Add-Ok "Disque $lbl : $det" }
     }
 }
 
