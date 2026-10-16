@@ -103,7 +103,7 @@ static class Program {
             splash.SetProgress(8, "Lecture du programme…");
             string code = ReadWithRetry(script);
             UnblockFolder(dir);
-            UnblockFolder(Path.Combine(LogDir(), "outils"));
+            UnblockFolder(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"AeroxPCCare\protege\outils"));
 
             splash.SetProgress(15, "Démarrage du moteur…");
             Assembly sma = Assembly.Load("System.Management.Automation, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35");

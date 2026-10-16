@@ -234,6 +234,9 @@ Section "Uninstall"
   ; Uniquement les fichiers du logiciel (jamais un dossier entier choisi par l'utilisateur)
   Delete "$INSTDIR\maj\AeroxPCCare_Setup_*.exe"
   RMDir "$INSTDIR\maj"
+  ; Dossier protégé : outils téléchargés (températures, FPS, débit), sauvegardes de réglages, installateurs de mise à jour
+  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege"
+  RMDir /r "$INSTDIR\protege"
   RMDir "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTKEY}"
   ; Lancement avec Windows en mode discret (option de l'onglet Gaming)
