@@ -2,6 +2,10 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.8 : bilan avant / après sur tous les disques (retour testeur)
+
+- Photo du PC (Get-PcSnapshot) : place libre de chaque autre disque (Drives = { 'D:' = octets libres }). Bilan : une ligne « Espace libre sur D: » par disque présent avant ET maintenant. Les bilans commencés avant la 2.1.8 n'ont pas ces valeurs : les lignes apparaissent au bilan suivant (« Repartir de zéro » pour l'avoir tout de suite).
+
 ## Publié en 2.1.7 : espace disque (retour testeur, capture de l'analyse de D:)
 
 - Constat : sur D:, « Tes plus gros fichiers » listait des fichiers de jeux (Epic .egstore, GTA V mods, Electrician Simulator) sans case à cocher : seuls les fichiers de C:\Users\… étaient supprimables. Voulu pour les fichiers de jeux (supprimés seuls, le jeu casse et le lanceur les retélécharge), mais mal expliqué, et les vrais fichiers perso de D: n'étaient pas supprimables non plus.

@@ -454,6 +454,9 @@ function Add-BilanCard($sp) {
     & $line 'Programmes en fond' $a.Procs $n.Procs $true $num
     & $line 'Mémoire utilisée' $a.RamUsed $n.RamUsed $true $size
     & $line "Espace libre sur $env:SystemDrive" $a.Free $n.Free $false $size
+    if ($a.Drives -is [hashtable] -and $n.Drives -is [hashtable]) {
+        foreach ($k in @($n.Drives.Keys | Sort-Object)) { if ($a.Drives.ContainsKey($k)) { & $line "Espace libre sur $k" ([double]$a.Drives[$k]) ([double]$n.Drives[$k]) $false $size } }
+    }
     Add-Child $cs $g
     $note = "Temps de démarrage : mesuré par Windows au dernier démarrage complet. Après tes réglages, redémarre le PC (« Redémarrer », pas « Arrêter ») puis relance le diagnostic pour le voir changer. Mémoire et programmes en fond varient selon ce qui est ouvert au moment de la mesure."
     $t = New-Text $note 11.5 '#7A8399'; $t.Margin = Th 0 8 0 4; Add-Child $cs $t
@@ -2034,6 +2037,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.8' = @("Bilan avant / après : la place libre de tous tes disques (D:, E:…) est comparée, pas seulement C:. Visible à partir du prochain bilan.")
     '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.", "« Mettre la sélection à la corbeille » ne ferme plus la fenêtre, et le choix du disque à analyser est bien aligné.")
     '2.1.6' = @("Diagnostic : chaque disque est détaillé dans le journal (place libre et santé), avec ses lettres (C:, D:…), y compris les disques et clés USB.", "Corbeille : elle est vraiment vidée sur tous les disques, et la taille annoncée est bien celle de ta corbeille (celle des autres comptes du PC n'est jamais touchée).")
     '2.1.5' = @("Overlay : le fond passe vraiment en douceur de transparent à opaque (avant, il basculait d'un coup à 50 %), et la taille suit exactement le curseur. Taille minimum relevée à 70 % pour que le texte reste net.", "Correction d'un calcul qui pouvait planter quand plus de 2 Go étaient libérés (OneDrive, nettoyage).")

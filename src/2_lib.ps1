@@ -1481,6 +1481,8 @@ function Get-PcSnapshot {
     try { $os = Get-CimInstance Win32_OperatingSystem; $s.RamUsed = [double]($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) * 1KB } catch {}
     try { $s.Procs = @(Get-Process -ErrorAction SilentlyContinue).Count } catch {}
     try { $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"; $s.Free = [double]$d.FreeSpace } catch {}
+    # Les autres disques aussi (D:, E:…), pour voir le gain du nettoyage partout
+    try { $s.Drives = @{}; foreach ($o in @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })) { $s.Drives[$o.Id] = $o.Free } } catch {}
     return $s
 }
 

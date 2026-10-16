@@ -374,7 +374,11 @@ function Invoke-Smoke {
     Smoke 'Fenêtre : doublons' { Show-DuplicatesDialog }
     Smoke 'Espace disque' { Get-SpaceUsage 'C:'; foreach ($x in @($sync.SpaceScan.Win)) { Write-Host ("        Windows : {0} ≈ {1} (coché={2})" -f $x.T, (Format-Size $x.S), $x.Check) }; foreach ($x in @($sync.SpaceScan.Forgotten | Select-Object -First 5)) { if ($x.Name -isnot [string]) { throw "liste des logiciels oubliés mal construite" }; Write-Host ("        oublié : {0} {1}" -f $x.Name, (Format-Size $x.Size)) } }
     Smoke 'Fenêtre : espace disque' { Show-SpaceDialog }
-    Smoke 'Bilan avant/après' { $s = Get-PcSnapshot; Write-Host ("        démarrage={0}s, démarrage auto={1}, fond={2}" -f $s.BootSec, $s.Startup, $s.Procs) }
+    Smoke 'Bilan avant/après' {
+        $s = Get-PcSnapshot; Write-Host ("        démarrage={0}s, démarrage auto={1}, fond={2}, autres disques={3}" -f $s.BootSec, $s.Startup, $s.Procs, (@($s.Drives.Keys) -join ' '))
+        $r = ConvertTo-Hash ($s | ConvertTo-Json -Depth 4 | ConvertFrom-Json)
+        if (@(Get-DriveList).Count -gt 1 -and -not ($r.Drives -is [hashtable] -and $r.Drives.Count)) { throw "autres disques absents du bilan enregistré" }
+    }
     Smoke 'Annulations autorisées' {
         $ok = @("Set-BgItem 'task' '\X\' 'Y' 'on'", "Restore-RegBackup 'C:\x.reg'", "Set-CpuMaxState 100")
         $ko = @("Set-BgItem 'task' '\X\' 'Y' 'off'", "Remove-Item C:\ -Recurse", "Restore-RegBackup (Get-Item x)", "Set-CpuMaxState 100; Remove-Item x")
