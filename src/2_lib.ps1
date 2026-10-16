@@ -1719,7 +1719,7 @@ function Set-OneDriveOnlineOnly([string]$Folder) {
     $c = [AeroxFiles]::SetOnlineOnly($Folder)
     Start-Sleep -Seconds 5
     $after = [AeroxFiles]::LocalCloudSize($Folder)
-    Log ("   ✔ {0} libérés pour l'instant (OneDrive continue en arrière-plan). Tes fichiers restent dans OneDrive et s'ouvrent d'un clic." -f (Format-Size ([math]::Max(0, $before - $after))))
+    Log ("   ✔ {0} libérés pour l'instant (OneDrive continue en arrière-plan). Tes fichiers restent dans OneDrive et s'ouvrent d'un clic." -f (Format-Size ([math]::Max([double]0, $before - $after))))
     if ($c[1]) { Log ("   • {0} élément(s) que tu avais choisi(s) de « toujours conserver sur cet appareil » n'ont pas été touchés." -f $c[1]) }
     Log "   • Un fichier pas encore envoyé dans OneDrive reste sur le PC : OneDrive ne libère que ce qui est déjà en ligne."
     Add-Change -Kind 'info' -Title "OneDrive : fichiers gardés uniquement en ligne" -Detail "Les dossiers que tu avais choisis de garder sur le PC n'ont pas été touchés. Pour en garder un autre (sans Internet) : clic droit dessus > « Toujours conserver sur cet appareil »."
@@ -1815,7 +1815,7 @@ function Enable-AutoPagefile {
 function Get-SlowReport {
     Step "Analyse des lenteurs : mesure pendant 20 secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
     $sync.SlowReport = $null
-    $cores = [math]::Max(1, [Environment]::ProcessorCount)
+    $cores = [math]::Max([double]1, [Environment]::ProcessorCount)
     $me = $PID
     $acc = @{}; $cpuTot = New-Object System.Collections.ArrayList; $diskBusy = New-Object System.Collections.ArrayList; $diskQ = New-Object System.Collections.ArrayList
     $null = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue   # 1re lecture : amorce les compteurs
@@ -1843,7 +1843,7 @@ function Get-SlowReport {
         # Disque le plus occupé (pas la moyenne de tous : un disque dur saturé + un SSD au repos donnerait 50 %)
         $dk = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
         if ($dk.Count) {
-            [void]$diskBusy.Add([math]::Max(0, 100 - [double](($dk | Measure-Object PercentIdleTime -Minimum).Minimum)))
+            [void]$diskBusy.Add([math]::Max([double]0, 100 - [double](($dk | Measure-Object PercentIdleTime -Minimum).Minimum)))
             [void]$diskQ.Add([double](($dk | Measure-Object CurrentDiskQueueLength -Maximum).Maximum))
         }
     }
@@ -2791,7 +2791,7 @@ function Clear-RecycleBinAll {
     $su = Get-SessionUser
     if ($su.Other -and $su.Sid) { foreach ($d in $drives) { $null = Remove-PathContent ("{0}\`$Recycle.Bin\{1}" -f $d, $su.Sid) } }
     # Place vraiment libérée (les corbeilles des autres comptes du PC ne sont pas touchées)
-    $size = [math]::Max(0, $before - (& $measure))
+    $size = [math]::Max([double]0, $before - (& $measure))
     $script:TotalFreed += $size
     Log ("✅ Corbeille vidée : {0} libérés" -f (Format-Size $size))
     Add-Change -Kind 'info' -Title ("Corbeille vidée : {0}" -f (Format-Size $size)) -Detail "Les fichiers de la corbeille ne sont plus récupérables."
