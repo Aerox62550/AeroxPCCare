@@ -417,6 +417,19 @@ function Add-SelfUpdating([string]$Id, [string]$Version) {
         [IO.File]::WriteAllLines((Get-SelfUpdatingFile), [string[]]@($all | Select-Object -Last 200), (New-Object Text.UTF8Encoding($false)))
     } catch {}
 }
+# Installateur d'un logiciel qui échoue (winget 0x8A150006) : la 2e fois pour la même version, le logiciel est
+# considéré comme « à mettre à jour depuis lui-même » (iCUE, etc.) au lieu de réessayer et d'échouer à chaque fois
+function Register-InstallerFailure([string]$Id, [string]$Version) {
+    if (-not $Id -or -not $Version) { return $false }
+    try {
+        $f = Join-Path (Get-SecureDir '') 'maj-echecs.txt'
+        $k = Get-SelfUpdatingKey $Id $Version
+        $all = @(); if (Test-Path -LiteralPath $f) { $all = @(Get-Content -LiteralPath $f -Encoding UTF8 -ErrorAction Stop | Where-Object { $_ }) }
+        if ($all -contains $k) { Add-SelfUpdating $Id $Version; return $true }
+        [IO.File]::WriteAllLines($f, [string[]]@(@($all + $k) | Select-Object -Last 200), (New-Object Text.UTF8Encoding($false)))
+    } catch {}
+    return $false
+}
 # Le logiciel est-il encore vraiment sur le PC ? (son désinstalleur ou son dossier existe)
 function Test-AppPresent($App) {
     if ("$($App.Cmd)" -match '(?i)msiexec') { return $true }      # installé avec Windows Installer : Windows tient sa liste à jour
@@ -669,6 +682,58 @@ $script:BrandSites = @(
     @{ Re = 'biostar';           Name = 'Biostar';  Site = 'biostar.com.tw';  Tool = "Mise à jour depuis le BIOS (clé USB)." }
 )
 
+# Page de téléchargement du BIOS de CE PC sur le site du fabricant. Chaque adresse devinée est vérifiée (la page
+# existe et parle bien de ce modèle) avant d'être ouverte ; sinon la recherche du site du fabricant, sinon un moteur.
+function Test-WebPageHas([string]$Url, [string[]]$Tokens) {
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 10 -MaximumRedirection 5 -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' -ErrorAction Stop
+        if ([int]$r.StatusCode -ne 200) { return $false }
+        $c = "$($r.Content)"
+        if ($c -match '(?is)<title[^>]*>(.*?)</title>' -and $matches[1] -match '(?i)\b404\b|not found|introuvable|n.existe pas|page error') { return $false }
+        if (-not $Tokens.Count) { return $true }
+        $flat = ($c -replace '%20', ' ' -replace '[\s\-_]+', '').ToLowerInvariant()
+        foreach ($t in $Tokens) { if ($t -and $flat.Contains(($t -replace '[\s\-_]+', '').ToLowerInvariant())) { return $true } }
+        return $false
+    } catch { return $false }
+}
+function Find-BiosPage {
+    Step "Recherche de la page du BIOS de ton PC sur le site du fabricant"
+    $sync.BiosUrl = $null
+    $i = $sync.SysInfo; if (-not $i) { $i = Get-SystemInfo }
+    $m = ("$($i.Model)" -replace '\s*\(MS-[0-9A-Z]+\)\s*', ' ').Trim()
+    $enc = [uri]::EscapeDataString($m)
+    $dash = (($m -replace '[()]', '' -replace '\s+', '-').Trim('-'))
+    $mk = "$($i.Maker)"
+    $cands = New-Object System.Collections.ArrayList
+    $add = { param($u, $tok, $kind, [bool]$trust = $false) [void]$cands.Add(@{ Url = $u; Tok = @($tok); Kind = $kind; Trust = $trust }) }
+    if ($mk -match '(?i)dell|alienware' -and $i.Serial) { & $add ("https://www.dell.com/support/home/fr-fr/product-support/servicetag/{0}/drivers" -f [uri]::EscapeDataString($i.Serial)) @() 'exact' $true }
+    elseif ($mk -match '(?i)asus') {
+        & $add ("https://www.asus.com/supportonly/{0}/helpdesk_bios/" -f $enc) @($m) 'exact'
+        & $add ("https://www.asus.com/fr/searchresult?searchType=support&searchKey={0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)micro-star|\bmsi\b') {
+        & $add ("https://www.msi.com/Motherboard/{0}/support#bios" -f $dash) @($m) 'exact'
+        & $add ("https://www.msi.com/Laptop/{0}/support#bios" -f $dash) @($m) 'exact'
+        & $add ("https://www.msi.com/search/{0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)gigabyte|aorus') {
+        foreach ($sfx in '', '-rev-10', '-rev-1x', '-rev-11', '-rev-12') { & $add ("https://www.gigabyte.com/fr/Motherboard/{0}{1}/support#support-dl-bios" -f $dash, $sfx) @($m) 'exact' }
+        & $add ("https://www.gigabyte.com/fr/Search?kw={0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)asrock') {
+        & $add ("https://www.asrock.com/mb/{0}/{1}/index.fr.asp#BIOS" -f $(if ($i.CpuAmd) { 'AMD' } else { 'Intel' }), $enc) @($m) 'exact'
+    } elseif ($mk -match '(?i)lenovo' -and $i.Serial) {
+        & $add ("https://pcsupport.lenovo.com/fr/fr/products/{0}/downloads" -f [uri]::EscapeDataString($i.Serial)) @($i.Serial) 'exact'
+    }
+    foreach ($c in $cands) {
+        if ($c.Trust -or (Test-WebPageHas $c.Url $c.Tok)) {
+            $sync.BiosUrl = @{ Url = $c.Url; Kind = $c.Kind }
+            Log $(if ($c.Kind -eq 'exact') { "   ✔ Page du BIOS de ton modèle trouvée sur le site du fabricant." } else { "   ✔ Recherche de ton modèle sur le site du fabricant (la page exacte n'a pas pu être vérifiée)." })
+            return
+        }
+    }
+    $q = "$($i.Model) BIOS"
+    if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
+    $sync.BiosUrl = @{ Url = ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)); Kind = 'web' }
+    Log "   • Le site du fabricant n'a pas donné de page vérifiable pour ce modèle : recherche limitée à son site officiel."
+}
 function Get-SystemInfo {
     $i = @{ Ready = $true }
     try {
@@ -685,6 +750,8 @@ function Get-SystemInfo {
         $i.Maker = if ($i.Custom) { $i.BoardMaker } else { $i.PcMaker }
         $i.Model = if ($i.Custom) { $i.BoardModel } else { $i.PcModel }
         $i.BiosMaker = "$($bios.Manufacturer)".Trim(); $i.BiosVersion = "$($bios.SMBIOSBIOSVersion)".Trim()
+        # Numéro de série (Dell : « service tag ») : seulement pour ouvrir la page exacte du fabricant, jamais dans les rapports
+        $sn = "$($bios.SerialNumber)".Trim(); if ($sn -and $sn -notmatch '(?i)^(to be filled|default string|system serial|o\.e\.m|none|0+$)') { $i.Serial = $sn }
         if ($bios.ReleaseDate) { $i.BiosDate = ConvertTo-DateSafe $bios.ReleaseDate; $i.BiosAgeDays = [int]((Get-Date) - $i.BiosDate).TotalDays }
         $brand = $script:BrandSites | Where-Object { $i.Maker -match "(?i)$($_.Re)" } | Select-Object -First 1
         if ($brand) { $i.Brand = $brand.Name; $i.BrandSite = $brand.Site; $i.BrandTool = $brand.Tool }
@@ -2396,6 +2463,12 @@ function Set-NetAdapterSleep([string]$Name, [bool]$Allow) {
                 $done = $true
             }
         }
+        # Relu aussitôt : certains pilotes acceptent la demande sans l'appliquer (retour testeur : « réglé » puis toujours là)
+        if ($done -and -not $Allow) {
+            Start-Sleep -Milliseconds 500
+            $still = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSPower_DeviceEnable -ErrorAction SilentlyContinue | Where-Object { "$($_.InstanceName)".StartsWith($pnp, [StringComparison]::OrdinalIgnoreCase) -and $_.Enable })
+            if ($still.Count) { $done = $false; Log "   • Le pilote de la carte n'a pas pris le réglage tout de suite : il est enregistré pour le prochain redémarrage." }
+        }
         if (-not $done) {
             $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
             $key = Get-ChildItem -LiteralPath $cls -ErrorAction Stop | Where-Object { "$((Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).NetCfgInstanceId)" -eq "$($a.InterfaceGuid)" } | Select-Object -First 1
@@ -3668,6 +3741,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
                 -1978334975 { "le logiciel est ouvert, ferme-le puis réessaie" }
                 -1978334974 { "une autre installation est déjà en cours" }
                 -1978335212 { "logiciel introuvable dans le catalogue" }
+                -1978335226 { "son propre installateur a échoué" + $(if (Register-InstallerFailure $id $ver) { " deux fois : mets-le à jour depuis le logiciel lui-même (souvent Paramètres > Mises à jour), il ne sera plus proposé ici pour cette version" } else { " : réessaie plus tard, ou mets-le à jour depuis le logiciel lui-même" }) }
                 default { "code 0x{0:X8}" -f $ec }
             }
             $failed += "$name ($why)"

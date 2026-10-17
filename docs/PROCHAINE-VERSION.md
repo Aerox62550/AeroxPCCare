@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.1.9 : rapports n° 15 et 16, BIOS
+
+- BIOS (retour Sam : « Mettre à jour » ouvrait une recherche, pas la page du BIOS) : Find-BiosPage (tâche de fond) essaie l'adresse exacte du modèle (ASUS supportonly/…/helpdesk_bios, MSI Motherboard|Laptop/…/support#bios, Gigabyte Motherboard/…(-rev-xx)/support, ASRock mb/AMD|Intel/…, Dell servicetag/<n° de série>/drivers, Lenovo products/<n° de série>/downloads) ; chaque adresse devinée est vérifiée (page 200, pas de 404, le modèle est dans la page) avant d'être ouverte, sinon la recherche du site du fabricant, sinon la recherche limitée à son site (comme avant). N° de série lu seulement pour ça, jamais dans les rapports. Test Windows : sondes sur des cartes connues pour voir quelles adresses passent.
+- Rapport n° 15 (carte réseau « réglée » puis « toujours là ») : MSPower_DeviceEnable accepté par le pilote sans être appliqué. Relu aussitôt ; si toujours actif, réglage du pilote (PnPCapabilities 24) en plus, effectif au redémarrage, et dit clairement.
+- Rapport n° 16 (Corsair iCUE : installateur en échec 0x8A150006, code 0xC000041D, à chaque optimisation) : 1er échec = explication (« son propre installateur a échoué : réessaie plus tard ou mets-le à jour depuis le logiciel ») ; 2e échec pour la même version = rangé avec les logiciels qui se mettent à jour tout seuls (plus proposé pour cette version).
+
 ## Publié en 2.1.8 : bilan avant / après sur tous les disques (retour testeur)
 
 - Son (rapport n° 12 + retour Sam : « plus entendu sur Discord » juste après « Pas de son ») : PAS une coïncidence. Repair-Sound relançait toujours le service Audiosrv, ce qui coupe le son de tout le PC et fait perdre micro/casque à Discord. Maintenant : relancé seulement s'il est arrêté. Test Windows : le processus du service ne doit pas changer.

@@ -1123,6 +1123,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
+    elseif ($job.OnDone -eq 'biospage' -and $sync.BiosUrl) { [void](Open-Url $sync.BiosUrl.Url) }
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
     elseif ($job.OnDone -eq 'dupdialog' -and $null -ne $sync.Dupes) { Show-DuplicatesDialog }
     elseif ($job.OnDone -eq 'browserdialog' -and $null -ne $sync.BrowserReport) { Show-BrowserDialog $script:BrowserIssue; $script:BrowserIssue = $null }
@@ -1280,7 +1281,7 @@ function Invoke-UiCommand($T) {
                     'display-fix' { $d = @(Get-Displays) | Where-Object { $_.Device -eq $T.Def.Device } | Select-Object -First 1; Set-DisplayWithConfirm $d $null }
                     'speedtest' { Show-SpeedTestDialog }
                     'sys-refresh' { $sync.SysInfo = $null; Refresh-Page }
-                    'bios-site' { Open-BiosSupport }
+                    'bios-site' { [void](Start-AeroxTask 'Find-BiosPage' 'Page du BIOS' 'biospage') }
                     'bilan-reset' { Reset-Bilan }
                     'battery-report' { [void](Start-AeroxTask 'Open-BatteryReport' 'Rapport de la batterie') }
                     'bios-reboot' { Restart-ToBios }
@@ -2050,6 +2051,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.1.9' = @("BIOS : « Chercher mon BIOS » ouvre la page de ton modèle sur le site du fabricant quand AEROX peut la vérifier (ASUS, MSI, Gigabyte, ASRock, Dell, Lenovo), sinon la recherche de son site officiel.", "Carte réseau : si son pilote refuse de couper l'économie d'énergie tout de suite, le réglage est enregistré pour le prochain redémarrage (avant : « réglé » puis toujours signalé).", "Mises à jour : un logiciel dont l'installateur échoue deux fois (Corsair iCUE…) n'est plus proposé en boucle : AEROX te dit de le mettre à jour depuis le logiciel lui-même.")
     '2.1.8' = @("Bilan avant / après : la place libre de tous tes disques (D:, E:…) est comparée, pas seulement C:. Visible à partir du prochain bilan.", "« Pas de son » ne relance plus le son de Windows quand il marche : ça coupait le micro et le casque dans Discord. Son et micro te disent maintenant quoi choisir exactement dans Discord (Entrée / Sortie), y compris avec SteelSeries Sonar.", "Navigateurs : « Gérer » ouvre directement la page de l'extension, dans le bon profil.", "Pilotes graphiques : la vraie date d'installation est affichée (la date du pilote, c'est celle du fabricant).", "Plantages : après une réparation ou un nouveau pilote graphique, seuls les nouveaux plantages comptent, et dwm.exe (l'affichage de Windows) est réparé par le pilote graphique, pas par les mises à jour de logiciels.", "Désinstallation : si le désinstalleur d'un logiciel n'existe plus, AEROX te l'explique clairement.")
     '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.", "« Mettre la sélection à la corbeille » ne ferme plus la fenêtre, et le choix du disque à analyser est bien aligné.")
     '2.1.6' = @("Diagnostic : chaque disque est détaillé dans le journal (place libre et santé), avec ses lettres (C:, D:…), y compris les disques et clés USB.", "Corbeille : elle est vraiment vidée sur tous les disques, et la taille annoncée est bien celle de ta corbeille (celle des autres comptes du PC n'est jamais touchée).")
