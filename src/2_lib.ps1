@@ -2340,12 +2340,13 @@ function Get-LagReport([int]$Seconds = 60) {
 # Ce qui est envoyé : la version d'AEROX et des compteurs du genre « lent:memoire = 2 » ou « probleme:bsod = 1 »
 # (types de problèmes trouvés, lenteurs non reconnues, réparations qui n'ont pas suffi). Jamais de nom, de nom du PC,
 # de fichier, de chemin ni d'identifiant. Le relais additionne des nombres par mois. Désactivable dans l'onglet Aide.
+# Clés vérifiées en respectant la casse (comme le relais) : minuscules, chiffres et tirets seulement.
 # Envoi en un seul petit paquet, au plus toutes les 6 heures (et une fois par mois pour compter les PC actifs).
 function ConvertTo-StatsId([string]$Id) { return (("$Id".ToLower() -replace '[^a-z0-9-]', '-') -replace '-+', '-').Trim('-') }
 function Add-StatsEvent([string]$Key) {
     try {
         $q = $AppInfo.StatsQueue
-        if ($AppInfo.StatsOff -or $null -eq $q -or $Key -notmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { return }
+        if ($AppInfo.StatsOff -or $null -eq $q -or $Key -cnotmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { return }
         [System.Threading.Monitor]::Enter($q.SyncRoot)
         try { if ($q.Count -lt 300) { [void]$q.Add($Key) }; Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
     } catch {}
@@ -2357,7 +2358,7 @@ function Read-StatsQueue {
     $q = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
     try {
         $p = Join-Path $AppInfo.LogDir 'stats-attente.txt'
-        if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($q.Count -lt 300 -and $l -match '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { [void]$q.Add($l) } } }
+        if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($q.Count -lt 300 -and $l -cmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { [void]$q.Add($l) } } }
     } catch {}
     return ,$q
 }

@@ -573,9 +573,9 @@ function Invoke-Smoke {
             $AppInfo.StatsOff = $true; Add-StatsEvent 'lent:rien'
             if ($AppInfo.StatsQueue.Count) { throw "compteur gardé alors que les statistiques sont désactivées" }
             $AppInfo.StatsOff = $false
-            foreach ($k in 'lent:rien', 'lent:rien', ('probleme:' + (ConvertTo-StatsId 'diskD:')), 'Mauvaise clé', 'x:../../etc', 'nom:Jean Dupont', "pc:$($env:COMPUTERNAME)") { Add-StatsEvent $k }
+            foreach ($k in 'lent:rien', 'lent:rien', ('probleme:' + (ConvertTo-StatsId 'diskD:')), 'Mauvaise clé', 'x:../../etc', 'nom:Jean Dupont', 'pc:PC-DE-JEAN', 'Lent:rien') { Add-StatsEvent $k }
             $q = (@($AppInfo.StatsQueue.ToArray()) -join ',')
-            if (-not $q.StartsWith('lent:rien,lent:rien,probleme:diskd')) { throw "filtre faux : $q" }
+            if ($q -cne 'lent:rien,lent:rien,probleme:diskd') { throw "filtre faux : $q" }
             # Ancien relais (pas encore mis à jour) : il ne sait pas recevoir → rien n'est envoyé, les compteurs attendent
             $g = & $run $true
             if (@($g).Count -ne 1 -or $g[0].M -ne 'GET') { throw "envoyé à un relais qui ne sait pas recevoir ($(@($g).Count) requête(s))" }
