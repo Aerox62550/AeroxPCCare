@@ -2,6 +2,30 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.3.0 : grande mise à jour de correctifs (contrôle complet + rapports n° 18 et 19 + relecture Gemini n° 4)
+
+- Données d'AEROX (journal, réglages, historique, bilans, fiches de jeux, rapports) : Program Files\AeroxPCCare\protege\donnees\<SID du compte> au lieu de %LOCALAPPDATA%\AeroxPCCare. Avant : dossier modifiable par n'importe quel programme du compte, alors qu'AEROX y écrit en administrateur (lien glissé → écriture admin détournée vers un fichier de Windows). Reprise unique au 1er lancement (fichiers ordinaires, aucun lien suivi, pas outils/maj, marque .reprise) ; l'ancien dossier reste. Lanceur : plantage.txt / erreurs_lanceur.txt au même endroit quand il est administrateur. Désinstallation : outils/maj/session supprimés, données gardées sauf si la personne choisit de les supprimer. Test Windows : reprise d'un vrai fichier, lien-piège (jonction vers System32) non suivi.
+- Rapport de batterie : écrit dans le dossier protégé (avant : nom fixe dans ProgramData, piégeable) et ouvert par l'Explorateur dans la session (Open-LocalFile, seulement des fichiers du dossier protégé). Le bouton ne faisait plus rien depuis la 2.1.3 (lien file: refusé par Open-Url). XML temporaire de la batterie : dossier protégé, nom aléatoire (avant : %TEMP% avec nom prévisible).
+- Boutons « Ouvrir Steam » (analyse d'espace) : steam:// autorisé dans Open-WinUri (ouvert par l'Explorateur, sans droits admin). Ne faisaient plus rien depuis la 2.1.3.
+- « Réparer les fichiers Windows » : résultat de SFC lu dans CBS.log (lignes [SR] depuis le début du scan : Cannot repair / Repairing N>0 components ou Repairing corrupted file / Verify complete), identique dans toutes les langues ; texte FR/EN en secours ; sinon message neutre au lieu de « aucun fichier abîmé ».
+- Mise à jour d'AEROX : refusée si GitHub ne donne pas l'empreinte SHA-256 (avant : installée sans vérification).
+- Rapports n° 18 / 19 (fichier hosts « accès refusé » même en administrateur) : Write-HostsFile enlève la lecture seule (souvent mise par le logiciel qui a détourné le fichier), sinon reprend la propriété et remet les droits par défaut (takeown /a + icacls /reset) ; si c'est encore refusé : message qui nomme l'antivirus (SecurityCenter2) et dit quoi faire. Annulation (Restore-HostsBackup) par le même chemin. Test Windows : hosts en lecture seule réparé.
+- Rapport n° 18 (« problème de pilote alors que la mise à jour est bonne ») : le périphérique est nommé (titre, cause : « Ce n'est pas la carte graphique : c'est … »), avec son type, la raison selon le code d'erreur et l'étape adaptée ; une ligne par périphérique dans le journal (avec identifiant matériel) ; « Réinstaller ce périphérique » (pnputil /remove-device puis /scan-devices) pour les codes 3/10/31/39/43, jamais disques, contrôleurs, processeur, carte mère ou affichage.
+- Démarrage lent : composants de Windows (mises à jour qui finissent au démarrage, recherche, services) retirés de la liste des coupables (rien à décocher).
+- DNS qui bloque : site considéré bloqué seulement sans adresse IPv4 NI IPv6 (ou adresse locale) — les connexions IPv6 ne donnent plus de faux « bloqué ».
+- Gaming : état des outils gardé une minute (à-coups au rafraîchissement). Accueil : autres disques lus en arrière-plan (un disque USB en veille figeait la fenêtre), tuile mise à jour quand ils répondent.
+- BIOS : plus de recherche vide quand Windows ne connaît ni la marque ni le modèle (explication à la place). Bug trouvé par le test Windows : Get-SystemInfo ne renvoie rien (il remplit $sync.SysInfo), donc si les infos du PC n'étaient pas encore chargées, la recherche partait sans la marque ni le modèle ; corrigé.
+- Test de débit : le speedtest.exe d'Ookla n'est pas signé (vérifié sur le zip officiel 1.2.0) ; il n'est lancé en administrateur que si son empreinte SHA-256 est celle du programme officiel (ou s'il est signé par Ookla un jour). Sinon il est supprimé et le test passe par Cloudflare. Paramètre $Profile (variable réservée de PowerShell) renommé.
+
+### Relecture Gemini n° 4 (partie 1, vérifiée point par point) — inclus dans la 2.3.0
+
+- Raccourcis temporaires (.lnk / .url ouverts dans la session de la personne) : dossier protégé (Program Files\AeroxPCCare\protege\session) au lieu de ProgramData\AeroxPCCare, qu'un autre compte pouvait créer avant AEROX et dont il pouvait remplacer le raccourci (lancement sur le compte de la personne, droits limités : pas d'élévation admin, mais un autre compte pouvait faire lancer un programme chez elle). Vrai.
+- Désinstallation : entrée HKLM dont le désinstalleur est hors de Windows / Program Files (D:\Jeux, dossier perso…) → lancé sur le compte de la personne, sans les droits admin d'AEROX (il demande l'UAC lui-même si besoin). Avant : lancé en admin alors qu'un compte standard pouvait remplacer le fichier. Vrai, important.
+- Test de débit (AeroxSpeed.RunOokla) : garde-fou (aucune ligne pendant 20 s ou plus de 90 s) → speedtest.exe arrêté, passage sur Cloudflare. Avant : seul « Annuler » débloquait. Vrai.
+- Complete-Job : la fenêtre de résultat (mises à jour, nettoyage, espace…) s'ouvre aussi quand l'analyse a noté une erreur mineure (affichée avant). Vrai.
+- Identifiants winget coupés (« … ») : jamais retenus comme « se met à jour tout seul » ni comme échec d'installateur. Précaution (les rapports montrent des identifiants complets).
+- Écran de démarrage du lanceur : icône libérée après usage. Mineur.
+
 ## Publié en 2.2.0 : diagnostic approfondi (Sam : « qu'elle comprenne et propose les solutions, comme pour les écrans bleus »)
 
 - Démarrage lent (Test-BootSpeed, catégorie Démarrage) : journal Diagnostics-Performance de Windows, événements 101 logiciel / 102 pilote / 103 service / 106 tâche de fond / 109 périphérique sur 30 jours ; gardé si ça revient (≥ 2 fois) avec ≥ 3 s de retard moyen ; signalé si le dernier démarrage dépasse 45 s. Nom, type, retard moyen, nombre de fois ; conseils selon le type ; temps du dernier démarrage dans le journal.

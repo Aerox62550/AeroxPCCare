@@ -234,10 +234,11 @@ Section "Uninstall"
   ; Uniquement les fichiers du logiciel (jamais un dossier entier choisi par l'utilisateur)
   Delete "$INSTDIR\maj\AeroxPCCare_Setup_*.exe"
   RMDir "$INSTDIR\maj"
-  ; Dossier protégé : outils téléchargés (températures, FPS, débit), sauvegardes de réglages, installateurs de mise à jour
-  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege"
-  RMDir /r "$INSTDIR\protege"
-  RMDir "$INSTDIR"
+  ; Dossier protégé : outils téléchargés (températures, FPS, débit), installateurs de mise à jour, raccourcis temporaires.
+  ; Les données (réglages, historique, bilans : protege\donnees) et leurs sceaux restent, sauf si la personne choisit de les supprimer.
+  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\outils"
+  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\maj"
+  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\session"
   DeleteRegKey HKLM "${UNINSTKEY}"
   ; Lancement avec Windows en mode discret (option de l'onglet Gaming)
   nsExec::Exec 'schtasks.exe /Delete /TN "AEROX PC Care (mode discret)" /F'
@@ -246,7 +247,10 @@ Section "Uninstall"
   ; Journaux, réglages et outils téléchargés (températures, FPS) : au choix
   SetShellVarContext current
   IfSilent done
-  MessageBox MB_YESNO|MB_ICONQUESTION "Supprimer aussi tes réglages, tes journaux et les outils téléchargés (températures, FPS) ?$\r$\n$\r$\n(Dossier $LOCALAPPDATA\AeroxPCCare)" IDNO done
+  MessageBox MB_YESNO|MB_ICONQUESTION "Supprimer aussi tes réglages, tes journaux, ton historique et tes bilans ?" IDNO done
+    RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege"
+    RMDir /r "$INSTDIR\protege"
     RMDir /r "$LOCALAPPDATA\AeroxPCCare"
   done:
+  RMDir "$INSTDIR"
 SectionEnd

@@ -522,9 +522,50 @@ public static class AeroxUpdate {
 // 1) Moteur principal : Speedtest® CLI d'Ookla (l'outil officiel de speedtest.net, mêmes serveurs et
 //    même méthode que le site : résultats comparables). Téléchargé à la demande depuis install.speedtest.net.
 // 2) Secours : serveurs publics de Cloudflare (speed.cloudflare.com) si Ookla est indisponible.
+// Signature Windows (Authenticode) d'un programme : valide ET signée par l'éditeur attendu. Utilisé avant de lancer
+// un outil téléchargé avec les droits admin d'AEROX (ex. speedtest.exe d'Ookla).
+public static class AeroxTrust {
+    [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+    static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, IntPtr data);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    class FileInfo { public uint cbStruct; [MarshalAs(UnmanagedType.LPWStr)] public string path; public IntPtr hFile; public IntPtr known; }
+    [StructLayout(LayoutKind.Sequential)]
+    class TrustData { public uint cbStruct; public IntPtr policy; public IntPtr sip; public uint ui; public uint revocation; public uint union; public IntPtr file; public uint stateAction; public IntPtr state; public IntPtr url; public uint provFlags; public uint uiContext; }
+    public static bool IsSignedBy(string path, string organization) {
+        IntPtr pf = IntPtr.Zero, pd = IntPtr.Zero;
+        try {
+            if (!File.Exists(path)) return false;
+            FileInfo fi = new FileInfo(); fi.cbStruct = (uint)Marshal.SizeOf(typeof(FileInfo)); fi.path = path;
+            pf = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FileInfo))); Marshal.StructureToPtr(fi, pf, false);
+            TrustData td = new TrustData(); td.cbStruct = (uint)Marshal.SizeOf(typeof(TrustData)); td.ui = 2; td.revocation = 0; td.union = 1; td.file = pf;
+            pd = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TrustData))); Marshal.StructureToPtr(td, pd, false);
+            int r = WinVerifyTrust(new IntPtr(-1), new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE"), pd);
+            if (r != 0) return false;
+            string subj = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path).Subject;
+            return subj.IndexOf("O=" + organization, StringComparison.OrdinalIgnoreCase) >= 0 || subj.IndexOf("O=\"" + organization, StringComparison.OrdinalIgnoreCase) >= 0;
+        } catch { return false; }
+        finally {
+            if (pf != IntPtr.Zero) { try { Marshal.DestroyStructure(pf, typeof(FileInfo)); } catch { } Marshal.FreeHGlobal(pf); }
+            if (pd != IntPtr.Zero) Marshal.FreeHGlobal(pd);
+        }
+    }
+}
+
 public static class AeroxSpeed {
     const string CfBase = "https://speed.cloudflare.com/";
     public const string OoklaZip = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip";
+    // Empreinte SHA-256 de speedtest.exe contenu dans ce zip (relevée sur le zip officiel)
+    static readonly string[] OoklaSha = new string[] { "C73C4AC2A7CDC48829FE0F9D7EC91CA41C8B434490D4EB3205AAD69C7AA3B921" };
+    public static bool IsTrustedOokla(string exe) {
+        try {
+            if (AeroxTrust.IsSignedBy(exe, "Ookla")) return true;
+            string h;
+            using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+            using (FileStream fs = File.OpenRead(exe)) h = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+            foreach (string k in OoklaSha) if (string.Equals(k, h, StringComparison.OrdinalIgnoreCase)) return true;
+        } catch { }
+        return false;
+    }
     public static volatile string Phase = "";      // install, meta, ping, down, up, done, error, stopped
     public static volatile bool Stop = false;
     public static double Ping = -1, Jitter = -1, Down = -1, Up = -1, Live = 0, Percent = 0, Loss = -1;
@@ -591,6 +632,12 @@ public static class AeroxSpeed {
             try { File.Delete(zip); } catch { }
             if (!File.Exists(exe)) throw new Exception("speedtest.exe introuvable dans le paquet d'Ookla");
         }
+        // Lancé avec les droits admin d'AEROX : seulement le programme d'Ookla connu (empreinte de la version 1.2.0, Ookla
+        // ne signe pas son outil), ou signé par Ookla s'il le fait un jour. Sinon : supprimé, et test sur Cloudflare.
+        if (!IsTrustedOokla(exe)) {
+            try { File.Delete(exe); } catch { }
+            throw new Exception("le programme de test n'est pas celui d'Ookla attendu : il n'est pas lancé, par sécurité");
+        }
         Phase = "meta"; Engine = "ookla";
         ProcessStartInfo psi = new ProcessStartInfo(exe, "--accept-license --accept-gdpr --format=jsonl --progress=yes");
         psi.UseShellExecute = false; psi.CreateNoWindow = true;
@@ -605,8 +652,22 @@ public static class AeroxSpeed {
             if (m.Length > 0 && (e.Data.IndexOf("\"error\"", StringComparison.OrdinalIgnoreCase) >= 0 || e.Data.IndexOf("[error]", StringComparison.OrdinalIgnoreCase) >= 0 || !e.Data.StartsWith("{"))) lastErr = m;
         };
         proc.Start(); proc.BeginErrorReadLine();
+        // Garde-fou : speedtest.exe qui ne dit plus rien pendant 20 s (ou dure plus de 90 s) est arrêté, et le test passe
+        // sur les serveurs de Cloudflare au lieu de rester bloqué (relecture Gemini n° 4)
+        DateTime started = DateTime.UtcNow; long lastTick = DateTime.UtcNow.Ticks; bool watchdog = false;
+        Process p0 = proc;
+        Thread guard = new Thread(delegate() {
+            while (!p0.HasExited && !Stop) {
+                Thread.Sleep(1000);
+                if ((DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastTick), DateTimeKind.Utc)).TotalSeconds > 20 || (DateTime.UtcNow - started).TotalSeconds > 90) {
+                    watchdog = true; try { if (!p0.HasExited) p0.Kill(); } catch { } break;
+                }
+            }
+        });
+        guard.IsBackground = true; guard.Start();
         string line;
         while ((line = proc.StandardOutput.ReadLine()) != null) {
+            Interlocked.Exchange(ref lastTick, DateTime.UtcNow.Ticks);
             if (Stop) break;
             string type = Str(line, "type");
             switch (type) {
@@ -645,6 +706,7 @@ public static class AeroxSpeed {
         try { proc.WaitForExit(5000); } catch { }
         if (Stop) { Phase = "stopped"; return true; }
         if (gotResult && Down >= 0) { Live = 0; Percent = 100; Phase = "done"; return true; }
+        if (watchdog) { Error = "Speedtest d'Ookla ne répondait plus"; return false; }
         Error = string.IsNullOrEmpty(lastErr) ? "pas de résultat" : lastErr;
         return false;
     }

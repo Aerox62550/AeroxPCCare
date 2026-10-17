@@ -81,6 +81,11 @@ jobs:
               Write-Host "::notice title=$Title $n::$chunk"
             }
           }
+          # Anciennes données (dossier perso, avant la 2.3.0) : reprises dans le dossier protégé, sans suivre aucun lien
+          $old = Join-Path $env:LOCALAPPDATA 'AeroxPCCare'
+          New-Item -ItemType Directory -Force "$old\jeux" | Out-Null
+          Set-Content "$old\jeux\reprise-test.json" '{"test":1}'
+          cmd /c mklink /J "$old\lien-piege" "C:\Windows\System32\drivers\etc" | Out-Null
           $env:AEROX_SMOKE_ACTIONS = '1'   # machine jetable : on teste aussi les vraies actions et leurs annulations
           # Lancé avec un chronomètre : si le test bloque, on garde l'avancement écrit étape par étape
           $code = 9

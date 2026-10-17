@@ -282,6 +282,8 @@ function Invoke-Smoke {
         $d = @(Get-DriveList)
         if (-not $d.Count -or $d[0].Id -ne $env:SystemDrive) { throw "disque de Windows absent ou pas en premier" }
         Update-HomeStats
+        for ($w = 0; $w -lt 40 -and -not $sync.DrivesNew; $w++) { Start-Sleep -Milliseconds 250 }
+        Update-HomeStats -KeepDrives
         Write-Host ("        disques : {0} · tuile : {1} / {2}" -f (($d | ForEach-Object { $_.Id }) -join ' '), $script:Stats.DISK.V, ($script:Stats.DISK.S -replace "`n", ' | '))
         if ($d.Count -gt 1 -and $script:Stats.DISK.S -notmatch [regex]::Escape($d[1].Id)) { throw "2e disque pas affiché sur l'accueil" }
     }
@@ -349,6 +351,57 @@ function Invoke-Smoke {
         Write-Host ("        ce PC : {0} rapport(s), erreurs matérielles {1}, XMP « {2} »" -f @($an.Dumps).Count, $an.Whea, $an.Xmp)
         $k = Get-DriverFileInfo 'ntoskrnl.exe' @{}; if (-not $k.Ms) { throw "noyau de Windows pas reconnu comme Microsoft ($($k.Company))" }
     }
+    if (-not $Portable) {
+        Smoke 'Sécurité : données dans le dossier protégé, anciennes données reprises' {
+            if (-not $LogDir.StartsWith($AppInfo.Secure, [StringComparison]::OrdinalIgnoreCase)) { throw "données hors du dossier protégé : $LogDir" }
+            if (-not (Test-Path -LiteralPath (Join-Path $LogDir 'jeux\reprise-test.json'))) { throw "anciennes données pas reprises" }
+            if (Test-Path -LiteralPath (Join-Path $LogDir 'lien-piege')) { throw "lien de l'ancien dossier suivi pendant la reprise" }
+            Write-Host "        données : $LogDir"
+        }
+    }
+    Smoke 'Sécurité : signature des outils téléchargés (Authenticode)' {
+        if (-not [AeroxTrust]::IsSignedBy("$env:SystemRoot\System32\notepad.exe", 'Microsoft Corporation') -and -not [AeroxTrust]::IsSignedBy("$env:SystemRoot\explorer.exe", 'Microsoft Corporation')) { throw "programme de Microsoft pas reconnu comme signé" }
+        $t = Join-Path $env:TEMP 'aerox-faux.exe'; [IO.File]::WriteAllText($t, 'MZ'); $ok = [AeroxTrust]::IsSignedBy($t, 'Microsoft Corporation'); Remove-Item $t -Force
+        if ($ok) { throw "faux programme accepté" }
+        # Le vrai speedtest.exe d'Ookla : signé ? (sinon le test de débit passera toujours par Cloudflare)
+        try {
+            $d = Join-Path $env:TEMP 'aerox-ookla'; New-Item -ItemType Directory -Force $d | Out-Null
+            Invoke-WebRequest -Uri ([AeroxSpeed]::OoklaZip) -OutFile "$d\o.zip" -UseBasicParsing -TimeoutSec 30
+            Expand-Archive "$d\o.zip" $d -Force
+            $sg = Get-AuthenticodeSignature "$d\speedtest.exe"
+            Write-Host ("        speedtest.exe : {0} · {1} · SHA-256 {2} · accepté par AEROX : {3}" -f $sg.Status, $sg.SignerCertificate.Subject, (Get-FileHash "$d\speedtest.exe" -Algorithm SHA256).Hash, [AeroxSpeed]::IsTrustedOokla("$d\speedtest.exe"))
+            $okla = [AeroxSpeed]::IsTrustedOokla("$d\speedtest.exe")
+            $fake = "$d\faux.exe"; Copy-Item "$env:SystemRoot\System32\whoami.exe" $fake -Force
+            $fk = [AeroxSpeed]::IsTrustedOokla($fake)
+        } catch { Write-Host "        speedtest.exe : non testé ($($_.Exception.Message))"; $okla = $true; $fk = $false }
+        if (-not $okla) { throw "le vrai programme d'Ookla est refusé : le test de débit passerait toujours par Cloudflare" }
+        if ($fk) { throw "un autre programme est accepté comme celui d'Ookla" }
+    }
+    Smoke 'SFC : résultat lu dans le journal de Windows (toutes langues)' {
+        $f = Join-Path $env:TEMP 'aerox-cbs.log'; $t = Get-Date
+        [IO.File]::WriteAllLines($f, [string[]]@(("{0:yyyy-MM-dd HH:mm:ss}, Info CSI 01 [SR] Verify complete" -f $t.AddSeconds(5)), ("{0:yyyy-MM-dd HH:mm:ss}, Info CSI 02 [SR] Repairing 0 components" -f $t.AddSeconds(6)), ("{0:yyyy-MM-dd HH:mm:ss}, Info CSI 03 [SR] Repair complete" -f $t.AddSeconds(7))))
+        $r1 = Get-SfcResultFromCbs $t $f
+        Add-Content $f ("{0:yyyy-MM-dd HH:mm:ss}, Info CSI 04 [SR] Cannot repair member file x" -f $t.AddSeconds(8))
+        $r2 = Get-SfcResultFromCbs $t $f; Remove-Item $f -Force
+        if ($r1 -ne 'clean' -or $r2 -ne 'unrepaired') { throw "lecture fausse : $r1 / $r2" }
+    }
+    Smoke 'Liens Steam et rapport de batterie' {
+        if ((Get-Command Open-WinUri).Definition -notmatch '\|steam\)') { throw "liens Steam toujours refusés" }
+        if (Open-LocalFile "$env:SystemRoot\win.ini") { throw "fichier hors du dossier protégé ouvert" }
+    }
+    Smoke 'Hosts verrouillé (lecture seule) : déverrouillé puis réparé' {
+        $f = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'; $orig = [IO.File]::ReadAllLines($f)
+        try {
+            [IO.File]::WriteAllLines($f, [string[]]@($orig + '0.0.0.0 discord.com'))
+            (Get-Item $f -Force).Attributes = 'ReadOnly'
+            Repair-Hosts
+            if (@(Get-HostsHijacks).Count) { throw "discord.com toujours détourné" }
+        } finally { (Get-Item $f -Force).Attributes = 'Normal'; [IO.File]::WriteAllLines($f, [string[]]$orig) }
+    }
+    Smoke 'Sécurité : raccourcis de session dans le dossier protégé' {
+        $p = New-SessionShortcutPath '.lnk'
+        if (-not $p.StartsWith((Join-Path $AppInfo.Secure 'session'), [StringComparison]::OrdinalIgnoreCase)) { throw "raccourci hors du dossier protégé : $p" }
+    }
     Smoke 'Avis : gros mots masqués' {
         $r = Hide-Profanity "Super logiciel (j'aime la chatte), putain de console, conseil pour Bitcoin"
         Write-Host "        $r"
@@ -375,9 +428,11 @@ function Invoke-Smoke {
     }
     Smoke 'Dépannage : Discord' { Repair-Discord }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
-        Find-BiosPage
-        if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" }
-        Write-Host ("        ce PC : {0} → {1}" -f $sync.BiosUrl.Kind, $sync.BiosUrl.Url)
+        $sync.SysInfo = $null; Find-BiosPage; $si = $sync.SysInfo
+        if (-not $si) { throw "infos du PC non chargées" }
+        if ("$($si.Model)$($si.Maker)".Trim()) { if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" } }
+        elseif ($sync.BiosUrl) { throw "recherche lancée alors que Windows ne connaît pas le modèle" }
+        Write-Host ("        ce PC : « {0} » « {1} » → {2}" -f $si.Maker, $si.Model, $(if ($sync.BiosUrl) { "$($sync.BiosUrl.Kind) $($sync.BiosUrl.Url)" } else { 'pas de recherche (modèle inconnu)' }))
         # Les adresses devinées pour quelques cartes mères connues (information : un site peut bloquer les robots)
         $tests = @(
             @('ASUS', 'https://www.asus.com/supportonly/ROG%20STRIX%20B550-F%20GAMING/helpdesk_bios/', 'ROG STRIX B550-F GAMING'),

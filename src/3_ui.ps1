@@ -865,7 +865,7 @@ function Update-DiagBadge {
     if ($n -gt 0) { $DiagBadgeText.Text = "$n"; $DiagBadge.Visibility = 'Visible' } else { $DiagBadge.Visibility = 'Collapsed' }
 }
 
-function Update-HomeStats {
+function Update-HomeStats([switch]$KeepDrives) {
     try {
         $os  = Get-CimInstance Win32_OperatingSystem
         $cs  = Get-CimInstance Win32_ComputerSystem
@@ -879,8 +879,10 @@ function Update-HomeStats {
             RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { '#FFB547' } else { '#FFFFFF' }) }
             DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#FFFFFF' }) }
         }
-        # Les autres disques (internes et externes) sous celui de Windows
-        $others = @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive })
+        # Les autres disques (internes et externes) sous celui de Windows : lus en arrière-plan (un disque USB en veille
+        # peut mettre plusieurs secondes à répondre), affichés au rafraîchissement suivant
+        if (-not $KeepDrives) { Start-Background '$sync.Drives = @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive }); $sync.DrivesNew = $true' }
+        $others = @($sync.Drives | Where-Object { $_ })
         if ($others.Count) {
             $script:Stats.DISK.L = 'Disques'
             $script:Stats.DISK.V = "$env:SystemDrive $(Format-Size $c.FreeSpace) libres"
@@ -1112,15 +1114,17 @@ function Complete-Job {
         $left = @(Get-OpenIssues).Count
         Write-UiLog $(if ($left) { "Réparations terminées. Il reste $left chose(s) à faire toi-même (voir « Voir comment faire »)." } else { "Réparations terminées : tout est réglé !" })
     }
-    if ($job.OnDone -eq 'tools') { Stop-Monitoring; if (Test-MonitorNeeded) { Start-Sensors; Start-FpsCounter } }
+    if ($job.OnDone -eq 'tools') { $script:ToolStAt = $null; Stop-Monitoring; if (Test-MonitorNeeded) { Start-Sensors; Start-FpsCounter } }
     if ($job.OnDone -eq 'undo' -and $script:UndoId) {
         if (-not $errs.Count) { Set-ChangeUndone $script:UndoId; Write-UiLog ("↩ Annulé : " + $script:UndoTitle) }
         $script:UndoId = $null
     }
     Refresh-Page
     try {
+    # Erreurs d'abord, puis la fenêtre de résultat quand même : une erreur mineure pendant une analyse ne doit pas cacher
+    # ce qui a été trouvé (relecture Gemini n° 4)
     if ($errs.Count) { Show-ErrorDialog $errs $job.Label }
-    elseif ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
+    if ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
@@ -2057,6 +2061,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.3.0' = @("Grande mise à jour de correctifs et de sécurité : les données d'AEROX (réglages, historique, bilans, journaux) sont rangées dans son dossier protégé, que seul un administrateur peut modifier. Elles ont été reprises automatiquement.", "Sites bloqués (fichier hosts) : AEROX débloque maintenant même un fichier verrouillé, et te dit si c'est ton antivirus qui le protège.", "Pilotes : AEROX dit exactement quel périphérique a un problème (ce n'est souvent pas la carte graphique), pourquoi, et peut réinstaller son pilote en un clic.", "Rapport de batterie et boutons « Ouvrir Steam » : ils remarchent. « Réparer les fichiers Windows » donne un résultat fiable quelle que soit la langue de Windows.", "Sécurité : la mise à jour d'AEROX n'est installée que si son empreinte est vérifiée, et l'outil du test de débit seulement si c'est bien le programme officiel d'Ookla.", "BIOS : « Mettre à jour » trouve la page de ton modèle même si les infos du PC n'étaient pas encore chargées.")
+    '2.2.1' = @("Sécurité renforcée (relecture externe) : un désinstalleur rangé hors des dossiers protégés de Windows n'est plus lancé avec les droits administrateur, et les raccourcis temporaires d'AEROX sont dans son dossier protégé.", "Test de débit : s'il se bloque, il passe tout seul sur un autre serveur au lieu de rester figé. Une petite erreur pendant une analyse n'empêche plus d'afficher les résultats.")
     '2.2.0' = @("Diagnostic plus poussé : démarrage lent (Windows dit lui-même ce qui le ralentit), extinctions brutales expliquées (bouton maintenu, veille ou coupure nette), pilote graphique qui décroche, logiciels qui se figent, erreurs de lecture des disques et résultat du test de mémoire de Windows. Chaque fois avec la cause et quoi faire.", "Avis et rapports : les gros mots sont masqués par des étoiles avant d'être publiés.", "Sites ou téléchargements qui ne passent pas (ex. Discord) : AEROX cherche la cause (proxy, fichier hosts qui détourne des sites, heure du PC fausse, DNS qui bloque) et la répare.", "Nouveau dépannage « Discord bugue ou ne s'installe plus » : cache vidé, installation abîmée repérée, téléchargement vérifié.", "Mises à jour : un logiciel qui se réaffiche juste après sa mise à jour (VS Code) n'est plus proposé en boucle. « C'est fait » sur une extinction brutale ou un plantage n'est plus resignalé au diagnostic suivant.")
     '2.1.9' = @("Écrans bleus : AEROX lit les rapports de plantage de Windows et te dit quel pilote les provoque (carte graphique, réseau, anti-triche d'un jeu, antivirus…), avec la bonne réparation. Il signale aussi les erreurs matérielles et la mémoire en XMP/EXPO.", "BIOS : « Chercher mon BIOS » ouvre la page de ton modèle sur le site du fabricant quand AEROX peut la vérifier (ASUS, MSI, Gigabyte, ASRock, Dell, Lenovo), sinon la recherche de son site officiel.", "Carte réseau : si son pilote refuse de couper l'économie d'énergie tout de suite, le réglage est enregistré pour le prochain redémarrage (avant : « réglé » puis toujours signalé).", "Mises à jour : un logiciel dont l'installateur échoue deux fois (Corsair iCUE…) n'est plus proposé en boucle : AEROX te dit de le mettre à jour depuis le logiciel lui-même.")
     '2.1.8' = @("Bilan avant / après : la place libre de tous tes disques (D:, E:…) est comparée, pas seulement C:. Visible à partir du prochain bilan.", "« Pas de son » ne relance plus le son de Windows quand il marche : ça coupait le micro et le casque dans Discord. Son et micro te disent maintenant quoi choisir exactement dans Discord (Entrée / Sortie), y compris avec SteelSeries Sonar.", "Navigateurs : « Gérer » ouvre directement la page de l'extension, dans le bon profil.", "Pilotes graphiques : la vraie date d'installation est affichée (la date du pilote, c'est celle du fabricant).", "Plantages : après une réparation ou un nouveau pilote graphique, seuls les nouveaux plantages comptent, et dwm.exe (l'affichage de Windows) est réparé par le pilote graphique, pas par les mises à jour de logiciels.", "Désinstallation : si le désinstalleur d'un logiciel n'existe plus, AEROX te l'explique clairement.")
@@ -3094,7 +3100,7 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
                         }
                     }
                     'open' { Start-Process explorer.exe ('"{0}"' -f $x.P) }
-                    'url'  { [void](Open-Url $x.P) }
+                    'url'  { if ("$($x.P)" -like 'steam:*') { Open-WinUri $x.P } else { [void](Open-Url $x.P) } }
                     default { $script:SpaceNext = $x.A; $script:SpaceArg = $x.P; $script:SpaceWin.Close() }
                 }
             })
@@ -3979,7 +3985,9 @@ function New-TabBar($Items, [string]$Cur, [string]$Ui) {
 }
 function Build-MonitorPage {
     Start-Sensors; Start-FpsCounter
-    $script:ToolSt = Get-ToolStatus
+    # Gardé une minute (lire le registre et les fichiers à chaque rafraîchissement faisait de petits à-coups) ;
+    # remis à zéro après une installation / désinstallation d'outil
+    if (-not $script:ToolSt -or -not $script:ToolStAt -or ((Get-Date) - $script:ToolStAt).TotalSeconds -gt 60) { $script:ToolSt = Get-ToolStatus; $script:ToolStAt = Get-Date }
     $sp = New-Object System.Windows.Controls.StackPanel
     Build-Header $sp "Gaming" "AEROX reconnaît tes jeux tout seul et note chaque partie : FPS, saccades, températures, et ce qui limite le jeu. Plus les mesures en direct et l'overlay par-dessus tes jeux."
     if ($script:GameTab -notin 'jeux', 'live', 'overlay') { $script:GameTab = 'jeux' }
@@ -4863,6 +4871,12 @@ $timer = New-Object System.Windows.Threading.DispatcherTimer
 $timer.Interval = [TimeSpan]::FromMilliseconds(150)
 $timer.Add_Tick({
     try {
+        # Disques lus en arrière-plan : la tuile de l'accueil se met à jour dès qu'ils ont répondu
+        if ($sync.DrivesNew) {
+            $sync.DrivesNew = $false
+            $sig = (@($sync.Drives | Where-Object { $_ } | ForEach-Object { "{0}{1}" -f $_.Id, [math]::Round([double]$_.Free / 1GB) }) -join ',')
+            if ($sig -ne $script:DrivesSig) { $script:DrivesSig = $sig; Update-HomeStats -KeepDrives; if ($script:Cur -eq 'home') { Refresh-Page } }
+        }
         Flush-Queue
         if ($script:ShowEvent -and $script:ShowEvent.WaitOne(0)) { Show-MainWindow '' }
         try { Invoke-MonitorTick } catch { Write-Bug -Context 'Gaming' -ErrorRecord $_ }
@@ -4905,10 +4919,10 @@ try {
     Save-Settings
 } catch {}
 # Fichiers temporaires d'une mise à jour terminée
-foreach ($mj in @((Join-Path $LogDir 'maj'), (Join-Path $AppRoot 'maj'), (Join-Path $SecureRoot 'maj'))) { try { if (Test-Path -LiteralPath $mj) { $null = Remove-PathContent $mj } } catch {} }
+foreach ($mj in @((Join-Path $OldLogDir 'maj'), (Join-Path $AppRoot 'maj'), (Join-Path $SecureRoot 'maj'))) { try { if (Test-Path -LiteralPath $mj) { $null = Remove-PathContent $mj } } catch {} }
 # Module de températures installé par une ancienne version dans le dossier perso : réinstallé dans le dossier protégé
 try {
-    if ((Test-Path -LiteralPath (Join-Path $LogDir 'outils\lhm\LibreHardwareMonitorLib.dll')) -and -not (Test-Path -LiteralPath (Join-Path $SecureRoot 'outils\lhm\LibreHardwareMonitorLib.dll'))) { Start-Background 'Install-SensorLib' }
+    if ((Test-Path -LiteralPath (Join-Path $OldLogDir 'outils\lhm\LibreHardwareMonitorLib.dll')) -and -not (Test-Path -LiteralPath (Join-Path $SecureRoot 'outils\lhm\LibreHardwareMonitorLib.dll'))) { Start-Background 'Install-SensorLib' }
 } catch {}
 # Version installée : garde le bon numéro dans « Applications installées » après une mise à jour automatique
 try {
