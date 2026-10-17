@@ -326,6 +326,46 @@ function Invoke-Smoke {
         $gd = Get-GpuDriverInstallDates
         Write-Host ("        pilotes graphiques installés : {0}" -f (($gd.Keys | ForEach-Object { "{0} le {1:dd/MM/yyyy HH:mm}" -f $_, $gd[$_] }) -join ' · '))
     }
+    Smoke 'Écrans bleus : pilote en cause lu dans le rapport de plantage' {
+        # Faux petit rapport de plantage (même structure qu'un vrai) : un pilote NVIDIA sur la pile et dans les paramètres
+        $b = New-Object byte[] 0x20000
+        $put32 = { param($o, $v) [BitConverter]::GetBytes([uint32]$v).CopyTo($b, $o) }
+        $put64 = { param($o, $v) [BitConverter]::GetBytes([uint64]$v).CopyTo($b, $o) }
+        [Text.Encoding]::ASCII.GetBytes('PAGEDU64').CopyTo($b, 0); & $put32 0x38 0xD1; & $put64 0x58 ([Convert]::ToUInt64('FFFFF80090001234', 16)); & $put32 0xF98 4
+        $drv = @(@('ntoskrnl.exe', [Convert]::ToUInt64('FFFFF80000000000', 16), 0x1000000), @('hal.dll', [Convert]::ToUInt64('FFFFF80001000000', 16), 0x100000)) + @(0..11 | ForEach-Object { , @("pilote$_.sys", ([Convert]::ToUInt64('FFFFF80010000000', 16) + [uint64]$_ * 0x100000), 0x80000) }) + @(, @('nvlddmkm.sys', [Convert]::ToUInt64('FFFFF80090000000', 16), 0x4000000))
+        $pool = 0x8000
+        for ($i = 0; $i -lt $drv.Count; $i++) {
+            $e = 0x3000 + $i * 0x98; & $put32 $e $pool; & $put64 ($e + 0x38) $drv[$i][1]; & $put32 ($e + 0x48) $drv[$i][2]
+            $n = [Text.Encoding]::Unicode.GetBytes($drv[$i][0]); & $put32 $pool $drv[$i][0].Length; $n.CopyTo($b, $pool + 4); $pool += 8 + $n.Length
+        }
+        & $put64 0x10008 ([Convert]::ToUInt64('FFFFF80000000100', 16)); & $put64 0x10010 ([Convert]::ToUInt64('FFFFF80090002000', 16))
+        & $put32 0x2028 0x10000; & $put32 0x202C 0x100; & $put32 0x2030 0x3000; & $put32 0x2034 $drv.Count
+        $f = Join-Path $env:TEMP 'aerox-test.dmp'; [IO.File]::WriteAllBytes($f, $b)
+        $r = [AeroxDump]::Analyze($f); Remove-Item -LiteralPath $f -Force
+        Write-Host "        analyse : $r"
+        if ($r -notlike '0x000000D1|*|nvlddmkm.sys|ntoskrnl.exe,nvlddmkm.sys') { throw "pilote en cause pas retrouvé" }
+        $bad = Join-Path $env:TEMP 'aerox-faux.dmp'; [IO.File]::WriteAllBytes($bad, (New-Object byte[] 0x4000)); if ([AeroxDump]::Analyze($bad)) { throw "fichier quelconque pris pour un rapport" }; Remove-Item -LiteralPath $bad -Force
+        $an = Get-BsodAnalysis (Get-Date).AddDays(-30)
+        Write-Host ("        ce PC : {0} rapport(s), erreurs matérielles {1}, XMP « {2} »" -f @($an.Dumps).Count, $an.Whea, $an.Xmp)
+        $k = Get-DriverFileInfo 'ntoskrnl.exe' @{}; if (-not $k.Ms) { throw "noyau de Windows pas reconnu comme Microsoft ($($k.Company))" }
+    }
+    Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
+        Find-BiosPage
+        if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" }
+        Write-Host ("        ce PC : {0} → {1}" -f $sync.BiosUrl.Kind, $sync.BiosUrl.Url)
+        # Les adresses devinées pour quelques cartes mères connues (information : un site peut bloquer les robots)
+        $tests = @(
+            @('ASUS', 'https://www.asus.com/supportonly/ROG%20STRIX%20B550-F%20GAMING/helpdesk_bios/', 'ROG STRIX B550-F GAMING'),
+            @('MSI', 'https://www.msi.com/Motherboard/MAG-B550-TOMAHAWK/support', 'MAG B550 TOMAHAWK'),
+            @('Gigabyte', 'https://www.gigabyte.com/fr/Motherboard/B550-AORUS-ELITE-V2-rev-10/support', 'B550 AORUS ELITE V2'),
+            @('Gigabyte sans rév.', 'https://www.gigabyte.com/fr/Motherboard/B550-AORUS-ELITE-V2/support', 'B550 AORUS ELITE V2'),
+            @('ASRock', 'https://www.asrock.com/mb/AMD/B550%20Phantom%20Gaming%204/index.fr.asp', 'B550 Phantom Gaming 4'),
+            @('ASUS recherche', 'https://www.asus.com/fr/searchresult?searchType=support&searchKey=ROG%20STRIX%20B550-F%20GAMING', ''),
+            @('MSI recherche', 'https://www.msi.com/search/MAG%20B550%20TOMAHAWK', ''),
+            @('Gigabyte recherche', 'https://www.gigabyte.com/fr/Search?kw=B550%20AORUS%20ELITE%20V2', '')
+        )
+        foreach ($t in $tests) { Write-Host ("        {0} : {1}" -f $t[0], $(if (Test-WebPageHas $t[1] @($t[2] | Where-Object { $_ })) { 'OK' } else { 'refusé ou introuvable' })) }
+    }
     Smoke 'Désinstallation : désinstalleur disparu expliqué' {
         try { Uninstall-App 'win32' '"C:\Program Files\AeroxRienDuTout\unins000.exe" /SILENT' 'Logiciel test'; throw "pas d'erreur" }
         catch { if ($_.Exception.Message -notlike 'Le désinstalleur de*') { throw "message pas clair : $($_.Exception.Message)" } }

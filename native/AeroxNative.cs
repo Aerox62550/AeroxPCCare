@@ -874,6 +874,74 @@ public static class AeroxAudio {
     }
 }
 
+// Rapport d'écran bleu (C:\Windows\Minidump\*.dmp, petit vidage noyau 64 bits « PAGEDU64 ») : code d'arrêt,
+// paramètres, et pilotes trouvés sur la pile du plantage. Lecture seule. La liste des pilotes du vidage est validée
+// en entier (noms, adresses, tailles cohérents) avant de s'en servir : au moindre doute, aucun pilote n'est désigné.
+// Résultat : "code|p1|p2|p3|p4|pilotes visés par les paramètres|pilotes de la pile (du haut vers le bas)", "" si illisible.
+public static class AeroxDump {
+    static uint U32(byte[] b, long o) { return (o < 0 || o + 4 > b.Length) ? 0u : BitConverter.ToUInt32(b, (int)o); }
+    static ulong U64(byte[] b, long o) { return (o < 0 || o + 8 > b.Length) ? 0ul : BitConverter.ToUInt64(b, (int)o); }
+    static string Str(byte[] b, long o) {
+        uint len = U32(b, o);
+        if (len == 0 || len > 128 || o + 4 + len * 2 > b.Length) return null;
+        string s = Encoding.Unicode.GetString(b, (int)o + 4, (int)len * 2);
+        return Regex.IsMatch(s, @"^[A-Za-z0-9_.\-]{1,64}\.(sys|dll|exe)$", RegexOptions.IgnoreCase) ? s : null;
+    }
+    class Drv { public string Name; public ulong Base; public ulong Size; }
+    static List<Drv> ReadDrivers(byte[] b, long baseOff, uint listOff, uint count, int stride, int dllOff, int sizeOff) {
+        List<Drv> l = new List<Drv>();
+        for (uint i = 0; i < count; i++) {
+            long e = baseOff + listOff + (long)i * stride;
+            string n = Str(b, baseOff + U32(b, e));
+            ulong bs = U64(b, e + dllOff); uint sz = U32(b, e + sizeOff);
+            if (n == null || bs < 0xFFFF800000000000UL || sz < 0x1000 || sz > 0x10000000) return null;
+            Drv d = new Drv(); d.Name = n; d.Base = bs; d.Size = sz; l.Add(d);
+        }
+        return l;
+    }
+    static string Hit(List<Drv> l, ulong v) {
+        if (v < 0xFFFF800000000000UL) return null;
+        foreach (Drv d in l) if (v >= d.Base && v < d.Base + d.Size) return d.Name;
+        return null;
+    }
+    public static string Analyze(string path) {
+        try {
+            byte[] b = File.ReadAllBytes(path);
+            if (b.Length < 0x3000 || Encoding.ASCII.GetString(b, 0, 8) != "PAGEDU64") return "";
+            uint code = U32(b, 0x38);
+            ulong[] p = new ulong[] { U64(b, 0x40), U64(b, 0x48), U64(b, 0x50), U64(b, 0x58) };
+            string head = string.Format("0x{0:X8}|0x{1:X}|0x{2:X}|0x{3:X}|0x{4:X}", code, p[0], p[1], p[2], p[3]);
+            if (U32(b, 0xF98) != 4) return head + "||";                // pas un vidage « triage » : seulement le code
+            long t = 0x2000;
+            uint stackOff = U32(b, t + 0x28), stackSize = U32(b, t + 0x2C), listOff = U32(b, t + 0x30), count = U32(b, t + 0x34);
+            if (count < 10 || count > 2000) return head + "||";
+            List<Drv> drv = null; long bo = 0;
+            foreach (long baseOff in new long[] { 0, t }) {
+                foreach (int stride in new int[] { 0x98, 0x90, 0xA0, 0x88, 0xA8, 0xB0, 0x80 }) {
+                    foreach (int[] f in new int[][] { new int[] { 0x38, 0x48 }, new int[] { 0x30, 0x40 } }) {
+                        drv = ReadDrivers(b, baseOff, listOff, count, stride, f[0], f[1]);
+                        if (drv != null) { bo = baseOff; break; }
+                    }
+                    if (drv != null) break;
+                }
+                if (drv != null) break;
+            }
+            if (drv == null) return head + "||";
+            List<string> ph = new List<string>();
+            foreach (ulong v in p) { string h = Hit(drv, v); if (h != null && !ph.Contains(h)) ph.Add(h); }
+            List<string> st = new List<string>();
+            long s0 = bo + stackOff;
+            if (stackSize > 0 && stackSize <= 0x10000 && s0 > 0 && s0 + stackSize <= b.Length) {
+                for (long o = s0; o + 8 <= s0 + stackSize; o += 8) {
+                    string h = Hit(drv, U64(b, o));
+                    if (h != null && !st.Contains(h)) { st.Add(h); if (st.Count >= 12) break; }
+                }
+            }
+            return head + "|" + string.Join(",", ph.ToArray()) + "|" + string.Join(",", st.ToArray());
+        } catch { return ""; }
+    }
+}
+
 public static class AeroxDisplay {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct DISPLAY_DEVICE {

@@ -417,6 +417,19 @@ function Add-SelfUpdating([string]$Id, [string]$Version) {
         [IO.File]::WriteAllLines((Get-SelfUpdatingFile), [string[]]@($all | Select-Object -Last 200), (New-Object Text.UTF8Encoding($false)))
     } catch {}
 }
+# Installateur d'un logiciel qui échoue (winget 0x8A150006) : la 2e fois pour la même version, le logiciel est
+# considéré comme « à mettre à jour depuis lui-même » (iCUE, etc.) au lieu de réessayer et d'échouer à chaque fois
+function Register-InstallerFailure([string]$Id, [string]$Version) {
+    if (-not $Id -or -not $Version) { return $false }
+    try {
+        $f = Join-Path (Get-SecureDir '') 'maj-echecs.txt'
+        $k = Get-SelfUpdatingKey $Id $Version
+        $all = @(); if (Test-Path -LiteralPath $f) { $all = @(Get-Content -LiteralPath $f -Encoding UTF8 -ErrorAction Stop | Where-Object { $_ }) }
+        if ($all -contains $k) { Add-SelfUpdating $Id $Version; return $true }
+        [IO.File]::WriteAllLines($f, [string[]]@(@($all + $k) | Select-Object -Last 200), (New-Object Text.UTF8Encoding($false)))
+    } catch {}
+    return $false
+}
 # Le logiciel est-il encore vraiment sur le PC ? (son désinstalleur ou son dossier existe)
 function Test-AppPresent($App) {
     if ("$($App.Cmd)" -match '(?i)msiexec') { return $true }      # installé avec Windows Installer : Windows tient sa liste à jour
@@ -669,6 +682,58 @@ $script:BrandSites = @(
     @{ Re = 'biostar';           Name = 'Biostar';  Site = 'biostar.com.tw';  Tool = "Mise à jour depuis le BIOS (clé USB)." }
 )
 
+# Page de téléchargement du BIOS de CE PC sur le site du fabricant. Chaque adresse devinée est vérifiée (la page
+# existe et parle bien de ce modèle) avant d'être ouverte ; sinon la recherche du site du fabricant, sinon un moteur.
+function Test-WebPageHas([string]$Url, [string[]]$Tokens) {
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 10 -MaximumRedirection 5 -UserAgent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' -ErrorAction Stop
+        if ([int]$r.StatusCode -ne 200) { return $false }
+        $c = "$($r.Content)"
+        if ($c -match '(?is)<title[^>]*>(.*?)</title>' -and $matches[1] -match '(?i)\b404\b|not found|introuvable|n.existe pas|page error') { return $false }
+        if (-not $Tokens.Count) { return $true }
+        $flat = ($c -replace '%20', ' ' -replace '[\s\-_]+', '').ToLowerInvariant()
+        foreach ($t in $Tokens) { if ($t -and $flat.Contains(($t -replace '[\s\-_]+', '').ToLowerInvariant())) { return $true } }
+        return $false
+    } catch { return $false }
+}
+function Find-BiosPage {
+    Step "Recherche de la page du BIOS de ton PC sur le site du fabricant"
+    $sync.BiosUrl = $null
+    $i = $sync.SysInfo; if (-not $i) { $i = Get-SystemInfo }
+    $m = ("$($i.Model)" -replace '\s*\(MS-[0-9A-Z]+\)\s*', ' ').Trim()
+    $enc = [uri]::EscapeDataString($m)
+    $dash = (($m -replace '[()]', '' -replace '\s+', '-').Trim('-'))
+    $mk = "$($i.Maker)"
+    $cands = New-Object System.Collections.ArrayList
+    $add = { param($u, $tok, $kind, [bool]$trust = $false) [void]$cands.Add(@{ Url = $u; Tok = @($tok); Kind = $kind; Trust = $trust }) }
+    if ($mk -match '(?i)dell|alienware' -and $i.Serial) { & $add ("https://www.dell.com/support/home/fr-fr/product-support/servicetag/{0}/drivers" -f [uri]::EscapeDataString($i.Serial)) @() 'exact' $true }
+    elseif ($mk -match '(?i)asus') {
+        & $add ("https://www.asus.com/supportonly/{0}/helpdesk_bios/" -f $enc) @($m) 'exact'
+        & $add ("https://www.asus.com/fr/searchresult?searchType=support&searchKey={0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)micro-star|\bmsi\b') {
+        & $add ("https://www.msi.com/Motherboard/{0}/support#bios" -f $dash) @($m) 'exact'
+        & $add ("https://www.msi.com/Laptop/{0}/support#bios" -f $dash) @($m) 'exact'
+        & $add ("https://www.msi.com/search/{0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)gigabyte|aorus') {
+        foreach ($sfx in '', '-rev-10', '-rev-1x', '-rev-11', '-rev-12') { & $add ("https://www.gigabyte.com/fr/Motherboard/{0}{1}/support#support-dl-bios" -f $dash, $sfx) @($m) 'exact' }
+        & $add ("https://www.gigabyte.com/fr/Search?kw={0}" -f $enc) @() 'search'
+    } elseif ($mk -match '(?i)asrock') {
+        & $add ("https://www.asrock.com/mb/{0}/{1}/index.fr.asp#BIOS" -f $(if ($i.CpuAmd) { 'AMD' } else { 'Intel' }), $enc) @($m) 'exact'
+    } elseif ($mk -match '(?i)lenovo' -and $i.Serial) {
+        & $add ("https://pcsupport.lenovo.com/fr/fr/products/{0}/downloads" -f [uri]::EscapeDataString($i.Serial)) @($i.Serial) 'exact'
+    }
+    foreach ($c in $cands) {
+        if ($c.Trust -or (Test-WebPageHas $c.Url $c.Tok)) {
+            $sync.BiosUrl = @{ Url = $c.Url; Kind = $c.Kind }
+            Log $(if ($c.Kind -eq 'exact') { "   ✔ Page du BIOS de ton modèle trouvée sur le site du fabricant." } else { "   ✔ Recherche de ton modèle sur le site du fabricant (la page exacte n'a pas pu être vérifiée)." })
+            return
+        }
+    }
+    $q = "$($i.Model) BIOS"
+    if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
+    $sync.BiosUrl = @{ Url = ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)); Kind = 'web' }
+    Log "   • Le site du fabricant n'a pas donné de page vérifiable pour ce modèle : recherche limitée à son site officiel."
+}
 function Get-SystemInfo {
     $i = @{ Ready = $true }
     try {
@@ -685,6 +750,8 @@ function Get-SystemInfo {
         $i.Maker = if ($i.Custom) { $i.BoardMaker } else { $i.PcMaker }
         $i.Model = if ($i.Custom) { $i.BoardModel } else { $i.PcModel }
         $i.BiosMaker = "$($bios.Manufacturer)".Trim(); $i.BiosVersion = "$($bios.SMBIOSBIOSVersion)".Trim()
+        # Numéro de série (Dell : « service tag ») : seulement pour ouvrir la page exacte du fabricant, jamais dans les rapports
+        $sn = "$($bios.SerialNumber)".Trim(); if ($sn -and $sn -notmatch '(?i)^(to be filled|default string|system serial|o\.e\.m|none|0+$)') { $i.Serial = $sn }
         if ($bios.ReleaseDate) { $i.BiosDate = ConvertTo-DateSafe $bios.ReleaseDate; $i.BiosAgeDays = [int]((Get-Date) - $i.BiosDate).TotalDays }
         $brand = $script:BrandSites | Where-Object { $i.Maker -match "(?i)$($_.Re)" } | Select-Object -First 1
         if ($brand) { $i.Brand = $brand.Name; $i.BrandSite = $brand.Site; $i.BrandTool = $brand.Tool }
@@ -2145,6 +2212,65 @@ function Get-StabilitySince([string]$Id, [datetime]$Default) {
     try { $h = $AppInfo.StabilityFixAt; if ($h -and $h[$Id]) { $f = [datetime]$h[$Id]; if ($f -gt $Default) { return $f } } } catch {}
     return $Default
 }
+# ---------------------------------------------------------------- Écrans bleus : trouver le coupable
+# Les rapports de plantage de Windows (C:\Windows\Minidump) gardent les pilotes présents sur la pile au moment du
+# plantage : le premier pilote qui n'est pas de Microsoft est presque toujours le fautif (comme BlueScreenView).
+$script:BsodCore = '(?i)^(ntoskrnl|ntkrnl\w*|hal\w*|pshed|kd\w*|werkernel|ci|clipsp|cng|ksecdd|msrpc|tm|clfs|fltmgr|wdf01000|wdfldr|acpi|pci|volmgr|volmgrx|mountmgr|partmgr)\.(exe|dll|sys)$'
+function Get-DriverFileInfo([string]$Name, [hashtable]$Paths) {
+    $p = $Paths[$Name.ToLowerInvariant()]
+    if (-not $p) { foreach ($d in "$env:SystemRoot\System32\drivers", "$env:SystemRoot\System32") { $c = Join-Path $d $Name; if (Test-Path -LiteralPath $c) { $p = $c; break } } }
+    $r = @{ Name = $Name; Company = ''; Desc = ''; Ms = $false }
+    if ($p -and (Test-Path -LiteralPath $p)) {
+        try { $v = [Diagnostics.FileVersionInfo]::GetVersionInfo($p); $r.Company = "$($v.CompanyName)".Trim(); $r.Desc = "$($v.FileDescription)".Trim() } catch {}
+    }
+    $r.Ms = ($r.Company -match '(?i)^microsoft') -or (-not $r.Company -and $Name -match $script:BsodCore)
+    return $r
+}
+function Get-BsodKind($D) {
+    $t = "$($D.Name) $($D.Company) $($D.Desc)"
+    if ($t -match '(?i)nvlddmkm|amdkmdag|atikmdag|amdkmpfd|igdkmd|igfx|dxgkrnl|dxgmms|win32k|basicdisplay|graphics|display') { return 'gpu' }
+    if ($t -match '(?i)\bvgk|easyanticheat|bedaisy|battleye|faceit|mhyprot|xigncode|nprotect|ricochet|anti.?cheat') { return 'anticheat' }
+    if ($t -match '(?i)avast|avg|kaspersky|bitdefender|norton|symantec|mcafee|eset|malwarebytes|sophos|trend ?micro|avira|panda|webroot') { return 'antivirus' }
+    if ($t -match '(?i)netw|wlan|wifi|wi-fi|ethernet|network|\brt\d|rtwlan|rtl8|e1d|e2f|e1r|killer|bcm|athw|qcamain|mt76|tcpip|ndis|netio|afd') { return 'network' }
+    if ($t -match '(?i)storport|stornvme|storahci|iastor|nvme|ahci|raid|disk|classpnp|ntfs|samsung.*nvm|\bstor') { return 'storage' }
+    if ($t -match '(?i)usb|xhci|hub') { return 'usb' }
+    if ($t -match '(?i)audio|sound|realtek high definition|hdaudio|nahimic|sonic') { return 'audio' }
+    return 'other'
+}
+# Analyse des écrans bleus depuis $Since : { Dumps = [ { Date; Code; Culprit (infos du pilote ou $null); Readable } ]; Top; TopCount; Whea; Xmp }
+function Get-BsodAnalysis([datetime]$Since) {
+    $res = @{ Dumps = @(); Top = $null; TopCount = 0; Whea = 0; Xmp = '' }
+    $paths = @{}
+    try { foreach ($d in @(Get-CimInstance Win32_SystemDriver -ErrorAction Stop)) { $pn = "$($d.PathName)" -replace '^\\\?\?\\', '' -replace '^\\SystemRoot', $env:SystemRoot -replace '^system32', "$env:SystemRoot\System32"; if ($pn) { $paths[[IO.Path]::GetFileName($pn).ToLowerInvariant()] = [Environment]::ExpandEnvironmentVariables($pn) } } } catch {}
+    $files = @(Get-ChildItem -LiteralPath "$env:SystemRoot\Minidump" -Filter '*.dmp' -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $Since } | Sort-Object LastWriteTime -Descending | Select-Object -First 10)
+    $list = New-Object System.Collections.ArrayList
+    foreach ($f in $files) {
+        $a = ''; try { $a = [AeroxDump]::Analyze($f.FullName) } catch {}
+        $o = @{ Date = $f.LastWriteTime; Code = ''; Culprit = $null; Readable = $false; Stack = '' }
+        if ($a) {
+            $q = $a.Split('|'); $o.Code = $q[0]
+            $mods = @(@($q[5] -split ',') + @($q[6] -split ',') | Where-Object { $_ } | Select-Object -Unique)
+            $o.Readable = ($mods.Count -gt 0); $o.Stack = ($q[6] -replace ',', ', ')
+            $infos = @($mods | ForEach-Object { Get-DriverFileInfo $_ $paths })
+            $pick = @($infos | Where-Object { -not $_.Ms }) | Select-Object -First 1
+            if (-not $pick) { $pick = @($infos | Where-Object { $_.Name -notmatch $script:BsodCore }) | Select-Object -First 1 }
+            if ($pick) { $pick.Kind = Get-BsodKind $pick; $o.Culprit = $pick }
+        }
+        [void]$list.Add($o)
+    }
+    $res.Dumps = $list.ToArray()
+    $g = @($res.Dumps | Where-Object { $_.Culprit } | Group-Object { $_.Culprit.Name } | Sort-Object Count -Descending)
+    if ($g.Count) { $res.Top = ($g[0].Group | Select-Object -First 1).Culprit; $res.TopCount = $g[0].Count }
+    try { $res.Whea = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $Since } -ErrorAction SilentlyContinue | Where-Object { $_.Level -le 2 }).Count } catch {}
+    try {
+        $m = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop)
+        $t = @($m | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
+        $spd = @($m | ForEach-Object { [int]$_.ConfiguredClockSpeed } | Where-Object { $_ }) | Sort-Object | Select-Object -First 1
+        if (($t -eq 26 -and $spd -gt 3200) -or ($t -eq 34 -and $spd -gt 6400)) { $res.Xmp = "$(if ($t -eq 26) { 'DDR4' } else { 'DDR5' }) à $spd MT/s" }
+    } catch {}
+    return $res
+}
+
 # Programmes qui font partie de Windows : ils ne se « mettent pas à jour » comme un logiciel
 $script:WinComponents = '(?i)^(dwm|explorer|svchost|sihost|ctfmon|runtimebroker|taskhostw|applicationframehost|shellexperiencehost|startmenuexperiencehost|searchhost|searchapp|searchui|textinputhost|lockapp|systemsettings|winlogon|csrss|lsass|spoolsv|audiodg|fontdrvhost|dllhost|wmiprvse|msedgewebview2|widgets|phoneexperiencehost)\.exe$'
 function Test-Stability {
@@ -2158,15 +2284,59 @@ function Test-Stability {
         $main = $codes | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
         $info = if ($main -and $script:BugChecks.ContainsKey($main.Name)) { $script:BugChecks[$main.Name] } else { @('Erreur système', "Un pilote ou un composant matériel a provoqué un arrêt brutal de Windows.", 'drv') }
         $codeTxt = if ($main) { "{0} ({1})" -f $info[0], $main.Name } else { '' }
+        # Les rapports de plantage : quel pilote était en cause à chaque écran bleu
+        $an = Get-BsodAnalysis $since
+        foreach ($d in $an.Dumps) {
+            $nm = if ($script:BugChecks.ContainsKey($d.Code)) { $script:BugChecks[$d.Code][0] } else { 'code' }
+            Log ("   • Écran bleu du {0} : {1} ({2}){3}" -f $d.Date.ToString('dd/MM/yyyy HH:mm'), $nm, $d.Code, $(if ($d.Culprit) { " → pilote en cause : $($d.Culprit.Name)" + $(if ($d.Culprit.Company) { " ($($d.Culprit.Company))" } else { '' }) } elseif ($d.Readable) { " → seulement Windows sur la pile ($($d.Stack))" } else { " → rapport illisible" }))
+        }
+        if (-not $an.Dumps.Count) { Log "   • Aucun rapport d'écran bleu gardé par Windows (C:\Windows\Minidump vide) : le coupable ne peut pas être lu, seulement le code." }
+        $top = $an.Top; $detail = 'Code'; $fixL = "Réparer les fichiers Windows"; $fixA = 'Repair-System'; $ui = ''
+        $cause = $info[1]
         $steps = switch ($info[2]) {
             'hw'  { @("Si tu as overclocké le PC ou activé XMP / EXPO dans le BIOS, remets les réglages par défaut.", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Vérifie que le PC ne chauffe pas (poussière, ventilateurs).", "Mets à jour Windows et tes pilotes (onglet Mises à jour).") }
             'gpu' { @("Mets à jour le pilote de la carte graphique avec l'outil officiel (onglet Mises à jour > Pilotes).", "Si tu as overclocké la carte graphique, remets-la par défaut.", "Vérifie que la carte graphique ne chauffe pas (poussière, ventilateurs).") }
             default { @("Mets à jour le pilote de la carte graphique et du Wi-Fi / réseau (onglet Mises à jour > Pilotes).", "Installe toutes les mises à jour Windows.", "Si les écrans bleus continuent, désinstalle le dernier logiciel ou pilote installé avant qu'ils commencent.") }
         }
-        Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail 'Code' -Code $codeTxt -Cause $info[1] `
-            -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." `
-            -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nElle corrige les fichiers système abîmés ; pour les pilotes, suis aussi les étapes « Voir comment faire »." `
-            -Steps $steps
+        if ($top) {
+            $extra = (@($top.Desc, $top.Company) | Where-Object { $_ }) -join ', '
+            $who = "« $($top.Name) »" + $(if ($extra) { " ($extra)" } else { '' })
+            $detail = "Pilote en cause : $($top.Name)"
+            $cause = "Les rapports de plantage de Windows désignent $who dans $($an.TopCount) écran(s) bleu(s) sur $(@($an.Dumps).Count) analysé(s). "
+            switch ($top.Kind) {
+                'gpu' { $cause += "C'est le pilote de la carte graphique."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si ça continue : réinstalle-le proprement (option « installation propre / réinitialiser » de l'installateur NVIDIA ou AMD).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.") }
+                'network' { $cause += "C'est un pilote réseau (carte réseau ou Wi-Fi)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote réseau / Wi-Fi depuis le site du fabricant de ta carte mère ou de ton PC (pas seulement Windows Update).", "Si c'est une carte Killer ou Realtek : désinstalle son logiciel d'« optimisation » réseau s'il y en a un.") }
+                'anticheat' { $cause += "C'est l'anti-triche d'un jeu."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour le jeu qui l'utilise (ou réinstalle-le) : l'anti-triche se met à jour avec lui.", "Si tu n'y joues plus, désinstalle le jeu : son anti-triche part avec.") }
+                'antivirus' { $cause += "C'est un antivirus en plus de celui de Windows."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Désinstalle cet antivirus : Windows Defender protège déjà très bien le PC, et deux antivirus se gênent.", "Si tu veux le garder, mets-le à jour depuis son propre menu.") }
+                'storage' { $cause += "C'est un pilote du disque (stockage)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe les pilotes « chipset » et « stockage » du site du fabricant de ta carte mère.", "Mets à jour le firmware de ton SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Sauvegarde tes fichiers importants en attendant.") }
+                'usb' { $cause += "C'est un pilote USB (un appareil branché en USB)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.") }
+                'audio' { $cause += "C'est un pilote audio."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote audio du site du fabricant de ta carte mère ou de ton PC.", "Désinstalle les logiciels d'« effets sonores » en plus (Nahimic, Sonic Studio…) si tu ne t'en sers pas.") }
+                default { $cause += "Il a été installé par $(if ($top.Company) { $top.Company } else { 'un logiciel' })."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour ou désinstalle le logiciel de $(if ($top.Company) { $top.Company } else { 'ce pilote' }).", "Si les écrans bleus ont commencé juste après l'avoir installé, désinstalle-le.") }
+            }
+        } elseif (@($an.Dumps | Where-Object { $_.Readable }).Count) {
+            $cause = "Les rapports de plantage ne montrent que Windows lui-même, aucun pilote en particulier : c'est le signe classique d'un souci de mémoire vive (RAM), d'un réglage trop poussé (XMP/EXPO, overclocking) ou de fichiers de Windows abîmés."
+            $steps = @("Lance « Réparer les fichiers Windows » (bouton vert).", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Si XMP / EXPO est activé dans le BIOS, essaie sans pendant quelques jours.")
+        }
+        # Indices matériels en plus (faits relevés par Windows, pas des suppositions)
+        if ($an.Whea -gt 0) { $cause += " Windows a aussi noté $($an.Whea) erreur(s) matérielle(s) (WHEA) : le processeur, la RAM ou la carte mère signalent eux-mêmes un problème."; $steps = @($steps) + "Erreurs matérielles : enlève tout overclocking, mets à jour le BIOS et vérifie les températures." }
+        if ($an.Xmp -and ($an.Whea -gt 0 -or $info[2] -eq 'hw' -or -not $top)) { $cause += " La mémoire tourne en profil XMP/EXPO ($($an.Xmp)) : souvent stable, mais c'est un overclocking, à désactiver pour tester." }
+        if ($ui) {
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
+                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -FixLabel $fixL -UiFix $ui -Steps $steps
+        } else {
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
+                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." `
+                -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nElle corrige les fichiers système abîmés ; pour les pilotes, suis aussi les étapes « Voir comment faire »." `
+                -Steps $steps
+        }
     } else { Add-Ok "Aucun écran bleu ces 30 derniers jours" }
 
     $kp = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = (Get-StabilitySince 'power41' (Get-Date).AddDays(-30)) } -ErrorAction SilentlyContinue |
@@ -2395,6 +2565,12 @@ function Set-NetAdapterSleep([string]$Name, [bool]$Allow) {
                 Set-CimInstance -InputObject $x -Property @{ Enable = $Allow } -ErrorAction Stop
                 $done = $true
             }
+        }
+        # Relu aussitôt : certains pilotes acceptent la demande sans l'appliquer (retour testeur : « réglé » puis toujours là)
+        if ($done -and -not $Allow) {
+            Start-Sleep -Milliseconds 500
+            $still = @(Get-CimInstance -Namespace 'root/wmi' -ClassName MSPower_DeviceEnable -ErrorAction SilentlyContinue | Where-Object { "$($_.InstanceName)".StartsWith($pnp, [StringComparison]::OrdinalIgnoreCase) -and $_.Enable })
+            if ($still.Count) { $done = $false; Log "   • Le pilote de la carte n'a pas pris le réglage tout de suite : il est enregistré pour le prochain redémarrage." }
         }
         if (-not $done) {
             $cls = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}'
@@ -3668,6 +3844,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
                 -1978334975 { "le logiciel est ouvert, ferme-le puis réessaie" }
                 -1978334974 { "une autre installation est déjà en cours" }
                 -1978335212 { "logiciel introuvable dans le catalogue" }
+                -1978335226 { "son propre installateur a échoué" + $(if (Register-InstallerFailure $id $ver) { " deux fois : mets-le à jour depuis le logiciel lui-même (souvent Paramètres > Mises à jour), il ne sera plus proposé ici pour cette version" } else { " : réessaie plus tard, ou mets-le à jour depuis le logiciel lui-même" }) }
                 default { "code 0x{0:X8}" -f $ec }
             }
             $failed += "$name ($why)"
