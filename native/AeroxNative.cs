@@ -554,6 +554,18 @@ public static class AeroxTrust {
 public static class AeroxSpeed {
     const string CfBase = "https://speed.cloudflare.com/";
     public const string OoklaZip = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip";
+    // Empreinte SHA-256 de speedtest.exe contenu dans ce zip (relevée sur le zip officiel)
+    static readonly string[] OoklaSha = new string[] { };
+    public static bool IsTrustedOokla(string exe) {
+        try {
+            if (AeroxTrust.IsSignedBy(exe, "Ookla")) return true;
+            string h;
+            using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+            using (FileStream fs = File.OpenRead(exe)) h = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+            foreach (string k in OoklaSha) if (string.Equals(k, h, StringComparison.OrdinalIgnoreCase)) return true;
+        } catch { }
+        return false;
+    }
     public static volatile string Phase = "";      // install, meta, ping, down, up, done, error, stopped
     public static volatile bool Stop = false;
     public static double Ping = -1, Jitter = -1, Down = -1, Up = -1, Live = 0, Percent = 0, Loss = -1;
@@ -620,10 +632,11 @@ public static class AeroxSpeed {
             try { File.Delete(zip); } catch { }
             if (!File.Exists(exe)) throw new Exception("speedtest.exe introuvable dans le paquet d'Ookla");
         }
-        // Lancé avec les droits admin d'AEROX : seulement s'il est bien signé par Ookla (sinon : retéléchargé une fois, puis Cloudflare)
-        if (!AeroxTrust.IsSignedBy(exe, "Ookla")) {
+        // Lancé avec les droits admin d'AEROX : seulement le programme d'Ookla connu (empreinte de la version 1.2.0, Ookla
+        // ne signe pas son outil), ou signé par Ookla s'il le fait un jour. Sinon : supprimé, et test sur Cloudflare.
+        if (!IsTrustedOokla(exe)) {
             try { File.Delete(exe); } catch { }
-            throw new Exception("le programme de test n'a pas la signature d'Ookla : il n'est pas lancé, par sécurité");
+            throw new Exception("le programme de test n'est pas celui d'Ookla attendu : il n'est pas lancé, par sécurité");
         }
         Phase = "meta"; Engine = "ookla";
         ProcessStartInfo psi = new ProcessStartInfo(exe, "--accept-license --accept-gdpr --format=jsonl --progress=yes");

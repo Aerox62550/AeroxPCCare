@@ -369,7 +369,7 @@ function Invoke-Smoke {
             Invoke-WebRequest -Uri ([AeroxSpeed]::OoklaZip) -OutFile "$d\o.zip" -UseBasicParsing -TimeoutSec 30
             Expand-Archive "$d\o.zip" $d -Force
             $sg = Get-AuthenticodeSignature "$d\speedtest.exe"
-            Write-Host ("        speedtest.exe : {0} · {1} · accepté par AEROX : {2}" -f $sg.Status, $sg.SignerCertificate.Subject, [AeroxTrust]::IsSignedBy("$d\speedtest.exe", 'Ookla'))
+            Write-Host ("        speedtest.exe : {0} · {1} · SHA-256 {2} · accepté par AEROX : {3}" -f $sg.Status, $sg.SignerCertificate.Subject, (Get-FileHash "$d\speedtest.exe" -Algorithm SHA256).Hash, [AeroxSpeed]::IsTrustedOokla("$d\speedtest.exe"))
         } catch { Write-Host "        speedtest.exe : non testé ($($_.Exception.Message))" }
     }
     Smoke 'SFC : résultat lu dans le journal de Windows (toutes langues)' {
@@ -424,8 +424,10 @@ function Invoke-Smoke {
     Smoke 'Dépannage : Discord' { Repair-Discord }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
         Find-BiosPage
-        if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" }
-        Write-Host ("        ce PC : {0} → {1}" -f $sync.BiosUrl.Kind, $sync.BiosUrl.Url)
+        $si = $sync.SysInfo; if (-not $si) { $si = Get-SystemInfo }
+        if ("$($si.Model)$($si.Maker)".Trim()) { if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" } }
+        elseif ($sync.BiosUrl) { throw "recherche lancée alors que Windows ne connaît pas le modèle" }
+        Write-Host ("        ce PC : « {0} » « {1} » → {2}" -f $si.Maker, $si.Model, $(if ($sync.BiosUrl) { "$($sync.BiosUrl.Kind) $($sync.BiosUrl.Url)" } else { 'pas de recherche (modèle inconnu)' }))
         # Les adresses devinées pour quelques cartes mères connues (information : un site peut bloquer les robots)
         $tests = @(
             @('ASUS', 'https://www.asus.com/supportonly/ROG%20STRIX%20B550-F%20GAMING/helpdesk_bios/', 'ROG STRIX B550-F GAMING'),
