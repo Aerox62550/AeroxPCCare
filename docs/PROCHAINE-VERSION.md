@@ -2,6 +2,15 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.2.1 : relecture Gemini n° 4 (partie 1 reçue, vérifiée point par point)
+
+- Raccourcis temporaires (.lnk / .url ouverts dans la session de la personne) : dossier protégé (Program Files\AeroxPCCare\protege\session) au lieu de ProgramData\AeroxPCCare, qu'un autre compte pouvait créer avant AEROX et dont il pouvait remplacer le raccourci (lancement sur le compte de la personne, droits limités : pas d'élévation admin, mais un autre compte pouvait faire lancer un programme chez elle). Vrai.
+- Désinstallation : entrée HKLM dont le désinstalleur est hors de Windows / Program Files (D:\Jeux, dossier perso…) → lancé sur le compte de la personne, sans les droits admin d'AEROX (il demande l'UAC lui-même si besoin). Avant : lancé en admin alors qu'un compte standard pouvait remplacer le fichier. Vrai, important.
+- Test de débit (AeroxSpeed.RunOokla) : garde-fou (aucune ligne pendant 20 s ou plus de 90 s) → speedtest.exe arrêté, passage sur Cloudflare. Avant : seul « Annuler » débloquait. Vrai.
+- Complete-Job : la fenêtre de résultat (mises à jour, nettoyage, espace…) s'ouvre aussi quand l'analyse a noté une erreur mineure (affichée avant). Vrai.
+- Identifiants winget coupés (« … ») : jamais retenus comme « se met à jour tout seul » ni comme échec d'installateur. Précaution (les rapports montrent des identifiants complets).
+- Écran de démarrage du lanceur : icône libérée après usage. Mineur.
+
 ## Publié en 2.2.0 : diagnostic approfondi (Sam : « qu'elle comprenne et propose les solutions, comme pour les écrans bleus »)
 
 - Démarrage lent (Test-BootSpeed, catégorie Démarrage) : journal Diagnostics-Performance de Windows, événements 101 logiciel / 102 pilote / 103 service / 106 tâche de fond / 109 périphérique sur 30 jours ; gardé si ça revient (≥ 2 fois) avec ≥ 3 s de retard moyen ; signalé si le dernier démarrage dépasse 45 s. Nom, type, retard moyen, nombre de fois ; conseils selon le type ; temps du dernier démarrage dans le journal.

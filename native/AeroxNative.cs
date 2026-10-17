@@ -605,8 +605,22 @@ public static class AeroxSpeed {
             if (m.Length > 0 && (e.Data.IndexOf("\"error\"", StringComparison.OrdinalIgnoreCase) >= 0 || e.Data.IndexOf("[error]", StringComparison.OrdinalIgnoreCase) >= 0 || !e.Data.StartsWith("{"))) lastErr = m;
         };
         proc.Start(); proc.BeginErrorReadLine();
+        // Garde-fou : speedtest.exe qui ne dit plus rien pendant 20 s (ou dure plus de 90 s) est arrêté, et le test passe
+        // sur les serveurs de Cloudflare au lieu de rester bloqué (relecture Gemini n° 4)
+        DateTime started = DateTime.UtcNow; long lastTick = DateTime.UtcNow.Ticks; bool watchdog = false;
+        Process p0 = proc;
+        Thread guard = new Thread(delegate() {
+            while (!p0.HasExited && !Stop) {
+                Thread.Sleep(1000);
+                if ((DateTime.UtcNow - new DateTime(Interlocked.Read(ref lastTick), DateTimeKind.Utc)).TotalSeconds > 20 || (DateTime.UtcNow - started).TotalSeconds > 90) {
+                    watchdog = true; try { if (!p0.HasExited) p0.Kill(); } catch { } break;
+                }
+            }
+        });
+        guard.IsBackground = true; guard.Start();
         string line;
         while ((line = proc.StandardOutput.ReadLine()) != null) {
+            Interlocked.Exchange(ref lastTick, DateTime.UtcNow.Ticks);
             if (Stop) break;
             string type = Str(line, "type");
             switch (type) {
@@ -645,6 +659,7 @@ public static class AeroxSpeed {
         try { proc.WaitForExit(5000); } catch { }
         if (Stop) { Phase = "stopped"; return true; }
         if (gotResult && Down >= 0) { Live = 0; Percent = 100; Phase = "done"; return true; }
+        if (watchdog) { Error = "Speedtest d'Ookla ne répondait plus"; return false; }
         Error = string.IsNullOrEmpty(lastErr) ? "pas de résultat" : lastErr;
         return false;
     }

@@ -349,6 +349,10 @@ function Invoke-Smoke {
         Write-Host ("        ce PC : {0} rapport(s), erreurs matérielles {1}, XMP « {2} »" -f @($an.Dumps).Count, $an.Whea, $an.Xmp)
         $k = Get-DriverFileInfo 'ntoskrnl.exe' @{}; if (-not $k.Ms) { throw "noyau de Windows pas reconnu comme Microsoft ($($k.Company))" }
     }
+    Smoke 'Sécurité : raccourcis de session dans le dossier protégé' {
+        $p = New-SessionShortcutPath '.lnk'
+        if (-not $p.StartsWith((Join-Path $AppInfo.Secure 'session'), [StringComparison]::OrdinalIgnoreCase)) { throw "raccourci hors du dossier protégé : $p" }
+    }
     Smoke 'Avis : gros mots masqués' {
         $r = Hide-Profanity "Super logiciel (j'aime la chatte), putain de console, conseil pour Bitcoin"
         Write-Host "        $r"

@@ -300,7 +300,7 @@ public class AeroxSplash {
                     try { using (System.Drawing.Pen pen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(44, 50, 68))) e.Graphics.DrawRectangle(pen, 0, 0, f.ClientSize.Width - 1, f.ClientSize.Height - 1); } catch { }
                 };
                 PictureBox pb = new PictureBox(); pb.Size = new System.Drawing.Size(S(44), S(44)); pb.Location = new System.Drawing.Point((W - S(44)) / 2, S(22)); pb.SizeMode = PictureBoxSizeMode.Zoom;
-                try { pb.Image = new System.Drawing.Icon(icoPath, 64, 64).ToBitmap(); } catch { }
+                try { using (System.Drawing.Icon ic = new System.Drawing.Icon(icoPath, 64, 64)) { pb.Image = ic.ToBitmap(); } } catch { }
                 Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 14f, System.Drawing.FontStyle.Bold);
                 t1.AutoSize = false; t1.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; t1.Location = new System.Drawing.Point(0, S(72)); t1.Size = new System.Drawing.Size(W, S(30));
                 Label t2 = new Label(); t2.Text = stepText; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 9.5f);

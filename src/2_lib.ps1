@@ -19,8 +19,9 @@ function Log([string]$Message) {
 # Dossier des raccourcis temporaires ouverts dans la session de la personne : un nom imprévisible à chaque fois
 # (personne ne peut préparer ou remplacer le fichier à l'avance), et les anciens sont effacés.
 function New-SessionShortcutPath([string]$Ext) {
-    $dir = Join-Path $env:ProgramData 'AeroxPCCare'
-    New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+    # Dans le dossier protégé (Program Files) : ProgramData laisse n'importe quel compte créer le dossier avant AEROX
+    # et remplacer le raccourci entre son écriture et son ouverture (relecture Gemini n° 4)
+    $dir = Get-SecureDir 'session'
     foreach ($old in @(Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(lien|lancer)' -and $_.LastWriteTime -lt (Get-Date).AddMinutes(-10) })) { try { Remove-Item -LiteralPath $old.FullName -Force } catch {} }
     return (Join-Path $dir ("{0}-{1}{2}" -f $(if ($Ext -eq '.url') { 'lien' } else { 'lancer' }), [guid]::NewGuid().ToString('N'), $Ext))
 }
@@ -417,7 +418,8 @@ function Get-SelfUpdatingKeys {
     return @()
 }
 function Add-SelfUpdating([string]$Id, [string]$Version) {
-    if (-not $Id -or -not $Version) { return }
+    # Identifiant ou version coupés par winget (« … ») : pas fiables, rien n'est retenu
+    if (-not $Id -or -not $Version -or "$Id$Version" -match [char]0x2026) { return }
     try {
         $k = Get-SelfUpdatingKey $Id $Version
         $all = @(Get-SelfUpdatingKeys | Where-Object { $_ -ne $k }) + $k
@@ -3673,6 +3675,16 @@ function Uninstall-App([string]$Kind, [string]$Cmd, [string]$Name, [bool]$PerUse
     }
     # %ProgramFiles%… écrit tel quel dans le registre : Start-Process ne le remplace pas tout seul
     $exe = [Environment]::ExpandEnvironmentVariables($exe)
+    # Désinstalleur rangé hors des dossiers protégés de Windows (D:\Jeux, dossier perso…) : un programme sans droits admin
+    # pourrait l'avoir remplacé. Il est alors lancé sur le compte de la personne, SANS les droits admin d'AEROX
+    # (il demandera lui-même l'autorisation de Windows s'il en a besoin). Relecture Gemini n° 4.
+    $full = ''; try { $full = [IO.Path]::GetFullPath($exe) } catch {}
+    $prot = @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') + '\' }
+    $safe = $full -and [AeroxSafeDelete]::IsDirectPath($full) -and @($prot | Where-Object { $full.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    if (-not $safe -and (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        if (-not (Start-AsSessionUser $exe $arg)) { throw "Le désinstalleur n'a pas pu être lancé sur ton compte. Désinstalle-le depuis Paramètres > Applications." }
+        return
+    }
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
         throw ("Le désinstalleur de « {0} » n'est plus sur le PC ({1}). Le logiciel a sans doute déjà été supprimé à la main, ou c'est son lanceur qui le gère (Steam, Epic, Bethesda, Ubisoft…) : désinstalle-le depuis ce lanceur. Sinon : Paramètres > Applications > Applications installées." -f $Name, $exe)
     }
@@ -4173,7 +4185,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
                 -1978334975 { "le logiciel est ouvert, ferme-le puis réessaie" }
                 -1978334974 { "une autre installation est déjà en cours" }
                 -1978335212 { "logiciel introuvable dans le catalogue" }
-                -1978335226 { "son propre installateur a échoué" + $(if (Register-InstallerFailure $id $ver) { " deux fois : mets-le à jour depuis le logiciel lui-même (souvent Paramètres > Mises à jour), il ne sera plus proposé ici pour cette version" } else { " : réessaie plus tard, ou mets-le à jour depuis le logiciel lui-même" }) }
+                -1978335226 { "son propre installateur a échoué" + $(if ("$id$ver" -notmatch [char]0x2026 -and (Register-InstallerFailure $id $ver)) { " deux fois : mets-le à jour depuis le logiciel lui-même (souvent Paramètres > Mises à jour), il ne sera plus proposé ici pour cette version" } else { " : réessaie plus tard, ou mets-le à jour depuis le logiciel lui-même" }) }
                 default { "code 0x{0:X8}" -f $ec }
             }
             $failed += "$name ($why)"
