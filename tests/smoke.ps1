@@ -495,6 +495,104 @@ function Invoke-Smoke {
     Smoke 'Fenêtre : aide à distance' { Show-RemoteHelpDialog }
     Smoke 'Lenteurs (20 s)' { Get-SlowReport }
     Smoke 'Fenêtre : lenteurs' { Show-SlowDialog }
+    Smoke 'Lenteurs : ce qui a été vérifié' {
+        $r = $sync.SlowReport
+        if (-not $r -or -not @($r.Checked).Count) { throw "pas de liste de vérifications" }
+        Write-Host ("        {0}" -f ((@($r.Checked) | ForEach-Object { $(if ($_.Ok) { 'OK ' } else { '!! ' }) + $_.T }) -join ' | '))
+        Write-Host ("        pistes : {0} · carte graphique mesurée : {1} ({2} %) · bridage : {3} · interruptions : {4} %" -f ((@($r.Findings) | ForEach-Object { $_.Id }) -join ', '), $r.GpuOk, $r.Gpu, $r.Limit, $r.Dpc)
+        # Aucune piste réseau inventée quand le ping ne répond pas (machine de test dans le cloud)
+        if (-not $r.Net.Ok -and @($r.Findings | Where-Object { $_.Id -in 'internet-pertes', 'ping-instable' }).Count) { throw "piste réseau sans mesure" }
+        foreach ($x in @($r.Findings)) { if (-not $x.Id -or -not $x.Title) { throw "piste sans identifiant" } }
+    }
+    Smoke 'Lag : règles de la connexion (cas fabriqués)' {
+        $ok = @{ Ok = $true; Loss = 0.0; Avg = 3.0; Jitter = 1.0; Max = 5.0 }; $off = @{ Ok = $false; Loss = 0.0; Avg = 0.0; Jitter = 0.0; Max = 0.0 }
+        $none = @{ Signal = -1; Band = '' }
+        $ids = { param($l) (@($l) | ForEach-Object { $_.Id }) -join ',' }
+        $c = & $ids (Get-NetFindings @{ Ok = $true; Loss = 8.0; Avg = 25.0; Jitter = 30.0; Max = 300.0 } @{ Ok = $true; Loss = 9.0; Avg = 60.0; Jitter = 35.0; Max = 400.0 } 0 0 $true @{ Signal = 45; Band = '2.4' })
+        if ($c -ne 'wifi-instable') { throw "Wi-Fi instable mal reconnu : $c" }
+        $c = & $ids (Get-NetFindings $ok @{ Ok = $true; Loss = 6.0; Avg = 30.0; Jitter = 5.0; Max = 90.0 } 0 0 $false $none)
+        if ($c -ne 'internet-pertes') { throw "pertes de la ligne mal reconnues : $c" }
+        $c = & $ids (Get-NetFindings $ok @{ Ok = $true; Loss = 0.0; Avg = 95.0; Jitter = 40.0; Max = 300.0 } (8MB) 0 $false $none)
+        if ($c -ne 'ping-instable,connexion-occupee') { throw "ping + téléchargement mal reconnus : $c" }
+        $c = & $ids (Get-NetFindings $off $off 0 0 $false $none)
+        if ($c) { throw "piste inventée sans mesure : $c" }
+        $c = & $ids (Get-NetFindings $ok $ok 0 0 $true @{ Signal = 85; Band = '5' })
+        if ($c) { throw "piste sur une connexion saine : $c" }
+        $c = & $ids (Get-NetFindings $ok $ok 0 0 $true @{ Signal = 35; Band = '2.4' })
+        if ($c -ne 'wifi-faible') { throw "Wi-Fi faible mal reconnu : $c" }
+        # Calculs du ping : pertes, moyenne, irrégularité
+        $s = New-PingSeries '10.0.0.1'; $s.Ok = 8; $s.Lost = 2; foreach ($t in 10, 12, 10, 30, 10, 10, 11, 10) { [void]$s.Times.Add([double]$t) }
+        $st = Get-PingStats $s
+        if ($st.Loss -ne 20 -or $st.Avg -ne 12.9 -or $st.Jitter -ne 6.6) { throw "calcul faux : $($st.Loss) % · $($st.Avg) ms · ±$($st.Jitter)" }
+        # Une adresse qui ne répond pas est abandonnée après 3 essais (jamais comptée comme des pertes)
+        $b = New-PingSeries '192.0.2.1'; $pg = New-Object System.Net.NetworkInformation.Ping; for ($i = 0; $i -lt 6; $i++) { Add-PingSample $b $pg }
+        if (-not $b.Off -or $b.Lost -ne 3 -or (Get-PingStats $b).Ok) { throw "adresse muette pas abandonnée ($($b.Lost) essais)" }
+    }
+    Smoke 'Lag : analyse de la connexion (10 s)' {
+        Get-LagReport -Seconds 10
+        if (-not $sync.SlowReport -or $sync.SlowReport.Mode -ne 'lag') { throw "pas de rapport" }
+        Write-Host ("        {0} · pistes : {1}" -f ((@($sync.SlowReport.Checked) | ForEach-Object { $_.T }) -join ' | '), ((@($sync.SlowReport.Findings) | ForEach-Object { $_.Id }) -join ', '))
+    }
+    Smoke 'Fenêtre : lag' { Show-SlowDialog }
+    Smoke 'Mesure pendant un jeu (attente + 20 s)' {
+        Get-SlowReport -Delay 1 -Mode jeu
+        if (-not $sync.SlowReport -or $sync.SlowReport.Mode -ne 'jeu') { throw "pas de rapport en mode jeu" }
+    }
+    Smoke 'Fenêtre : mesure en jeu' { Show-SlowDialog }
+    Smoke 'Statistiques anonymes : filtre, désactivation et envoi (faux relais local)' {
+        $oldOff = $AppInfo.StatsOff; $oldRelay = $sync.BugRelay; $oldQ = $AppInfo.StatsQueue
+        $stamp = Join-Path $AppInfo.LogDir 'stats-envoi.txt'; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue
+        $serve = {
+            param($port, $out, [bool]$old)
+            $l = New-Object System.Net.HttpListener; $l.Prefixes.Add("http://localhost:$port/"); $l.Start()
+            try {
+                for ($i = 0; $i -lt 2; $i++) {
+                    $ar = $l.BeginGetContext($null, $null); if (-not $ar.AsyncWaitHandle.WaitOne(8000)) { break }
+                    $c = $l.EndGetContext($ar); $body = ''
+                    if ($c.Request.HasEntityBody) { $sr = New-Object IO.StreamReader($c.Request.InputStream, [Text.Encoding]::UTF8); $body = $sr.ReadToEnd() }
+                    [void]$out.Add(@{ M = $c.Request.HttpMethod; P = $c.Request.Url.AbsolutePath; H = "$($c.Request.Headers['X-Aerox'])"; B = $body })
+                    $txt = if ($c.Request.HttpMethod -ne 'GET') { '{"ok":true}' } elseif ($old) { 'AEROX PC Care : relais des rapports de bug et des avis.' } else { '{"aerox":"stats","ok":true}' }
+                    $bytes = [Text.Encoding]::UTF8.GetBytes($txt); $c.Response.ContentType = $(if ($old -and $c.Request.HttpMethod -eq 'GET') { 'text/plain' } else { 'application/json' })
+                    $c.Response.ContentLength64 = $bytes.Length
+                    $c.Response.OutputStream.Write($bytes, 0, $bytes.Length); $c.Response.OutputStream.Close(); $c.Response.Close()
+                }
+                Start-Sleep -Milliseconds 1500   # laisse le logiciel lire la dernière réponse avant de fermer
+            } finally { $l.Stop() }
+        }
+        $run = {
+            param([bool]$old)
+            $port = Get-Random -Minimum 20000 -Maximum 40000
+            $got = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+            $ps = [powershell]::Create(); [void]$ps.AddScript($serve).AddArgument($port).AddArgument($got).AddArgument($old)
+            $h = $ps.BeginInvoke(); Start-Sleep -Milliseconds 700
+            $sync.BugRelay = "http://localhost:$port"
+            Send-Stats -Force
+            [void]$h.AsyncWaitHandle.WaitOne(10000); try { $ps.Dispose() } catch {}
+            return ,@($got.ToArray())
+        }
+        try {
+            $AppInfo.StatsQueue = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+            $AppInfo.StatsOff = $true; Add-StatsEvent 'lent:rien'
+            if ($AppInfo.StatsQueue.Count) { throw "compteur gardé alors que les statistiques sont désactivées" }
+            $AppInfo.StatsOff = $false
+            foreach ($k in 'lent:rien', 'lent:rien', ('probleme:' + (ConvertTo-StatsId 'diskD:')), 'Mauvaise clé', 'x:../../etc', 'nom:Jean Dupont', 'pc:PC-DE-JEAN', 'Lent:rien') { Add-StatsEvent $k }
+            $q = (@($AppInfo.StatsQueue.ToArray()) -join ',')
+            if ($q -cne 'lent:rien,lent:rien,probleme:diskd') { throw "filtre faux : $q" }
+            # Ancien relais (pas encore mis à jour) : il ne sait pas recevoir → rien n'est envoyé, les compteurs attendent
+            $g = & $run $true
+            if (@($g).Count -ne 1 -or $g[0].M -ne 'GET') { throw "envoyé à un relais qui ne sait pas recevoir ($(@($g).Count) requête(s))" }
+            if ($AppInfo.StatsQueue.Count -lt 3) { throw "compteurs perdus" }
+            # Relais à jour : un seul envoi, rien de personnel dedans
+            $n0 = $AppInfo.StatsQueue.Count
+            $g = & $run $false
+            if (@($g).Count -ne 2 -or $g[1].M -ne 'POST' -or $g[1].P -ne '/stats' -or $g[1].H -ne '1') { throw "envoi incorrect ($(@($g).Count) requête(s))" }
+            $b = $g[1].B | ConvertFrom-Json
+            if ($b.ev.'lent:rien' -ne 2 -or $b.ev.'probleme:diskd' -ne 1 -or $b.nouveau_mois -ne $true -or $b.v -ne $AppVersion) { throw "contenu faux : $($g[1].B)" }
+            foreach ($bad in @($env:COMPUTERNAME, $env:USERNAME, $AppInfo.LogDir) | Where-Object { "$_".Length -ge 3 }) { if ($g[1].B -like "*$bad*") { throw "donnée personnelle dans l'envoi" } }
+            if ($AppInfo.StatsQueue.Count -or -not (Test-Path -LiteralPath $stamp)) { throw "file non vidée après l'envoi ($($AppInfo.StatsQueue.Count) restant(s), erreur : $($AppInfo.StatsLastError))" }
+            Write-Host ("        envoyé ({0} compteur(s)) : {1}" -f $n0, $g[1].B)
+        } finally { $AppInfo.StatsOff = $oldOff; $sync.BugRelay = $oldRelay; $AppInfo.StatsQueue = $oldQ; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue }
+    }
     Smoke 'Analyse du nettoyage' { Get-CleanupAnalysis }
     Smoke 'Fenêtre : nettoyage' { Show-CleanDialog $null }
     Smoke 'Logiciels installés' { Get-InstalledAppsAdvice }

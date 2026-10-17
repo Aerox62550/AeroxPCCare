@@ -85,6 +85,8 @@ jobs:
           $old = Join-Path $env:LOCALAPPDATA 'AeroxPCCare'
           New-Item -ItemType Directory -Force "$old\jeux" | Out-Null
           Set-Content "$old\jeux\reprise-test.json" '{"test":1}'
+          # Machine de test : aucune statistique envoyée au vrai relais (le test des statistiques utilise un faux relais local)
+          Set-Content "$old\reglages.json" '{"StatsOff":true}'
           cmd /c mklink /J "$old\lien-piege" "C:\Windows\System32\drivers\etc" | Out-Null
           $env:AEROX_SMOKE_ACTIONS = '1'   # machine jetable : on teste aussi les vraies actions et leurs annulations
           # Lancé avec un chronomètre : si le test bloque, on garde l'avancement écrit étape par étape

@@ -1957,35 +1957,174 @@ function Enable-AutoPagefile {
     } catch { Add-TaskError -Title "Impossible de réactiver la mémoire virtuelle" -Cause $_.Exception.Message -FixLabel "Ouvrir les paramètres système avancés" -FixAction "Open-SystemTool 'SystemPropertiesPerformance.exe'" }
 }
 
-# Mesure en direct pendant ~20 s : processeur, mémoire, disque, et les programmes qui consomment le plus
-function Get-SlowReport {
-    Step "Analyse des lenteurs : mesure pendant 20 secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
+# ---------------------------------------------------------------- Mesure de la connexion (pendant les analyses de lenteur et de lag)
+# Temps de réponse, irrégularité (gigue) et paquets perdus vers une adresse. Une adresse qui ne répond à aucun des
+# 3 premiers essais (ping bloqué par un pare-feu) n'est plus mesurée : jamais de « pertes » inventées.
+function New-PingSeries([string]$Ip) { return @{ Ip = $Ip; Ok = 0; Lost = 0; Times = (New-Object System.Collections.ArrayList); Off = (-not $Ip) } }
+function Add-PingSample($S, $Pinger) {
+    if ($S.Off) { return }
+    try {
+        $r = $Pinger.Send($S.Ip, 900)
+        if ($r.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) { $S.Ok++; [void]$S.Times.Add([double]$r.RoundtripTime) } else { $S.Lost++ }
+    } catch { $S.Lost++ }
+    if ($S.Ok -eq 0 -and $S.Lost -ge 3) { $S.Off = $true }
+}
+function Get-PingStats($S) {
+    $n = $S.Ok + $S.Lost
+    $r = @{ Ip = $S.Ip; N = $n; Ok = ($S.Ok -ge 5); Loss = 0.0; Avg = 0.0; Jitter = 0.0; Max = 0.0 }
+    if (-not $r.Ok) { return $r }
+    $r.Loss = [math]::Round(100.0 * $S.Lost / $n, 1)
+    $t = @($S.Times)
+    $r.Avg = [math]::Round([double](($t | Measure-Object -Average).Average), 1)
+    $r.Max = [double](($t | Measure-Object -Maximum).Maximum)
+    $d = 0.0
+    for ($i = 1; $i -lt $t.Count; $i++) { $d += [math]::Abs($t[$i] - $t[$i - 1]) }
+    if ($t.Count -ge 2) { $r.Jitter = [math]::Round($d / ($t.Count - 1), 1) }
+    return $r
+}
+function Get-GatewayIp {
+    try {
+        $r = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop | Where-Object { "$($_.NextHop)" -match '^\d+\.\d+\.\d+\.\d+$' -and "$($_.NextHop)" -ne '0.0.0.0' } | Sort-Object RouteMetric | Select-Object -First 1
+        if ($r) { return "$($r.NextHop)" }
+    } catch {}
+    return ''
+}
+# Trafic réseau du PC (octets/s reçus et envoyés), sans les cartes virtuelles ni les VPN (sinon compté deux fois)
+function Get-NetThroughput {
+    $rx = 0.0; $tx = 0.0
+    foreach ($x in @(Get-CimInstance Win32_PerfFormattedData_Tcpip_NetworkInterface -ErrorAction SilentlyContinue)) {
+        if ("$($x.Name)" -match '(?i)isatap|teredo|loopback|pseudo|vethernet|hyper-v|wsl|virtual|vmware|virtualbox|bluetooth|tap-|wireguard|wintun|nordlynx|tunnel|vpn') { continue }
+        $rx += [double]$x.BytesReceivedPersec; $tx += [double]$x.BytesSentPersec
+    }
+    return @{ Rx = $rx; Tx = $tx }
+}
+function Get-WifiInfo {
+    $w = @{ Signal = -1; Band = ''; Ssid = '' }
+    try {
+        $t = (netsh.exe wlan show interfaces 2>$null) | Out-String
+        if ($t -match 'Signal\s*:\s*(\d+)\s*%') { $w.Signal = [int]$matches[1] }
+        if ($t -match '(?im)^\s*(Bande|Band)\s*:\s*([\d.,]+)\s*GHz') { $w.Band = ($matches[2] -replace ',', '.') }
+    } catch {}
+    return $w
+}
+# Programmes ouverts qui téléchargent souvent en fond (nommés seulement s'ils sont ouverts, jamais affirmé)
+$script:Downloaders = @{ 'steam' = 'Steam'; 'epicgameslauncher' = 'Epic Games'; 'battle.net' = 'Battle.net'; 'eadesktop' = 'EA app'; 'upc' = 'Ubisoft Connect'
+                         'riotclientservices' = 'Riot Client'; 'qbittorrent' = 'qBittorrent'; 'utorrent' = 'µTorrent'; 'bittorrent' = 'BitTorrent'; 'onedrive' = 'OneDrive'
+                         'dropbox' = 'Dropbox'; 'googledrivefs' = 'Google Drive'; 'icloudservices' = 'iCloud'; 'gog galaxy' = 'GOG Galaxy'; 'galaxyclient' = 'GOG Galaxy' }
+function Get-OpenDownloaders {
+    return @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object { "$($_.ProcessName)".ToLower() } | Select-Object -Unique |
+             Where-Object { $script:Downloaders.ContainsKey($_) } | ForEach-Object { $script:Downloaders[$_] } | Select-Object -Unique)
+}
+# Ce que la mesure de la connexion révèle (mêmes règles pour « Mon PC rame » et « Ça lague »)
+function Get-NetFindings($Gw, $Net, [double]$Rx, [double]$Tx, [bool]$Wifi, $WifiInfo) {
+    $f = New-Object System.Collections.ArrayList
+    $localBad = $false
+    if ($Gw.Ok -and ($Gw.Loss -ge 5 -or $Gw.Jitter -ge 15 -or $Gw.Avg -ge 30)) {
+        $localBad = $true
+        $txt = "Entre le PC et la box : {0} ms en moyenne, variations de ±{1} ms, {2} % de paquets perdus. Une liaison saine : quelques ms, aucune perte." -f $Gw.Avg, $Gw.Jitter, $Gw.Loss
+        $sev = $(if ($Gw.Loss -ge 5) { 'bad' } else { 'warn' })
+        if ($Wifi) {
+            if ($WifiInfo.Signal -ge 0) { $txt += " Signal Wi-Fi : $($WifiInfo.Signal) %." }
+            if ($WifiInfo.Band -like '2*') { $txt += " Connecté en 2,4 GHz (plus encombré que le 5 GHz)." }
+            [void]$f.Add(@{ Id = 'wifi-instable'; Sev = $sev; Title = "Le Wi-Fi entre le PC et la box est instable"; Text = $txt; Advice = "C'est ça qui fait laguer, pas Internet. Le mieux : un câble Ethernet (ou des boîtiers CPL). Sinon : rapproche le PC de la box, connecte-toi au réseau 5 GHz de la box s'il existe (souvent le même nom avec « 5G »), et redémarre la box."; Action = '' })
+        } else {
+            [void]$f.Add(@{ Id = 'lan-instable'; Sev = $sev; Title = "La liaison entre le PC et la box est instable"; Text = $txt; Advice = "Avec un câble, c'est anormal : essaie un autre câble et un autre port de la box. Avec des boîtiers CPL : branche-les directement sur une prise murale (pas sur une multiprise) ou rapproche-les. Redémarre aussi la box."; Action = '' })
+        }
+    } elseif ($Wifi -and $WifiInfo.Signal -ge 0 -and $WifiInfo.Signal -lt 50) {
+        [void]$f.Add(@{ Id = 'wifi-faible'; Sev = 'warn'; Title = "Signal Wi-Fi faible ($($WifiInfo.Signal) %)"; Text = "Au-dessus de 70 %, c'est confortable. Un signal faible donne des lags par moments et un débit plus bas."; Advice = "Rapproche le PC de la box, évite de la mettre dans un meuble fermé, ou passe en câble Ethernet / CPL."; Action = '' })
+    }
+    $busy = ($Rx -ge 3MB -or $Tx -ge 1MB)
+    if ($Net.Ok -and -not $localBad) {
+        if ($Net.Loss -ge 3) {
+            [void]$f.Add(@{ Id = 'internet-pertes'; Sev = 'bad'; Title = ("Ta connexion Internet perd des paquets ({0} %)" -f $Net.Loss)
+                            Text = $(if ($Gw.Ok) { "La liaison entre le PC et la box est bonne : c'est entre la box et Internet que les paquets se perdent." } else { "Ta box ne répond pas au ping, donc impossible de dire si ça se perd avant ou après elle." })
+                            Advice = "Effet : personnages qui « sautent » en jeu, voix hachée sur Discord. Redémarre la box (30 secondes débranchée). Si ça continue, appelle ton fournisseur d'accès avec ce résultat : il peut tester ta ligne."; Action = '' })
+        } elseif ($Net.Jitter -ge 20 -or $Net.Avg -ge 80) {
+            [void]$f.Add(@{ Id = 'ping-instable'; Sev = 'warn'; Title = $(if ($Net.Avg -ge 80) { "Le ping est élevé ($($Net.Avg) ms)" } else { "Le ping est irrégulier (variations de ±$($Net.Jitter) ms)" })
+                            Text = ("Vers Internet : {0} ms en moyenne, variations de ±{1} ms, pointe à {2} ms. Bon pour jouer : moins de 40 ms et des variations sous 10 ms." -f $Net.Avg, $Net.Jitter, $Net.Max)
+                            Advice = $(if ($busy) { "Un téléchargement occupe ta connexion pendant la mesure (voir ci-dessous) : c'est la cause la plus probable." } else { "Souvent un autre appareil de la maison qui télécharge ou regarde des vidéos (la box sature) : mets-les en pause pour tester. Si ça ne change rien, c'est ta ligne ou ton fournisseur." }); Action = '' })
+        }
+    }
+    if ($busy) {
+        $dl = @(Get-OpenDownloaders)
+        [void]$f.Add(@{ Id = 'connexion-occupee'; Sev = 'warn'; Title = ("Ta connexion est occupée ({0}/s reçus, {1}/s envoyés)" -f (Format-Size $Rx), (Format-Size $Tx))
+                        Text = $(if ($dl.Count) { "Programmes ouverts qui téléchargent souvent en fond : " + ($dl -join ', ') + "." } else { "Souvent Windows Update, la mise à jour d'un jeu ou une synchronisation (OneDrive…)." })
+                        Advice = "Pendant que tu joues ou que tu es en vocal, mets ces téléchargements en pause : un téléchargement fait monter le ping."; Action = '' })
+    }
+    return $f.ToArray()
+}
+function Get-PingLine($S, [string]$Label) {
+    if (-not $S.Ok) { return @{ Ok = $true; T = "$Label : ne répond pas au ping (normal sur certains réseaux), non mesuré" } }
+    return @{ Ok = -not ($S.Loss -ge 3 -or $S.Jitter -ge 15); T = ("{0} : {1} ms en moyenne, variations ±{2} ms, {3} % perdus" -f $Label, $S.Avg, $S.Jitter, $S.Loss) }
+}
+
+# Mesure en direct pendant ~20 s : processeur, mémoire, disque, carte graphique, bridage, pilotes, connexion
+# -Delay : attend avant de mesurer (le temps de lancer un jeu) ; -Mode 'jeu' : conseils adaptés à une mesure en jeu
+function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
     $sync.SlowReport = $null
+    if ($Delay -gt 0) {
+        Step "La mesure commence dans $Delay secondes : lance ton jeu (ou ce qui rame) maintenant et joue normalement."
+        for ($s = 0; $s -lt $Delay; $s++) { if ($sync.Cancel) { return }; Start-Sleep -Seconds 1; $sync.Progress = [math]::Round(30 * ($s + 1) / $Delay) }
+    }
+    Step "Analyse des lenteurs : mesure pendant 20 secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
     $cores = [math]::Max([double]1, [Environment]::ProcessorCount)
     $me = $PID
     $acc = @{}; $cpuTot = New-Object System.Collections.ArrayList; $diskBusy = New-Object System.Collections.ArrayList; $diskQ = New-Object System.Collections.ArrayList
+    $dpc = New-Object System.Collections.ArrayList; $lim = New-Object System.Collections.ArrayList; $gpuTot = New-Object System.Collections.ArrayList; $gpuAcc = @{}
+    $rxL = New-Object System.Collections.ArrayList; $txL = New-Object System.Collections.ArrayList
+    $gpuOk = $true
+    $pg = New-Object System.Net.NetworkInformation.Ping
+    $gwS = New-PingSeries (Get-GatewayIp); $netS = New-PingSeries '1.1.1.1'
     $null = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue   # 1re lecture : amorce les compteurs
     $null = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue
+    $null = Get-NetThroughput
     $n = 7
     for ($i = 0; $i -lt $n; $i++) {
         if ($sync.Cancel) { return }
-        Start-Sleep -Seconds 3
-        $sync.Progress = [math]::Round(100 * ($i + 1) / $n)
+        # 3 secondes entre deux relevés, occupées par la mesure de la connexion (1 essai par seconde vers la box et Internet)
+        for ($k = 0; $k -lt 3; $k++) {
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            Add-PingSample $gwS $pg; Add-PingSample $netS $pg
+            if ($netS.Off -and $netS.Ip -eq '1.1.1.1') { $netS = New-PingSeries '8.8.8.8' }
+            $rest = 1000 - [int]$sw.ElapsedMilliseconds; if ($rest -gt 0) { Start-Sleep -Milliseconds $rest }
+        }
+        $sync.Progress = $(if ($Delay -gt 0) { 30 + [math]::Round(70 * ($i + 1) / $n) } else { [math]::Round(100 * ($i + 1) / $n) })
         foreach ($x in @(Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue)) {
             $nm = "$($x.Name)" -replace '#\d+$', ''
             if ($nm -in '_Total', 'Idle' -or [int]$x.IDProcess -eq $me -or $nm -match '(?i)^(wmiprvse|aeroxpccare)$') { continue }
-            if (-not $acc.ContainsKey($nm)) { $acc[$nm] = @{ Name = $nm; Cpu = 0.0; Io = 0.0; Mem = 0.0; Pid = [int]$x.IDProcess; Seen = 0 } }
+            if (-not $acc.ContainsKey($nm)) { $acc[$nm] = @{ Name = $nm; Cpu = 0.0; Io = 0.0; Mem = 0.0; Gpu = 0.0; Pid = [int]$x.IDProcess; Seen = 0 } }
             $e = $acc[$nm]; $e.Cpu += [double]$x.PercentProcessorTime / $cores; $e.Io += [double]$x.IODataBytesPersec
         }
         # Mémoire : instantané par programme (somme de ses processus)
         if ($i -eq $n - 1) {
             foreach ($g in @(Get-Process -ErrorAction SilentlyContinue | Group-Object ProcessName)) {
                 if ($acc.ContainsKey($g.Name)) { $acc[$g.Name].Mem = [double](($g.Group | Measure-Object WorkingSet64 -Sum).Sum) }
-                elseif ($g.Name -notmatch '(?i)^(idle|aeroxpccare)$') { $acc[$g.Name] = @{ Name = $g.Name; Cpu = 0.0; Io = 0.0; Mem = [double](($g.Group | Measure-Object WorkingSet64 -Sum).Sum); Pid = [int]$g.Group[0].Id; Seen = $n } }
+                elseif ($g.Name -notmatch '(?i)^(idle|aeroxpccare)$') { $acc[$g.Name] = @{ Name = $g.Name; Cpu = 0.0; Io = 0.0; Mem = [double](($g.Group | Measure-Object WorkingSet64 -Sum).Sum); Gpu = 0.0; Pid = [int]$g.Group[0].Id; Seen = $n } }
             }
         }
         $t = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction SilentlyContinue
-        if ($t) { [void]$cpuTot.Add([double]$t.PercentProcessorTime) }
+        if ($t) { [void]$cpuTot.Add([double]$t.PercentProcessorTime); [void]$dpc.Add([double]$t.PercentDPCTime + [double]$t.PercentInterruptTime) }
+        # Bridage du processeur par le PC lui-même (chauffe, alimentation) : « % de limite de performances » de Windows
+        try {
+            $pi = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" -ErrorAction Stop
+            if ($pi -and $null -ne $pi.PercentPerformanceLimit) { [void]$lim.Add([double]$pi.PercentPerformanceLimit) }
+        } catch {}
+        # Carte graphique : utilisation 3D par programme (le total = la carte la plus occupée)
+        if ($gpuOk) {
+            try {
+                $luid = @{}
+                foreach ($x in @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction Stop)) {
+                    if ("$($x.Name)" -notmatch '^pid_(\d+)_luid_(0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+)_.*engtype_3D$') { continue }
+                    $gp = [int]$matches[1]; $gl = $matches[2]; $u = [double]$x.UtilizationPercentage
+                    if ($gp -eq $me) { continue }
+                    $luid[$gl] = [double]$luid[$gl] + $u
+                    $gpuAcc[$gp] = [double]$gpuAcc[$gp] + $u
+                }
+                $mx = 0.0; foreach ($v in $luid.Values) { if ($v -gt $mx) { $mx = $v } }
+                [void]$gpuTot.Add([math]::Min([double]100, $mx))
+            } catch { $gpuOk = $false }
+        }
+        $nt = Get-NetThroughput; [void]$rxL.Add($nt.Rx); [void]$txL.Add($nt.Tx)
         # Disque le plus occupé (pas la moyenne de tous : un disque dur saturé + un SSD au repos donnerait 50 %)
         $dk = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
         if ($dk.Count) {
@@ -1993,29 +2132,39 @@ function Get-SlowReport {
             [void]$diskQ.Add([double](($dk | Measure-Object CurrentDiskQueueLength -Maximum).Maximum))
         }
     }
-    $avg = { param($l) if ($l.Count) { [math]::Round(($l | Measure-Object -Average).Average) } else { 0 } }
+    $avg = { param($l) if ($l.Count) { [math]::Round([double](($l | Measure-Object -Average).Average)) } else { 0 } }
     $os = Get-CimInstance Win32_OperatingSystem
     $ramTot = [double]$os.TotalVisibleMemorySize * 1KB
     $ramPct = [math]::Round(100 * (1 - [double]$os.FreePhysicalMemory / [double]$os.TotalVisibleMemorySize))
-    $rep = @{ Cpu = (& $avg $cpuTot); CpuMax = $(if ($cpuTot.Count) { [math]::Round(($cpuTot | Measure-Object -Maximum).Maximum) } else { 0 }); Ram = $ramPct; RamTotal = $ramTot
-              Disk = (& $avg $diskBusy); Queue = $(if ($diskQ.Count) { [math]::Round(($diskQ | Measure-Object -Average).Average, 1) } else { 0 }); Hdd = $false; Top = @(); Findings = @() }
+    $rep = @{ Mode = $Mode; Cpu = (& $avg $cpuTot); CpuMax = $(if ($cpuTot.Count) { [math]::Round([double](($cpuTot | Measure-Object -Maximum).Maximum)) } else { 0 }); Ram = $ramPct; RamTotal = $ramTot
+              Disk = (& $avg $diskBusy); Queue = $(if ($diskQ.Count) { [math]::Round([double](($diskQ | Measure-Object -Average).Average), 1) } else { 0 }); Hdd = $false; Top = @(); Findings = @(); Checked = @()
+              GpuOk = ($gpuOk -and $gpuTot.Count -gt 0); Gpu = (& $avg $gpuTot); Dpc = $(if ($dpc.Count) { [math]::Round([double](($dpc | Measure-Object -Average).Average), 1) } else { 0 })
+              Limit = $(if ($lim.Count -ge 4) { & $avg $lim } else { $null }) }
     # Disque de Windows : SSD ou disque dur classique ?
     try { $dn = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop).DiskNumber; $pd = Get-PhysicalDisk | Where-Object { "$($_.DeviceId)" -eq "$dn" } | Select-Object -First 1; $rep.Hdd = ("$($pd.MediaType)" -eq 'HDD') } catch {}
+    # Carte graphique par programme
+    foreach ($gp in @($gpuAcc.Keys)) {
+        $e = $acc.Values | Where-Object { $_.Pid -eq $gp } | Select-Object -First 1
+        if (-not $e) { try { $pn = (Get-Process -Id $gp -ErrorAction Stop).ProcessName; if ($acc.ContainsKey($pn)) { $e = $acc[$pn] } } catch {} }
+        if ($e) { $e.Gpu = [math]::Min([double]100 * $n, [double]$e.Gpu + $gpuAcc[$gp]) }
+    }
     # Classement des programmes
     # Moyenne sur la durée de la mesure (tous les processus d'un même programme additionnés : Chrome, Discord…)
     $list = foreach ($e in $acc.Values) {
         $f = Get-ProcFriendly $e.Name $e.Pid
-        @{ Name = $e.Name; Label = $f.Label; Kind = $f.Kind; Cpu = [math]::Round($e.Cpu / $n, 1); Io = $e.Io / $n; Mem = $e.Mem }
+        @{ Name = $e.Name; Label = $f.Label; Kind = $f.Kind; Cpu = [math]::Round($e.Cpu / $n, 1); Io = $e.Io / $n; Mem = $e.Mem; Gpu = [math]::Round([math]::Min([double]100, $e.Gpu / $n)) }
     }
     $list = @($list)
     $byCpu = @($list | Sort-Object { - $_.Cpu } | Select-Object -First 5)
     $byMem = @($list | Sort-Object { - $_.Mem } | Select-Object -First 5)
     $byIo  = @($list | Sort-Object { - $_.Io } | Select-Object -First 5)
+    $byGpu = @($list | Where-Object { $_.Gpu -ge 5 } | Sort-Object { - $_.Gpu } | Select-Object -First 3)
     $top = New-Object System.Collections.ArrayList
-    foreach ($x in @($byCpu + $byMem + $byIo)) { if (-not ($top | Where-Object { $_.Name -eq $x.Name })) { [void]$top.Add($x) } }
-    $rep.Top = @($top | Sort-Object { - ($_.Cpu * 4 + $_.Mem / 100MB + $_.Io / 2MB) } | Select-Object -First 8)
+    foreach ($x in @($byCpu + $byMem + $byIo + $byGpu)) { if (-not ($top | Where-Object { $_.Name -eq $x.Name })) { [void]$top.Add($x) } }
+    $rep.Top = @($top | Sort-Object { - ($_.Cpu * 4 + $_.Gpu * 2 + $_.Mem / 100MB + $_.Io / 2MB) } | Select-Object -First 8)
     $startup = @(); try { $startup = @(Get-StartupEntries | Where-Object { $_.Enabled } | ForEach-Object { "$($_.Name)".ToLower() }) } catch {}
     $f = New-Object System.Collections.ArrayList
+    $chk = New-Object System.Collections.ArrayList
     $advice = {
         param($x)
         if ($x.Kind -eq 'transient') { return "Tâche de Windows temporaire : laisse-la finir (souvent quelques minutes après l'allumage ou une mise à jour)." }
@@ -2028,8 +2177,11 @@ function Get-SlowReport {
     if ($rep.Cpu -ge 75 -or $hogs.Count) {
         $txt = ($hogs | ForEach-Object { "{0} : {1} %" -f $_.Label, [math]::Round($_.Cpu) }) -join ' · '
         if (-not $txt) { $txt = ($byCpu | Select-Object -First 3 | ForEach-Object { "{0} : {1} %" -f $_.Label, [math]::Round($_.Cpu) }) -join ' · ' }
-        [void]$f.Add(@{ Sev = $(if ($rep.Cpu -ge 75) { 'bad' } else { 'warn' }); Title = $(if ($rep.Cpu -ge 75) { "Le processeur tourne presque à fond ($($rep.Cpu) % en moyenne)" } else { "Un programme occupe beaucoup le processeur" }); Text = $txt; Advice = (& $advice $(@($hogs + $byCpu)[0])); Action = 'taskmgr' })
+        $adv = & $advice $(@($hogs + $byCpu)[0])
+        if ($Mode -eq 'jeu' -and $rep.Cpu -ge 75) { $adv = "En jeu, c'est le processeur qui limite les FPS. Ferme ce qui tourne à côté (navigateur, enregistrement, partage d'écran) et baisse les réglages qui le chargent : distance d'affichage, foule, physique, ombres." }
+        [void]$f.Add(@{ Id = 'processeur'; Sev = $(if ($rep.Cpu -ge 75) { 'bad' } else { 'warn' }); Title = $(if ($rep.Cpu -ge 75) { "Le processeur tourne presque à fond ($($rep.Cpu) % en moyenne)" } else { "Un programme occupe beaucoup le processeur" }); Text = $txt; Advice = $adv; Action = 'taskmgr' })
     }
+    [void]$chk.Add(@{ Ok = ($rep.Cpu -lt 75); T = "Processeur : $($rep.Cpu) % en moyenne (pointe à $($rep.CpuMax) %)" })
     if ($rep.Ram -ge 85) {
         $lay = Get-RamLayout
         $txt = ($byMem | Select-Object -First 3 | ForEach-Object { "{0} : {1}" -f $_.Label, (Format-Size $_.Mem) }) -join ' · '
@@ -2040,27 +2192,211 @@ function Get-SlowReport {
             if ($free -gt 0 -and $lay.Type) { $up += " Il reste $free emplacement(s) libre(s) : ajouter une barrette $($lay.Type) de $(Format-Size $lay.ModuleSize) (pareille à celle en place) est la meilleure amélioration." }
             elseif ($lay.Type) { $up += " Tous les emplacements sont pris : il faudrait remplacer les barrettes par des plus grosses ($($lay.Type))." }
         }
-        [void]$f.Add(@{ Sev = 'bad'; Title = "La mémoire (RAM) est saturée : $($rep.Ram) %"; Text = $txt; Advice = $(if ($up) { $up } else { "Ferme les programmes et onglets de navigateur inutiles, et retire du démarrage ce qui ne sert pas." }); Action = 'startup' })
+        [void]$f.Add(@{ Id = 'memoire'; Sev = 'bad'; Title = "La mémoire (RAM) est saturée : $($rep.Ram) %"; Text = $txt; Advice = $(if ($up) { $up } else { "Ferme les programmes et onglets de navigateur inutiles, et retire du démarrage ce qui ne sert pas." }); Action = 'startup' })
     }
+    [void]$chk.Add(@{ Ok = ($rep.Ram -lt 85); T = "Mémoire : $($rep.Ram) % utilisée sur $(Format-Size $ramTot)" })
     if ($rep.Disk -ge 70) {
         $txt = ($byIo | Select-Object -First 3 | Where-Object { $_.Io -gt 100KB } | ForEach-Object { "{0} : {1}/s" -f $_.Label, (Format-Size $_.Io) }) -join ' · '
-        [void]$f.Add(@{ Sev = 'bad'; Title = "Le disque est saturé ($($rep.Disk) % d'activité)"; Text = $txt; Advice = $(if ($rep.Hdd) { "Windows est sur un disque dur classique : c'est la cause n°1 des lenteurs. Un SSD (à partir d'environ 40 €) rend le PC plusieurs fois plus réactif." } else { "Souvent une analyse antivirus, une mise à jour ou une synchronisation (OneDrive…) : ça passe en quelques minutes." }); Action = '' })
+        [void]$f.Add(@{ Id = 'disque-sature'; Sev = 'bad'; Title = "Le disque est saturé ($($rep.Disk) % d'activité)"; Text = $txt; Advice = $(if ($rep.Hdd) { "Windows est sur un disque dur classique : c'est la cause n°1 des lenteurs. Un SSD (à partir d'environ 40 €) rend le PC plusieurs fois plus réactif." } else { "Souvent une analyse antivirus, une mise à jour ou une synchronisation (OneDrive…) : ça passe en quelques minutes." }); Action = '' })
     } elseif ($rep.Hdd) {
-        [void]$f.Add(@{ Sev = 'warn'; Title = "Windows est installé sur un disque dur classique (HDD)"; Text = "Un disque dur mécanique est 5 à 10 fois plus lent qu'un SSD."; Advice = "C'est la meilleure amélioration possible pour ce PC : passer à un SSD (à partir d'environ 40 €). Un réparateur peut copier Windows dessus sans rien perdre."; Action = '' })
+        [void]$f.Add(@{ Id = 'hdd'; Sev = 'warn'; Title = "Windows est installé sur un disque dur classique (HDD)"; Text = "Un disque dur mécanique est 5 à 10 fois plus lent qu'un SSD."; Advice = "C'est la meilleure amélioration possible pour ce PC : passer à un SSD (à partir d'environ 40 €). Un réparateur peut copier Windows dessus sans rien perdre."; Action = '' })
     }
+    [void]$chk.Add(@{ Ok = ($rep.Disk -lt 70 -and -not $rep.Hdd); T = "Disque : $($rep.Disk) % d'activité" + $(if ($rep.Hdd) { ' (disque dur classique)' } else { ' (SSD)' }) })
+    # Carte graphique
+    if ($rep.GpuOk) {
+        $gtxt = ($byGpu | ForEach-Object { "{0} : {1} %" -f $_.Label, $_.Gpu }) -join ' · '
+        if ($rep.Gpu -ge 85) {
+            if ($Mode -eq 'jeu') {
+                [void]$f.Add(@{ Id = 'gpu-limite'; Sev = 'warn'; Title = "La carte graphique est à fond ($($rep.Gpu) %) : c'est elle qui limite les FPS"; Text = $gtxt; Advice = "Normal en jeu si les FPS te conviennent. S'ils sont trop bas : baisse la qualité graphique ou la résolution, active DLSS / FSR, et vérifie que le pilote graphique est à jour."; Action = 'drivers' })
+            } else {
+                [void]$f.Add(@{ Id = 'gpu-occupe'; Sev = 'warn'; Title = "La carte graphique tourne presque à fond ($($rep.Gpu) %)"; Text = $gtxt; Advice = "Si c'est ton jeu, c'est normal. Si c'est un autre programme (navigateur, fond d'écran animé…), ferme-le. Un programme inconnu qui fait tourner la carte graphique en permanence peut être un mineur de cryptomonnaie : lance alors une analyse antivirus complète."; Action = 'taskmgr' })
+            }
+        }
+        [void]$chk.Add(@{ Ok = ($rep.Gpu -lt 85); T = "Carte graphique : $($rep.Gpu) % d'utilisation" })
+    }
+    # Processeur bridé par le PC (chauffe ou alimentation)
+    if ($null -ne $rep.Limit) {
+        if ($rep.Limit -lt 75) {
+            $bat = $null; try { $b = @(Get-CimInstance Win32_Battery -ErrorAction Stop) | Select-Object -First 1; if ($b) { $bat = ([int]$b.BatteryStatus -ne 2) } } catch {}
+            $temp = $null; try { if ($sync.Sens -and $sync.Sens['cpu.temp']) { $temp = [math]::Round([double]$sync.Sens['cpu.temp']) } } catch {}
+            $why = if ($bat) { "Le PC est sur batterie : Windows et le fabricant brident le processeur pour l'économiser." }
+                   elseif ($temp -ge 90) { "Le processeur est à $temp °C : il ralentit pour ne pas surchauffer." }
+                   else { "Il ralentit à cause de la chauffe ou d'une alimentation insuffisante (chargeur trop faible sur un portable, mode « silencieux » du logiciel du fabricant)." }
+            [void]$f.Add(@{ Id = 'cpu-bride'; Sev = 'bad'; Title = "Le processeur est bridé : seulement $($rep.Limit) % de sa puissance autorisée"; Text = $why
+                            Advice = $(if ($bat) { "Branche le chargeur d'origine pour jouer ou travailler." } else { "Dépoussière le PC (surtout le radiateur du processeur), vérifie que les ventilateurs tournent et que l'air circule. Sur un portable : chargeur d'origine branché, et mode « performance » dans le logiciel du fabricant. Si le PC a plus de 4-5 ans, changer la pâte thermique aide beaucoup." }); Action = '' })
+        }
+        [void]$chk.Add(@{ Ok = ($rep.Limit -ge 75); T = $(if ($rep.Limit -ge 75) { "Puissance du processeur : pas bridée pendant la mesure" } else { "Puissance du processeur : bridée à $($rep.Limit) %" }) })
+    }
+    # Pilote qui monopolise le processeur (interruptions)
+    if ($dpc.Count) {
+        if ($rep.Dpc -ge 6) {
+            [void]$f.Add(@{ Id = 'pilote-interruptions'; Sev = 'warn'; Title = "Un pilote monopolise le processeur ($($rep.Dpc) % du temps en interruptions)"; Text = "Normalement moins de 2 %. Ça donne des micro-saccades, du son qui grésille et une souris qui accroche, même quand rien ne semble tourner."
+                            Advice = "Le plus souvent : pilote réseau / Wi-Fi, son, USB ou carte graphique. Mets à jour les pilotes (bouton ci-dessous), puis débranche les périphériques USB un par un pour trouver le fautif."; Action = 'drivers' })
+        }
+        [void]$chk.Add(@{ Ok = ($rep.Dpc -lt 6); T = "Pilotes : $($rep.Dpc) % du temps en interruptions" + $(if ($rep.Dpc -lt 6) { ' (normal)' } else { '' }) })
+    }
+    # Place libre sur le disque de Windows
+    try {
+        $cd = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'" -ErrorAction Stop
+        $fr = [double]$cd.FreeSpace; $pc = [math]::Round(100 * $fr / [math]::Max([double]1, [double]$cd.Size))
+        if ($pc -lt 10 -or $fr -lt 10GB) {
+            [void]$f.Add(@{ Id = 'disque-plein'; Sev = $(if ($pc -lt 5) { 'bad' } else { 'warn' }); Title = "Le disque $env:SystemDrive est presque plein ($(Format-Size $fr) libres)"; Text = "Sous 10 % d'espace libre, Windows ralentit et les mises à jour échouent."; Advice = "Regarde ce qui prend de la place et supprime ce qui ne sert plus (jeux finis, vieux téléchargements)."; Action = 'space' })
+        }
+        [void]$chk.Add(@{ Ok = -not ($pc -lt 10 -or $fr -lt 10GB); T = "Place libre sur $($env:SystemDrive) : $(Format-Size $fr) ($pc %)" })
+    } catch {}
     # Causes de fond (réglages)
     try {
         $pw = Get-PowerStatus
-        if ($pw.Guid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a' -or $pw.Name -match "(?i)économi|saver") { [void]$f.Add(@{ Sev = 'warn'; Title = "Le PC est en mode « Économie d'énergie »"; Text = "Mode actuel : $($pw.Name)"; Advice = "Ce mode bride le processeur en permanence."; Action = 'balanced' }) }
+        $saver = ($pw.Guid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a' -or $pw.Name -match "(?i)économi|saver")
+        if ($saver) { [void]$f.Add(@{ Id = 'economie'; Sev = 'warn'; Title = "Le PC est en mode « Économie d'énergie »"; Text = "Mode actuel : $($pw.Name)"; Advice = "Ce mode bride le processeur en permanence."; Action = 'balanced' }) }
+        if ($pw.Name) { [void]$chk.Add(@{ Ok = -not $saver; T = "Mode d'alimentation : $($pw.Name)" }) }
         $mx = Get-CpuMaxState
-        if ($null -ne $mx -and $mx -lt 100) { [void]$f.Add(@{ Sev = 'warn'; Title = "Le processeur est bridé à $mx % de sa puissance"; Text = "Réglage du mode d'alimentation (souvent modifié par un logiciel « d'optimisation »)."; Advice = "Le remettre à 100 % rend toute sa puissance au processeur."; Action = 'cpumax' }) }
+        if ($null -ne $mx -and $mx -lt 100) { [void]$f.Add(@{ Id = 'cpumax'; Sev = 'warn'; Title = "Le processeur est bridé à $mx % de sa puissance"; Text = "Réglage du mode d'alimentation (souvent modifié par un logiciel « d'optimisation »)."; Advice = "Le remettre à 100 % rend toute sa puissance au processeur."; Action = 'cpumax' }) }
+    } catch {}
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem
+        if (-not $cs.AutomaticManagedPagefile -and @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue).Count -eq 0 -and [double]$cs.TotalPhysicalMemory -lt 17GB) {
+            [void]$f.Add(@{ Id = 'memoire-virtuelle'; Sev = 'warn'; Title = "La mémoire virtuelle de Windows est désactivée"; Text = "Le fichier d'échange a été désactivé (souvent par une astuce « d'optimisation »)."; Advice = "Quand la RAM est pleine, les jeux et logiciels plantent ou se ferment au lieu de ralentir un peu. Remets-la en automatique (réglage d'origine, redémarrage nécessaire)."; Action = 'pagefile' })
+        }
     } catch {}
     $up = (Get-Date) - $os.LastBootUpTime
-    if ($up.TotalDays -ge 7) { [void]$f.Add(@{ Sev = 'warn'; Title = "Le PC n'a pas redémarré depuis $([int]$up.TotalDays) jours"; Text = "« Arrêter » ne remet pas Windows à zéro (démarrage rapide) : seul « Redémarrer » le fait."; Advice = "Un redémarrage libère la mémoire et termine les mises à jour en attente."; Action = '' }) }
-    try { $nst = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count; if ($nst -ge 10) { [void]$f.Add(@{ Sev = 'warn'; Title = "$nst programmes se lancent au démarrage"; Text = "Ils ralentissent l'allumage et restent en fond toute la journée."; Advice = "Garde seulement ce que tu utilises tout le temps."; Action = 'startup' }) } } catch {}
-    $rep.Findings = $f.ToArray()
+    if ($up.TotalDays -ge 7) { [void]$f.Add(@{ Id = 'redemarrage'; Sev = 'warn'; Title = "Le PC n'a pas redémarré depuis $([int]$up.TotalDays) jours"; Text = "« Arrêter » ne remet pas Windows à zéro (démarrage rapide) : seul « Redémarrer » le fait."; Advice = "Un redémarrage libère la mémoire et termine les mises à jour en attente."; Action = '' }) }
+    [void]$chk.Add(@{ Ok = ($up.TotalDays -lt 7); T = $(if ($up.TotalDays -ge 1) { "Dernier redémarrage : il y a $([int]$up.TotalDays) jour(s)" } else { "Dernier redémarrage : il y a $([int]$up.TotalHours) heure(s)" }) })
+    try { $nst = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count; if ($nst -ge 10) { [void]$f.Add(@{ Id = 'demarrage'; Sev = 'warn'; Title = "$nst programmes se lancent au démarrage"; Text = "Ils ralentissent l'allumage et restent en fond toute la journée."; Advice = "Garde seulement ce que tu utilises tout le temps."; Action = 'startup' }) } } catch {}
+    # Connexion (lag en ligne)
+    $gw = Get-PingStats $gwS; $net = Get-PingStats $netS
+    $rx = [double](& $avg $rxL); $tx = [double](& $avg $txL)
+    $ad = $null; try { $ad = Get-ActiveAdapter } catch {}
+    $wi = if ($ad -and $ad.Wifi) { Get-WifiInfo } else { @{ Signal = -1; Band = '' } }
+    foreach ($x in @(Get-NetFindings $gw $net $rx $tx ([bool]($ad -and $ad.Wifi)) $wi)) { [void]$f.Add($x) }
+    [void]$chk.Add((Get-PingLine $gw 'Connexion PC ↔ box'))
+    [void]$chk.Add((Get-PingLine $net 'Connexion vers Internet'))
+    $rep.Net = $net; $rep.Gw = $gw
+    $rep.Findings = @($f.ToArray() | Sort-Object { if ($_.Sev -eq 'bad') { 0 } else { 1 } })
+    $rep.Checked = $chk.ToArray()
     $sync.SlowReport = $rep
-    Log ("   ✔ Mesure terminée : processeur {0} %, mémoire {1} %, disque {2} % · {3} piste(s) trouvée(s)." -f $rep.Cpu, $rep.Ram, $rep.Disk, $f.Count)
+    Add-StatsEvent $(if ($Mode -eq 'jeu') { 'jeu' } else { 'lent' })
+    if ($rep.Findings.Count) { foreach ($x in $rep.Findings) { Add-StatsEvent ("{0}:{1}" -f $(if ($Mode -eq 'jeu') { 'jeu' } else { 'lent' }), $x.Id) } }
+    else { Add-StatsEvent $(if ($Mode -eq 'jeu') { 'jeu:rien' } else { 'lent:rien' }) }
+    Log ("   ✔ Mesure terminée : processeur {0} %, mémoire {1} %, disque {2} %{3} · {4} piste(s) trouvée(s)." -f $rep.Cpu, $rep.Ram, $rep.Disk, $(if ($rep.GpuOk) { ", carte graphique $($rep.Gpu) %" } else { '' }), $rep.Findings.Count)
+}
+
+# « Ça lague en ligne » : la connexion mesurée pendant 1 minute (box, Internet, Wi-Fi, téléchargements, VPN)
+function Get-LagReport([int]$Seconds = 60) {
+    Step "Analyse de la connexion pendant $Seconds secondes : laisse tourner ton jeu ou Discord si c'est là que ça lague."
+    $sync.SlowReport = $null
+    $pg = New-Object System.Net.NetworkInformation.Ping
+    $gwS = New-PingSeries (Get-GatewayIp); $netS = New-PingSeries '1.1.1.1'
+    $rxL = New-Object System.Collections.ArrayList; $txL = New-Object System.Collections.ArrayList
+    $null = Get-NetThroughput
+    for ($i = 0; $i -lt $Seconds; $i++) {
+        if ($sync.Cancel) { return }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        Add-PingSample $gwS $pg; Add-PingSample $netS $pg
+        if ($netS.Off -and $netS.Ip -eq '1.1.1.1') { $netS = New-PingSeries '8.8.8.8' }
+        if ($i % 4 -eq 3) { $nt = Get-NetThroughput; [void]$rxL.Add($nt.Rx); [void]$txL.Add($nt.Tx) }
+        $sync.Progress = [math]::Round(100 * ($i + 1) / $Seconds)
+        $rest = 1000 - [int]$sw.ElapsedMilliseconds; if ($rest -gt 0) { Start-Sleep -Milliseconds $rest }
+    }
+    $gw = Get-PingStats $gwS; $net = Get-PingStats $netS
+    $rx = 0.0; if ($rxL.Count) { $rx = [double](($rxL | Measure-Object -Average).Average) }
+    $tx = 0.0; if ($txL.Count) { $tx = [double](($txL | Measure-Object -Average).Average) }
+    $ad = $null; try { $ad = Get-ActiveAdapter } catch {}
+    $wifi = [bool]($ad -and $ad.Wifi)
+    $wi = if ($wifi) { Get-WifiInfo } else { @{ Signal = -1; Band = '' } }
+    $f = New-Object System.Collections.ArrayList; $chk = New-Object System.Collections.ArrayList
+    foreach ($x in @(Get-NetFindings $gw $net $rx $tx $wifi $wi)) { [void]$f.Add($x) }
+    if ($wifi -and $wi.Band -like '2*' -and -not ($f | Where-Object { $_.Id -eq 'wifi-instable' }) -and $wi.Signal -ge 0 -and $wi.Signal -lt 70) {
+        [void]$f.Add(@{ Id = 'wifi-24'; Sev = 'warn'; Title = "Connecté au Wi-Fi 2,4 GHz avec un signal moyen ($($wi.Signal) %)"; Text = "Le 2,4 GHz est plus lent et plus encombré (Wi-Fi des voisins, micro-ondes, Bluetooth)."; Advice = "Si ta box a un réseau 5 GHz (souvent le même nom avec « 5G »), connecte-toi dessus quand tu es proche de la box."; Action = '' })
+    }
+    # VPN par lequel passe la connexion
+    $vpn = $false
+    if ($ad -and "$($ad.Desc) $($ad.Name)" -match '(?i)tap-windows|wireguard|wintun|nordlynx|openvpn|proton|expressvpn|surfshark|cyberghost|hotspot shield|windscribe|mullvad|forticlient|anyconnect|vpn') {
+        $vpn = $true
+        [void]$f.Add(@{ Id = 'vpn'; Sev = 'warn'; Title = "Ta connexion passe par un VPN ($($ad.Desc))"; Text = "Un VPN fait faire un détour à tout ce que tu envoies et reçois : le ping monte."; Advice = "Coupe le VPN pour jouer, ou choisis un serveur en France / proche de chez toi."; Action = '' })
+    }
+    # Économie d'énergie de la carte réseau (cause classique de coupures en jeu sur un PC fixe)
+    $laptop = $false; try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    if ($ad -and -not $vpn) {
+        $sl = Get-NetAdapterSleepState $ad.Name
+        if ($sl -eq 'Enabled' -and -not $laptop) {
+            [void]$f.Add(@{ Id = 'carte-veille'; Sev = 'warn'; Title = "Windows peut couper ta carte réseau pour économiser l'énergie"; Text = $ad.Desc; Advice = "Sur un PC fixe, c'est une cause classique de coupures de quelques secondes et de déconnexions de Discord ou des jeux."; Action = 'netpower'; Adapter = $ad.Name })
+        }
+        if ($sl) { [void]$chk.Add(@{ Ok = -not ($sl -eq 'Enabled' -and -not $laptop); T = $(if ($sl -eq 'Enabled') { "Carte réseau : Windows peut la mettre en veille" + $(if ($laptop) { ' (normal sur un portable)' } else { '' }) } else { "Carte réseau : jamais mise en veille par Windows" }) }) }
+    }
+    [void]$chk.Add((Get-PingLine $gw 'Connexion PC ↔ box'))
+    [void]$chk.Add((Get-PingLine $net 'Connexion vers Internet'))
+    if ($ad) { [void]$chk.Add(@{ Ok = $true; T = $(if ($wifi) { "Wi-Fi : " + $(if ($wi.Signal -ge 0) { "signal $($wi.Signal) %" } else { 'signal non lu' }) + $(if ($wi.Band) { ", $($wi.Band -replace '\.', ',') GHz" } else { '' }) } else { "Câble / carte réseau : $($ad.Desc)" }) }) }
+    [void]$chk.Add(@{ Ok = -not ($rx -ge 3MB -or $tx -ge 1MB); T = ("Trafic pendant la mesure : {0}/s reçus, {1}/s envoyés" -f (Format-Size $rx), (Format-Size $tx)) })
+    if (-not $vpn) { [void]$chk.Add(@{ Ok = $true; T = "VPN : aucun sur la connexion" }) }
+    $rep = @{ Mode = 'lag'; Gw = $gw; Net = $net; Rx = $rx; Tx = $tx; Wifi = $wifi; Signal = $wi.Signal; Findings = @($f.ToArray() | Sort-Object { if ($_.Sev -eq 'bad') { 0 } else { 1 } }); Checked = $chk.ToArray(); Top = @() }
+    $sync.SlowReport = $rep
+    Add-StatsEvent 'lag'
+    if ($rep.Findings.Count) { foreach ($x in $rep.Findings) { Add-StatsEvent "lag:$($x.Id)" } } else { Add-StatsEvent 'lag:rien' }
+    Log ("   ✔ Mesure terminée : box {0}, Internet {1} · {2} piste(s) trouvée(s)." -f $(if ($gw.Ok) { "$($gw.Avg) ms" } else { 'non mesurée' }), $(if ($net.Ok) { "$($net.Avg) ms ±$($net.Jitter), $($net.Loss) % perdus" } else { 'non mesuré' }), $rep.Findings.Count)
+}
+
+# ---------------------------------------------------------------- Statistiques anonymes (compteurs seulement)
+# Ce qui est envoyé : la version d'AEROX et des compteurs du genre « lent:memoire = 2 » ou « probleme:bsod = 1 »
+# (types de problèmes trouvés, lenteurs non reconnues, réparations qui n'ont pas suffi). Jamais de nom, de nom du PC,
+# de fichier, de chemin ni d'identifiant. Le relais additionne des nombres par mois. Désactivable dans l'onglet Aide.
+# Clés vérifiées en respectant la casse (comme le relais) : minuscules, chiffres et tirets seulement.
+# Envoi en un seul petit paquet, au plus toutes les 6 heures (et une fois par mois pour compter les PC actifs).
+function ConvertTo-StatsId([string]$Id) { return (("$Id".ToLower() -replace '[^a-z0-9-]', '-') -replace '-+', '-').Trim('-') }
+function Add-StatsEvent([string]$Key) {
+    try {
+        $q = $AppInfo.StatsQueue
+        if ($AppInfo.StatsOff -or $null -eq $q -or $Key -cnotmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { return }
+        [System.Threading.Monitor]::Enter($q.SyncRoot)
+        try { if ($q.Count -lt 300) { [void]$q.Add($Key) }; Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
+    } catch {}
+}
+function Save-StatsQueue {
+    try { [IO.File]::WriteAllLines((Join-Path $AppInfo.LogDir 'stats-attente.txt'), [string[]]@($AppInfo.StatsQueue.ToArray())) } catch {}
+}
+function Read-StatsQueue {
+    $q = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
+    try {
+        $p = Join-Path $AppInfo.LogDir 'stats-attente.txt'
+        if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($q.Count -lt 300 -and $l -cmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { [void]$q.Add($l) } } }
+    } catch {}
+    return ,$q
+}
+function Send-Stats([switch]$Force) {
+    if ($AppInfo.StatsOff -or $null -eq $AppInfo.StatsQueue -or $null -eq $AppInfo.StatsLock) { return }
+    if (-not [System.Threading.Monitor]::TryEnter($AppInfo.StatsLock)) { return }
+    try {
+        if (-not $sync.BugRelay) { Find-BugRelay }
+        $relay = "$($sync.BugRelay)".TrimEnd('/')
+        if (-not $relay) { return }
+        $stamp = Join-Path $AppInfo.LogDir 'stats-envoi.txt'
+        $last = $null; $lastMonth = ''
+        if (Test-Path -LiteralPath $stamp) {
+            $p = ([IO.File]::ReadAllText($stamp)).Trim().Split('|')
+            try { $last = [datetime]::ParseExact($p[0], 's', [Globalization.CultureInfo]::InvariantCulture) } catch {}
+            if ($p.Count -gt 1) { $lastMonth = $p[1] }
+        }
+        $month = (Get-Date).ToString('yyyy-MM')
+        $newMonth = ($lastMonth -ne $month)
+        $q = $AppInfo.StatsQueue
+        $keys = @()
+        [System.Threading.Monitor]::Enter($q.SyncRoot); try { $keys = @($q.ToArray()) } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
+        if (-not $newMonth -and -not $keys.Count) { return }
+        if (-not $newMonth -and -not $Force -and $last -and ((Get-Date) - $last).TotalHours -lt 6) { return }
+        # Le relais sait-il recevoir les statistiques ? Sinon les compteurs attendent (rien n'est envoyé ailleurs)
+        $cap = Invoke-RestMethod -Uri "$relay/stats" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+        if ($cap.aerox -ne 'stats' -or -not $cap.ok) { return }
+        $ev = @{}
+        foreach ($k in $keys) { if ($ev.ContainsKey($k)) { if ($ev[$k] -lt 50) { $ev[$k]++ } } elseif ($ev.Count -lt 60) { $ev[$k] = 1 } }
+        $body = @{ v = "$($AppInfo.Version)"; nouveau_mois = [bool]$newMonth; ev = $ev } | ConvertTo-Json -Compress
+        $r = Invoke-RestMethod -Uri "$relay/stats" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+        if ($r.ok) {
+            [System.Threading.Monitor]::Enter($q.SyncRoot)
+            try { $q.RemoveRange(0, [math]::Min($keys.Count, $q.Count)); Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
+            [IO.File]::WriteAllText($stamp, ("{0}|{1}" -f (Get-Date).ToString('s'), $month))
+            $AppInfo.StatsLastError = ''
+        } else { $AppInfo.StatsLastError = "réponse du relais : $($r | ConvertTo-Json -Compress)" }
+    } catch { $AppInfo.StatsLastError = $_.Exception.Message } finally { [System.Threading.Monitor]::Exit($AppInfo.StatsLock) }
 }
 
 # Diagnostic : causes de fond des lenteurs (réglages), sans mesure longue
@@ -3426,7 +3762,7 @@ function Invoke-Diagnostic {
         $before = $script:Issues.Count
         $failed = $false
         try { & $checks[$k] }
-        catch { $failed = $true; Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » incomplète : {1}" -f $k, $_.Exception.Message) }
+        catch { $failed = $true; Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » incomplète : {1}" -f $k, $_.Exception.Message); Add-StatsEvent ("erreur:" + (ConvertTo-StatsId $checks[$k])) }
         $new = @($script:Issues | Select-Object -Skip $before)
         $sync.Scan[$k] = if (@($new | Where-Object { $_.Sev -eq 'crit' }).Count) { 'bad' } elseif ($new.Count -or $failed) { 'warn' } else { 'ok' }
         $sync.ScanVer++
@@ -3435,6 +3771,10 @@ function Invoke-Diagnostic {
     }
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
     $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
+    # Statistiques anonymes : seulement le type de chaque problème trouvé (« probleme:bsod »), rien d'autre
+    Add-StatsEvent 'diag'
+    foreach ($i in @($script:Issues)) { $sid = ConvertTo-StatsId $i.Id; if ($sid) { Add-StatsEvent ("probleme:" + $sid) } }
+    if (-not $script:Issues.Count) { Add-StatsEvent 'diag:rien' }
     try { $sync.Diag.Snap = Get-PcSnapshot } catch {}
     if ($script:IgnoredList.Count) { Log ("   ({0} alerte(s) ignorée(s) à ta demande)" -f $script:IgnoredList.Count) }
     Step "Résultat"
