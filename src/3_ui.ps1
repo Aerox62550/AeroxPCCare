@@ -995,7 +995,7 @@ function Start-Background([string]$Code) {
 function Start-IssueCheck($I) {
     # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
     # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
-    if ($I.Id -in 'crash', 'bsod', 'power41') { Set-StabilityFixed $I.Id; return $false }
+    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
@@ -2019,7 +2019,7 @@ function Show-ReviewDialog {
             if (-not $sync.BugRelay) { throw "le service d'envoi ne répond pas pour l'instant. Réessaie plus tard." }
             $btn.IsEnabled = $false; $btn.Content = 'Envoi...'
             [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
-            $payload = @{ note = $script:RevNote; commentaire = $script:RevText.Text.Trim(); pseudo = $script:RevPseudo.Text.Trim(); version = $AppVersion; id = "$($script:Settings.InstallId)" } | ConvertTo-Json -Compress
+            $payload = @{ note = $script:RevNote; commentaire = (Hide-Profanity $script:RevText.Text.Trim()); pseudo = (Hide-Profanity $script:RevPseudo.Text.Trim()); version = $AppVersion; id = "$($script:Settings.InstallId)" } | ConvertTo-Json -Compress
             $script:RevBtn = $btn
             Send-RelayAsync ($sync.BugRelay.TrimEnd('/') + '/avis') ([System.Text.Encoding]::UTF8.GetBytes($payload)) {
                 param($res)
@@ -2051,6 +2051,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.2.0' = @("Diagnostic plus poussé : démarrage lent (Windows dit lui-même ce qui le ralentit), extinctions brutales expliquées (bouton maintenu, veille ou coupure nette), pilote graphique qui décroche, logiciels qui se figent, erreurs de lecture des disques et résultat du test de mémoire de Windows. Chaque fois avec la cause et quoi faire.", "Avis et rapports : les gros mots sont masqués par des étoiles avant d'être publiés.")
     '2.1.9' = @("Écrans bleus : AEROX lit les rapports de plantage de Windows et te dit quel pilote les provoque (carte graphique, réseau, anti-triche d'un jeu, antivirus…), avec la bonne réparation. Il signale aussi les erreurs matérielles et la mémoire en XMP/EXPO.", "BIOS : « Chercher mon BIOS » ouvre la page de ton modèle sur le site du fabricant quand AEROX peut la vérifier (ASUS, MSI, Gigabyte, ASRock, Dell, Lenovo), sinon la recherche de son site officiel.", "Carte réseau : si son pilote refuse de couper l'économie d'énergie tout de suite, le réglage est enregistré pour le prochain redémarrage (avant : « réglé » puis toujours signalé).", "Mises à jour : un logiciel dont l'installateur échoue deux fois (Corsair iCUE…) n'est plus proposé en boucle : AEROX te dit de le mettre à jour depuis le logiciel lui-même.")
     '2.1.8' = @("Bilan avant / après : la place libre de tous tes disques (D:, E:…) est comparée, pas seulement C:. Visible à partir du prochain bilan.", "« Pas de son » ne relance plus le son de Windows quand il marche : ça coupait le micro et le casque dans Discord. Son et micro te disent maintenant quoi choisir exactement dans Discord (Entrée / Sortie), y compris avec SteelSeries Sonar.", "Navigateurs : « Gérer » ouvre directement la page de l'extension, dans le bon profil.", "Pilotes graphiques : la vraie date d'installation est affichée (la date du pilote, c'est celle du fabricant).", "Plantages : après une réparation ou un nouveau pilote graphique, seuls les nouveaux plantages comptent, et dwm.exe (l'affichage de Windows) est réparé par le pilote graphique, pas par les mises à jour de logiciels.", "Désinstallation : si le désinstalleur d'un logiciel n'existe plus, AEROX te l'explique clairement.")
     '2.1.7' = @("Espace disque : un bouton « Corbeille » à côté de chacun de tes gros fichiers, sur tous les disques (D:, E:…), pas seulement dans ton dossier perso.", "Les gros fichiers qui font partie d'un jeu ou d'un logiciel ne sont plus mélangés avec les tiens : AEROX te montre le jeu entier et te propose de le désinstaller (supprimé fichier par fichier, il ne marcherait plus).", "En analysant un autre disque que C:, le bouton « Nettoyage approfondi » (qui s'occupe du disque de Windows) n'apparaît plus.", "« Mettre la sélection à la corbeille » ne ferme plus la fenêtre, et le choix du disque à analyser est bien aligné.")
@@ -2407,9 +2408,9 @@ function Show-BugReport([string]$Prefill) {
             try {
                 $btn.IsEnabled = $false; $btn.Content = 'Envoi...'
                 [System.Windows.Input.Mouse]::OverrideCursor = [System.Windows.Input.Cursors]::Wait
-                $title = "[Bug v$AppVersion] " + $(if ($script:RptDesc.Text.Trim()) { ($script:RptDesc.Text.Trim() -split "`r?`n")[0] } else { "Rapport automatique" })
+                $title = "[Bug v$AppVersion] " + $(if ($script:RptDesc.Text.Trim()) { Hide-Profanity (($script:RptDesc.Text.Trim() -split "`r?`n")[0]) } else { "Rapport automatique" })
                 if ($title.Length -gt 100) { $title = $title.Substring(0, 97) + '...' }
-                $payload = @{ title = $title; body = (Build-BugReport $script:RptDesc.Text); version = $AppVersion } | ConvertTo-Json -Compress
+                $payload = @{ title = $title; body = (Build-BugReport (Hide-Profanity $script:RptDesc.Text)); version = $AppVersion } | ConvertTo-Json -Compress
                 $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload)
                 $script:RptBtn = $btn
                 Send-RelayAsync $sync.BugRelay $bytes {

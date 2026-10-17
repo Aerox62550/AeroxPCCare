@@ -2,6 +2,17 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.2.0 : diagnostic approfondi (Sam : « qu'elle comprenne et propose les solutions, comme pour les écrans bleus »)
+
+- Démarrage lent (Test-BootSpeed, catégorie Démarrage) : journal Diagnostics-Performance de Windows, événements 101 logiciel / 102 pilote / 103 service / 106 tâche de fond / 109 périphérique sur 30 jours ; gardé si ça revient (≥ 2 fois) avec ≥ 3 s de retard moyen ; signalé si le dernier démarrage dépasse 45 s. Nom, type, retard moyen, nombre de fois ; conseils selon le type ; temps du dernier démarrage dans le journal.
+- Extinctions brutales (power41) : champs de l'événement 41 lus : bouton maintenu (PowerButtonTimestamp) = le PC était figé ; pendant une veille (SleepInProgress) ; coupure nette = courant / alimentation / surchauffe. Cause et étapes selon le cas.
+- Pilote graphique qui décroche (Display 4101, ≥ 2 en 7 jours) → « Vérifier les pilotes », installation propre, overclocking, températures, alimentation.
+- Test de mémoire de Windows (MemoryDiagnostics-Results 1202 sur 90 jours) → critique ; 1201 → point OK.
+- Logiciels qui se figent (Application 1002, ≥ 3 en 7 jours) → composant de Windows : réparer les fichiers ; logiciel : mises à jour ; conseil d'analyse « PC lent » au moment du figement.
+- Disques (Test-DiskHealth) : erreurs de lecture disk 7 / 51 → critique avec le nom du disque (Harddisk N → disque physique) ; disk 153 ≥ 5 → câble / firmware ; Ntfs 55 / 98 → vérification du disque. Une requête par source d'événements.
+- Après réparation (tdr, hang, diskbad, diskretry, ntfs) : seules les nouvelles erreurs comptent (comme crash / bsod / power41).
+- Avis et rapports de bug : gros mots masqués (1re lettre + étoiles) avant envoi : commentaire, pseudo, titre et description du rapport (Hide-Profanity). Demande de Sam après l'avis n° 14 (corrigé à la main sur GitHub).
+
 ## Publié en 2.1.9 : rapports n° 15 et 16, BIOS
 
 - Écrans bleus (rapport n° 15 : 6 écrans bleus, seul le code était donné ; Sam : « le but c'est qu'on détecte les soucis et qu'on règle ») : AeroxDump.Analyze lit chaque petit rapport de plantage (C:\Windows\Minidump, format « PAGEDU64 » triage) : code, paramètres, liste des pilotes chargés (validée en entier : noms, adresses noyau, tailles ; sinon rien n'est désigné) et pilotes trouvés sur la pile ou visés par les paramètres. Coupable = premier pilote qui n'est pas de Microsoft (éditeur lu dans le fichier du pilote), sinon premier pilote Microsoft hors noyau, sinon « seulement Windows » (→ RAM / XMP / fichiers de Windows). Classé gpu / réseau / anti-triche / antivirus / stockage / USB / audio / autre, avec réparation adaptée (pilotes, logiciels, fichiers de Windows). Une ligne par écran bleu dans le journal (donc dans les rapports). En plus : erreurs matérielles WHEA et mémoire en XMP/EXPO (DDR4 > 3200, DDR5 > 6400). Test Windows sur un faux rapport de même structure ; à confirmer sur un vrai rapport de testeur.

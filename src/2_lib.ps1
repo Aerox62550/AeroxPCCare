@@ -327,6 +327,13 @@ function Get-SessionFolder([string]$Name) {
     if ($sub.ContainsKey($Name)) { return (Join-Path $u.Profile $sub[$Name]) }
     return ''
 }
+# Gros mots masqués avant publication d'un avis ou d'un rapport (ils restent publics sur GitHub) :
+# la 1re lettre est gardée, le reste en étoiles (« c***** »). L'avis lui-même est toujours publié.
+$script:Profanity = '(?i)(?<![\p{L}])(put(e|ain|ains)|merde(s|ux)?|chatte(s)?|bite(s)?|couilles?|connard(e|s)?|connasse(s)?|conne(s)?|con|cons|encul[ée]e?s?|salope(s)?|salaud(s)?|b[aâ]tard(e|s)?|niqu(e|er|é|ez)|ntm|fdp|tg|ta gueule|foutre|chier|chiant(e|s)?|cul|zob|teub|schneck|pd|p[ée]d[ée]s?|branleu?r(s)?|fuck(ing|er|ed)?|shit|bitch(es)?|dick|pussy|asshole|motherfucker|wtf)(?![\p{L}])'
+function Hide-Profanity([string]$Text) {
+    if (-not $Text) { return $Text }
+    return [regex]::Replace($Text, $script:Profanity, { param($m) $w = $m.Value; $w.Substring(0, 1) + ('*' * ($w.Length - 1)) })
+}
 # Message clair quand winget manque ou ne peut pas être lancé
 function Add-WingetError([string]$What) {
     if ($script:WingetUnreadable) {
@@ -1574,6 +1581,12 @@ function Test-Browsers {
 #  BILAN AVANT / APRÈS : mesures simples et vérifiables de l'état du PC
 # =====================================================================
 # Temps du dernier démarrage complet mesuré par Windows lui-même (journal « Diagnostics-Performance », événement 100)
+# Champs nommés d'un événement Windows (EventData) : @{ BootTime = '...'; FriendlyName = '...' }
+function Get-EventFields($E) {
+    $h = @{}
+    try { foreach ($d in @(([xml]$E.ToXml()).Event.EventData.Data)) { if ($d.Name) { $h[$d.Name] = "$($d.'#text')" } } } catch {}
+    return $h
+}
 function Get-LastBootTime {
     try {
         $e = Get-WinEvent -LogName 'Microsoft-Windows-Diagnostics-Performance/Operational' -FilterXPath '*[System[EventID=100]]' -MaxEvents 1 -ErrorAction Stop
@@ -2342,10 +2355,50 @@ function Test-Stability {
     $kp = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = (Get-StabilitySince 'power41' (Get-Date).AddDays(-30)) } -ErrorAction SilentlyContinue |
             Where-Object { "$($_.Properties[0].Value)" -eq '0' })
     if ($kp.Count -ge 2) {
-        Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" `
-            -Cause "Windows s'est coupé sans s'arrêter proprement : coupure de courant, bouton maintenu, surchauffe ou alimentation fatiguée." `
-            -Effect "Risque de fichiers abîmés et de perte de travail." `
-            -Steps @("Évite d'éteindre en maintenant le bouton : passe par Démarrer > Arrêter.", "Si ça arrive en jeu : vérifie la poussière et les ventilateurs (surchauffe).", "Si ça continue, l'alimentation du PC est peut-être fatiguée : fais-la vérifier.")
+        # Comment le PC s'est coupé : bouton maintenu (le PC était figé), pendant une mise en veille, ou coupure nette
+        $btn = 0; $sleep = 0
+        foreach ($e in $kp) { $f = Get-EventFields $e; if ($f.PowerButtonTimestamp -and $f.PowerButtonTimestamp -ne '0') { $btn++ } elseif ($f.SleepInProgress -and $f.SleepInProgress -ne '0' -and $f.SleepInProgress -ne 'false') { $sleep++ } }
+        $cut = $kp.Count - $btn - $sleep
+        $parts = @(); if ($btn) { $parts += "$btn fois en maintenant le bouton d'allumage" }; if ($sleep) { $parts += "$sleep fois pendant une mise en veille" }; if ($cut) { $parts += "$cut fois d'un coup, sans bouton (coupure nette)" }
+        $cause = "Windows s'est coupé sans s'arrêter proprement : " + ($parts -join ', ') + "."
+        $steps = @()
+        if ($btn) { $cause += " Maintenir le bouton, c'est ce qu'on fait quand le PC est figé : le vrai problème, c'est ce qui le fige."; $steps += "Le PC se fige avant ? Regarde les autres alertes (pilote graphique, écrans bleus, plantages) : c'est souvent le pilote de la carte graphique ou une surchauffe." }
+        if ($sleep) { $cause += " Les coupures pendant la mise en veille viennent souvent d'un pilote (carte graphique, Wi-Fi) ou du démarrage rapide de Windows."; $steps += "Mets à jour le pilote graphique et Wi-Fi ; si ça continue, désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons)." }
+        if ($cut) { $cause += " Une coupure nette sans bouton, c'est le courant (multiprise, coupure), l'alimentation du PC qui flanche sous la charge, ou une surchauffe."; $steps += "Si ça arrive surtout en jeu : poussière, ventilateurs, et l'alimentation du PC (bloc d'alim) peut être trop faible ou fatiguée."; $steps += "Branche le PC directement au mur (sans multiprise douteuse) pour éliminer le courant." }
+        Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" -Cause $cause `
+            -Effect "Risque de fichiers abîmés et de perte de travail." -Steps $steps
+    }
+
+    # Le pilote graphique qui « cesse de répondre et récupère » (écran noir une seconde, jeu qui se fige ou se ferme)
+    $tdr = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = (Get-StabilitySince 'tdr' (Get-Date).AddDays(-7)) } -ErrorAction SilentlyContinue)
+    if ($tdr.Count -ge 2) {
+        $drvName = ("$($tdr[0].Properties[0].Value)" -replace '[^\w.\-]', '')
+        Add-Issue -Id 'tdr' -Sev 'warn' -Title "Le pilote graphique a décroché $($tdr.Count) fois cette semaine" -Detail $(if ($drvName) { "Pilote : $drvName" } else { 'Carte graphique' }) `
+            -Cause "Windows a dû relancer le pilote de la carte graphique (écran noir une seconde, jeu qui se fige ou se ferme). Causes classiques : pilote abîmé ou trop vieux/trop récent, overclocking de la carte, surchauffe, ou alimentation trop juste." `
+            -Effect "Écrans noirs, jeux qui plantent, parfois écran bleu." -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
+            -Steps @("Installe le dernier pilote de ta carte graphique en « installation propre » (option de l'installateur NVIDIA / AMD).", "Enlève tout overclocking de la carte graphique (MSI Afterburner…).", "Regarde les températures en jeu (Gaming > En direct) : au-dessus de 85 °C, dépoussière.", "Si ça continue : l'alimentation du PC est peut-être trop faible pour la carte.")
+    }
+
+    # Test de la mémoire de Windows (« Diagnostic de mémoire Windows ») : son résultat est un fait, pas une supposition
+    $md = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = (Get-Date).AddDays(-90) } -MaxEvents 5 -ErrorAction SilentlyContinue | Sort-Object TimeCreated -Descending)
+    if ($md.Count -and $md[0].Id -eq 1202) {
+        Add-Issue -Id 'ramtest' -Sev 'crit' -Title "Le test de mémoire de Windows a trouvé des erreurs" -Detail ("Test du {0}" -f $md[0].TimeCreated.ToString('dd/MM/yyyy')) `
+            -Cause "Une barrette de mémoire vive (RAM) est défectueuse ou mal réglée (profil XMP/EXPO trop poussé)." -Effect "Écrans bleus, plantages au hasard, fichiers abîmés." `
+            -Steps @("Désactive XMP / EXPO dans le BIOS et refais le test (« Diagnostic de mémoire Windows » dans Démarrer).", "Si les erreurs restent : teste les barrettes une par une pour trouver la mauvaise, puis remplace-la (garantie souvent à vie sur la RAM).")
+    } elseif ($md.Count -and $md[0].Id -eq 1201) { Add-Ok ("Test de mémoire de Windows sans erreur (le {0})" -f $md[0].TimeCreated.ToString('dd/MM/yyyy')) }
+
+    # Logiciels qui se figent (« ne répond pas ») souvent
+    $hangs = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1002; StartTime = (Get-StabilitySince 'hang' (Get-Date).AddDays(-7)) } -ErrorAction SilentlyContinue |
+               Where-Object { "$($_.Properties[0].Value)" -notmatch '(?i)^(aerox ?pc ?care|aeroxpccare)' })
+    $hg = @($hangs | Group-Object { "$($_.Properties[0].Value)" } | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending)
+    if ($hg.Count) {
+        $h1 = $hg[0]
+        $isWinH = ($h1.Name -match $script:WinComponents)
+        Add-Issue -Id 'hang' -Sev 'warn' -Title "$($h1.Name) s'est figé $($h1.Count) fois cette semaine" -Detail ("« Ne répond pas »" + $(if ($hg.Count -gt 1) { " · aussi : " + (($hg | Select-Object -Skip 1 -First 3 | ForEach-Object { "$($_.Name) ($($_.Count))" }) -join ', ') } else { '' })) `
+            -Cause $(if ($isWinH) { "$($h1.Name) fait partie de Windows : quand il se fige, c'est souvent le disque saturé, un logiciel qui s'accroche à l'Explorateur (extensions de menu clic droit, cloud), ou des fichiers de Windows abîmés." } else { "Le logiciel attend quelque chose qui ne vient pas : disque trop lent ou saturé, mémoire pleine, version boguée ou extension/plugin en trop." }) `
+            -Effect "Fenêtre blanche « Ne répond pas », travail perdu si tu forces la fermeture." `
+            -FixLabel $(if ($isWinH) { "Réparer les fichiers Windows" } else { "Mettre à jour mes logiciels" }) -FixAction $(if ($isWinH) { 'Repair-System' } else { 'Update-Apps' }) `
+            -Steps @("Lance l'analyse « PC lent » au moment où ça se fige : AEROX te montre ce qui occupe le processeur, la mémoire et le disque.", $(if ($isWinH) { "Lance « Réparer les fichiers Windows »." } else { "Mets le logiciel à jour ; si ça continue, réinstalle-le (et retire ses extensions / plugins)." }))
     }
 
     # Les plantages d'AEROX PC Care lui-même ne sont pas un problème du PC (ils remontent par les rapports de bug)
@@ -2921,6 +2974,41 @@ function Test-Startup {
             -FixLabel "Choisir les applis" -UiFix 'startup' `
             -Steps @("Clique sur « Choisir les applis » : décoche celles qui n'ont pas besoin de se lancer toutes seules.", "Celles que tu laisses cochées sont validées : le diagnostic ne te les signalera plus.")
     } else { Add-Ok "$($all.Count) programmes au démarrage, c'est bon$note" }
+    Test-BootSpeed
+}
+# Démarrage lent : Windows mesure chaque démarrage et note lui-même ce qui l'a ralenti (journal Diagnostics-Performance :
+# 101 logiciel, 102 pilote, 103 service, 106 tâche de fond, 109 périphérique). On ne garde que ce qui revient.
+function Test-BootSpeed {
+    $b = Get-LastBootTime
+    $since = (Get-Date).AddDays(-30)
+    $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'; Id = 101, 102, 103, 106, 109; StartTime = $since } -ErrorAction SilentlyContinue)
+    $kinds = @{ 101 = 'logiciel'; 102 = 'pilote'; 103 = 'service'; 106 = 'tâche de fond'; 109 = 'périphérique' }
+    $agg = @{}
+    foreach ($e in $ev) {
+        $f = Get-EventFields $e
+        $n = @($f.FriendlyName, $f.FileName, $f.Name) | Where-Object { $_ } | Select-Object -First 1
+        if (-not $n) { continue }
+        $deg = 0; [void][int]::TryParse("$($f.DegradationTime)", [ref]$deg)
+        $k = "$($e.Id)|$n"
+        if (-not $agg.ContainsKey($k)) { $agg[$k] = @{ Name = $n; Kind = $kinds[[int]$e.Id]; Count = 0; Deg = 0 } }
+        $agg[$k].Count++; $agg[$k].Deg += $deg
+    }
+    $slow = @($agg.Values | Where-Object { $_.Count -ge 2 -and ($_.Deg / $_.Count) -ge 3000 } | Sort-Object { - $_.Deg / $_.Count } | Select-Object -First 5)
+    $bootTxt = if ($b) { "Dernier démarrage : $($b.Sec) s" } else { '' }
+    if ($b) { Log ("   • {0} (mesuré par Windows le {1})" -f $bootTxt, $b.Date.ToString('dd/MM/yyyy HH:mm')) }
+    foreach ($x in $slow) { Log ("   • Ralentit le démarrage : {0} ({1}) +{2} s en moyenne, {3} fois ce mois-ci" -f $x.Name, $x.Kind, [math]::Round($x.Deg / $x.Count / 1000), $x.Count) }
+    if ($slow.Count -and (-not $b -or $b.Sec -ge 45)) {
+        $list = ($slow | ForEach-Object { "{0} ({1}, +{2} s)" -f $_.Name, $_.Kind, [math]::Round($_.Deg / $_.Count / 1000) }) -join ' · '
+        $hasApp = @($slow | Where-Object { $_.Kind -eq 'logiciel' }).Count -gt 0
+        $hasDrv = @($slow | Where-Object { $_.Kind -in 'pilote', 'périphérique' }).Count -gt 0
+        $steps = @()
+        if ($hasApp) { $steps += "Logiciels : décoche-les dans « Choisir les applis » (programmes au démarrage), ou désactive leur option « lancer au démarrage »." }
+        if ($hasDrv) { $steps += "Pilotes / périphériques : mets-les à jour (Mises à jour > Pilotes) ; un périphérique USB lent (hub, carte, vieux disque) peut aussi être débranché pour tester." }
+        if (@($slow | Where-Object { $_.Kind -in 'service', 'tâche de fond' }).Count) { $steps += "Services et tâches de fond : regarde « Programmes cachés en fond », AEROX t'explique chacun." }
+        Add-Issue -Id 'slowboot' -Sev 'warn' -Title "Démarrage lent : Windows a repéré ce qui le ralentit" -Detail ($(if ($bootTxt) { "$bootTxt · " } else { '' }) + $list) `
+            -Cause "À chaque démarrage, Windows chronomètre ce qui se lance. Ces éléments le ralentissent régulièrement (mesures de Windows lui-même, ce mois-ci)." `
+            -Effect "Le PC met plus longtemps à être utilisable après l'allumage." -FixLabel "Choisir les applis" -UiFix 'startup' -Steps $steps
+    } elseif ($b) { Add-Ok ("Démarrage de Windows : {0} s" -f $b.Sec) }
 }
 
 function Test-DiskHealth {
@@ -2959,6 +3047,32 @@ function Test-DiskHealth {
                     -Steps @("Passer à un SSD est LA meilleure amélioration possible pour ce PC (à partir d'environ 40 €).", "Un réparateur peut cloner ton disque actuel sur le SSD sans rien perdre.")
             }
         }
+        # Erreurs relevées par Windows sur les disques (30 jours) : secteurs illisibles (7), erreurs de lecture de la mémoire
+        # virtuelle (51), opérations relancées (153), système de fichiers abîmé (Ntfs 55 / 98)
+        # Une requête par source : si une source n'existe pas sur ce PC, les autres sont quand même lues
+        $de = @(foreach ($pv in 'disk', 'Ntfs', 'Microsoft-Windows-Ntfs') { Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = $pv; Id = 7, 51, 153, 55, 98; StartTime = (Get-Date).AddDays(-30) } -ErrorAction SilentlyContinue })
+        # Après une réparation, seules les erreurs d'après comptent
+        $sB = Get-StabilitySince 'diskbad' (Get-Date).AddDays(-30); $sR = Get-StabilitySince 'diskretry' (Get-Date).AddDays(-30); $sF = Get-StabilitySince 'ntfs' (Get-Date).AddDays(-30)
+        $bad = @($de | Where-Object { $_.Id -in 7, 51 -and $_.TimeCreated -gt $sB }); $retry = @($de | Where-Object { $_.Id -eq 153 -and $_.TimeCreated -gt $sR }); $fs = @($de | Where-Object { $_.Id -in 55, 98 -and $_.TimeCreated -gt $sF })
+        $diskOf = { param($e) $t = (@($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + " $($e.Message)"; if ($t -match '(?i)harddisk(\d+)') { [int]$matches[1] } else { -1 } }
+        if ($bad.Count) {
+            $nums = @($bad | ForEach-Object { & $diskOf $_ } | Where-Object { $_ -ge 0 } | Select-Object -Unique)
+            $names = @($nums | ForEach-Object { $n = $_; $pd = @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { "$($_.DeviceId)" -eq "$n" })[0]; if ($pd) { $pd.FriendlyName } else { "disque n° $n" } })
+            Add-Issue -Id 'diskbad' -Sev 'crit' -Title ("Windows n'arrive pas à lire certains endroits du disque ({0} fois ce mois-ci)" -f $bad.Count) -Detail $(if ($names.Count) { $names -join ', ' } else { 'Disque' }) `
+                -Cause "Windows a noté des secteurs illisibles ou des erreurs de lecture : le disque s'use ou est abîmé (ou, plus rarement, son câble / sa prise)." `
+                -Effect "Risque de perdre des fichiers. Ça empire en général avec le temps." -FixLabel "Vérifier le disque" -FixAction 'Test-Disk' `
+                -Steps @("SAUVEGARDE tout de suite tes fichiers importants (clé USB, disque externe, cloud).", "Disque interne SATA : change le câble SATA ou la prise sur la carte mère.", "Si ça continue : remplace le disque.")
+        } elseif ($retry.Count -ge 5) {
+            Add-Issue -Id 'diskretry' -Sev 'warn' -Title ("Le disque a dû recommencer des lectures {0} fois ce mois-ci" -f $retry.Count) -Detail 'Opérations relancées par Windows' `
+                -Cause "Le disque a mis trop de temps à répondre et Windows a réessayé : câble ou prise qui fatigue, firmware du SSD à mettre à jour, ou disque qui s'use." `
+                -Effect "Petits figements du PC de quelques secondes." -Steps @("Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Disque SATA : change le câble ou la prise.", "Sauvegarde tes fichiers importants par précaution.")
+        }
+        if ($fs.Count) {
+            Add-Issue -Id 'ntfs' -Sev 'warn' -Title "Le système de fichiers d'un disque est à réparer" -Detail ("Signalé {0} fois ce mois-ci" -f $fs.Count) `
+                -Cause "Windows a trouvé des incohérences dans le rangement des fichiers (souvent après une coupure de courant ou un arrêt forcé)." -Effect "Fichiers ou dossiers illisibles, lenteurs." `
+                -FixLabel "Vérifier le disque" -FixAction 'Test-Disk' -Steps @("Lance la vérification du disque (bouton vert) : Windows répare au prochain redémarrage si besoin.")
+        }
+        if (-not $bad.Count -and $retry.Count -lt 5 -and -not $fs.Count) { Add-Ok "Aucune erreur de lecture des disques ce mois-ci" }
         # Disques avec une lettre que Windows ne relie à aucun disque physique (clés USB, certains boîtiers externes) : santé non lisible
         foreach ($d in @(Get-DriveList | Where-Object { -not $seen.ContainsKey($_.Id) })) {
             Log ("   • {0} : santé non lisible par Windows (souvent une clé USB ou un boîtier externe)" -f $d.Id)

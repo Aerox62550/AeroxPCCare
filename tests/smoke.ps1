@@ -349,6 +349,17 @@ function Invoke-Smoke {
         Write-Host ("        ce PC : {0} rapport(s), erreurs matérielles {1}, XMP « {2} »" -f @($an.Dumps).Count, $an.Whea, $an.Xmp)
         $k = Get-DriverFileInfo 'ntoskrnl.exe' @{}; if (-not $k.Ms) { throw "noyau de Windows pas reconnu comme Microsoft ($($k.Company))" }
     }
+    Smoke 'Avis : gros mots masqués' {
+        $r = Hide-Profanity "Super logiciel (j'aime la chatte), putain de console, conseil pour Bitcoin"
+        Write-Host "        $r"
+        if ($r -ne "Super logiciel (j'aime la c*****), p***** de console, conseil pour Bitcoin") { throw "masquage faux" }
+    }
+    Smoke 'Analyses approfondies : démarrage, figements, disques' {
+        $e = @(Get-WinEvent -LogName System -MaxEvents 1)[0]; $f = Get-EventFields $e; Write-Host ("        champs d'un événement : {0}" -f (@($f.Keys) -join ', '))
+        $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:IgnoredList = New-Object System.Collections.ArrayList
+        Test-BootSpeed; Test-Stability; Test-DiskHealth
+        Write-Host ("        problèmes : {0} · OK : {1}" -f (($script:Issues | ForEach-Object { $_.Id }) -join ', '), ($script:OkList -join ' | '))
+    }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
         Find-BiosPage
         if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" }
