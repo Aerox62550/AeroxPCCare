@@ -555,7 +555,7 @@ public static class AeroxSpeed {
     const string CfBase = "https://speed.cloudflare.com/";
     public const string OoklaZip = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip";
     // Empreinte SHA-256 de speedtest.exe contenu dans ce zip (relevée sur le zip officiel)
-    static readonly string[] OoklaSha = new string[] { };
+    static readonly string[] OoklaSha = new string[] { "C73C4AC2A7CDC48829FE0F9D7EC91CA41C8B434490D4EB3205AAD69C7AA3B921" };
     public static bool IsTrustedOokla(string exe) {
         try {
             if (AeroxTrust.IsSignedBy(exe, "Ookla")) return true;

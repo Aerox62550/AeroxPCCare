@@ -717,7 +717,8 @@ function Test-WebPageHas([string]$Url, [string[]]$Tokens) {
 function Find-BiosPage {
     Step "Recherche de la page du BIOS de ton PC sur le site du fabricant"
     $sync.BiosUrl = $null
-    $i = $sync.SysInfo; if (-not $i) { $i = Get-SystemInfo }
+    # Get-SystemInfo ne renvoie rien : il remplit $sync.SysInfo
+    if (-not $sync.SysInfo) { Get-SystemInfo | Out-Null }; $i = $sync.SysInfo; if (-not $i) { $i = @{} }
     $m = ("$($i.Model)" -replace '\s*\(MS-[0-9A-Z]+\)\s*', ' ').Trim()
     $enc = [uri]::EscapeDataString($m)
     $dash = (($m -replace '[()]', '' -replace '\s+', '-').Trim('-'))

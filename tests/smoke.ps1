@@ -370,7 +370,12 @@ function Invoke-Smoke {
             Expand-Archive "$d\o.zip" $d -Force
             $sg = Get-AuthenticodeSignature "$d\speedtest.exe"
             Write-Host ("        speedtest.exe : {0} · {1} · SHA-256 {2} · accepté par AEROX : {3}" -f $sg.Status, $sg.SignerCertificate.Subject, (Get-FileHash "$d\speedtest.exe" -Algorithm SHA256).Hash, [AeroxSpeed]::IsTrustedOokla("$d\speedtest.exe"))
-        } catch { Write-Host "        speedtest.exe : non testé ($($_.Exception.Message))" }
+            $okla = [AeroxSpeed]::IsTrustedOokla("$d\speedtest.exe")
+            $fake = "$d\faux.exe"; Copy-Item "$env:SystemRoot\System32\whoami.exe" $fake -Force
+            $fk = [AeroxSpeed]::IsTrustedOokla($fake)
+        } catch { Write-Host "        speedtest.exe : non testé ($($_.Exception.Message))"; $okla = $true; $fk = $false }
+        if (-not $okla) { throw "le vrai programme d'Ookla est refusé : le test de débit passerait toujours par Cloudflare" }
+        if ($fk) { throw "un autre programme est accepté comme celui d'Ookla" }
     }
     Smoke 'SFC : résultat lu dans le journal de Windows (toutes langues)' {
         $f = Join-Path $env:TEMP 'aerox-cbs.log'; $t = Get-Date
@@ -423,8 +428,8 @@ function Invoke-Smoke {
     }
     Smoke 'Dépannage : Discord' { Repair-Discord }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
-        Find-BiosPage
-        $si = $sync.SysInfo; if (-not $si) { $si = Get-SystemInfo }
+        $sync.SysInfo = $null; Find-BiosPage; $si = $sync.SysInfo
+        if (-not $si) { throw "infos du PC non chargées" }
         if ("$($si.Model)$($si.Maker)".Trim()) { if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" } }
         elseif ($sync.BiosUrl) { throw "recherche lancée alors que Windows ne connaît pas le modèle" }
         Write-Host ("        ce PC : « {0} » « {1} » → {2}" -f $si.Maker, $si.Model, $(if ($sync.BiosUrl) { "$($sync.BiosUrl.Kind) $($sync.BiosUrl.Url)" } else { 'pas de recherche (modèle inconnu)' }))
