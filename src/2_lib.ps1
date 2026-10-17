@@ -82,7 +82,7 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 # sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
-    if ($Uri -notmatch '^(ms-settings|windowsdefender|ms-windows-store|ms-availablenetworks|shell):') { throw "Lien non autorisé : $Uri" }
+    if ($Uri -notmatch '^(ms-settings|windowsdefender|ms-windows-store|ms-availablenetworks|shell|steam):') { throw "Lien non autorisé : $Uri" }
     $explorer = Join-Path $env:SystemRoot 'explorer.exe'
     if (Test-OtherAccount) { if (Start-AsSessionUser $explorer $Uri) { return } }
     Start-Process -FilePath $explorer -ArgumentList $Uri
@@ -113,6 +113,15 @@ function Open-Url([string]$Url) {
     try { Set-Clipboard -Value $Url -ErrorAction Stop } catch {}
     Log ("⚠ Impossible d'ouvrir le navigateur sur ce PC. Le lien est copié : colle-le dans ton navigateur (Ctrl+V) → {0}" -f $Url)
     return $false
+}
+# Ouvre dans la session de la personne (sans droits admin) un fichier créé par AEROX dans son dossier protégé
+# (rapport de batterie…). Jamais un autre fichier.
+function Open-LocalFile([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    if (-not $full.StartsWith($AppInfo.Secure.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $full -PathType Leaf)) { return $false }
+    $explorer = Join-Path $env:SystemRoot 'explorer.exe'
+    if (Test-OtherAccount) { return [bool](Start-AsSessionUser $explorer ('"{0}"' -f $full)) }
+    try { Start-Process -FilePath $explorer -ArgumentList ('"{0}"' -f $full) -ErrorAction Stop; return $true } catch { return $false }
 }
 function Step([string]$Message) { $sync.Progress = -1; Log ''; Log ("▶ " + $Message) }
 
@@ -738,8 +747,14 @@ function Find-BiosPage {
             return
         }
     }
-    $q = "$($i.Model) BIOS"
-    if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
+    $q = ("$($i.Model) BIOS").Trim()
+    if (-not "$($i.Model)".Trim() -and -not "$($i.Maker)".Trim()) {
+        # Windows ne connaît ni la marque ni le modèle (PC assemblé sans infos) : on ne lance pas une recherche vide
+        $sync.BiosUrl = $null
+        Log "   ⚠ Windows ne connaît pas la marque ni le modèle de ta carte mère : regarde-les écrits dessus (ou dans le BIOS), puis cherche « modèle + BIOS » sur le site du fabricant."
+        return
+    }
+    if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = ("$($i.Maker) $q support").Trim() }
     $sync.BiosUrl = @{ Url = ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)); Kind = 'web' }
     Log "   • Le site du fabricant n'a pas donné de page vérifiable pour ce modèle : recherche limitée à son site officiel."
 }
@@ -849,7 +864,8 @@ function Get-BatteryInfo {
     # Compléments par le rapport officiel de Windows (capacités et cycles absents du WMI sur certains PC)
     if (@($list | Where-Object { -not $_.Design -or -not $_.Full -or $null -eq $_.Cycles }).Count) {
         try {
-            $xmlPath = Join-Path $env:TEMP ("aerox_batterie_{0}.xml" -f $PID)
+            # Dossier protégé : un nom fixe dans un dossier modifiable par le compte pouvait être piégé (écriture admin détournée)
+            $xmlPath = Join-Path (Get-SecureDir 'session') ("batterie_{0}.xml" -f [guid]::NewGuid().ToString('N'))
             $null = & powercfg.exe /batteryreport /xml /output $xmlPath 2>&1
             if (Test-Path -LiteralPath $xmlPath) {
                 [xml]$doc = Get-Content -LiteralPath $xmlPath -Raw -Encoding UTF8
@@ -871,18 +887,18 @@ function Get-BatteryInfo {
     return $list.ToArray()
 }
 
-# Rapport complet de Windows (page HTML) : enregistré dans ProgramData pour pouvoir l'ouvrir dans la session de la personne
+# Rapport complet de Windows (page HTML) : enregistré dans le dossier protégé (lisible par tous, modifiable seulement en
+# administrateur), puis ouvert dans la session de la personne
 function Open-BatteryReport {
     Step "Rapport complet de la batterie (Windows)"
-    $dir = Join-Path $env:ProgramData 'AeroxPCCare'
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $out = Join-Path $dir 'rapport_batterie.html'
+    $out = Join-Path (Get-SecureDir 'session') 'rapport_batterie.html'
+    if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue }
     $null = & powercfg.exe /batteryreport /output $out 2>&1
     if (-not (Test-Path -LiteralPath $out)) {
         Add-TaskError -Title "Le rapport de batterie n'a pas pu être créé" -Cause "Windows n'a pas réussi à lire les informations de la batterie (pilote de batterie absent ou batterie retirée)."
         return
     }
-    if (Open-Url ([uri]$out).AbsoluteUri) { Log "   ✔ Rapport ouvert : historique de charge, capacité au fil du temps et autonomie estimée." }
+    if (Open-LocalFile $out) { Log "   ✔ Rapport ouvert : historique de charge, capacité au fil du temps et autonomie estimée." }
 }
 
 function Test-Battery {
@@ -1270,10 +1286,10 @@ function Get-BrowserExe($Def, [string]$ProfileRoot) {
 }
 
 # Ouvre une page interne du navigateur (chrome://extensions…) chez la personne devant l'écran
-function Open-BrowserPage([string]$Exe, [string]$Page, [string]$Profile = '') {
+function Open-BrowserPage([string]$Exe, [string]$Page, [string]$ProfileDir = '') {
     if (-not $Exe -or -not (Test-Path -LiteralPath $Exe)) { Log "⚠ Navigateur introuvable : ouvre-le toi-même et tape $Page dans la barre d'adresse."; return }
     # Le bon profil du navigateur (« Profile 1 »…) : sinon il s'ouvre sur un autre profil, sans la page voulue
-    $arg = $(if ($Profile -match '^(Default|Profile \d+)$') { '--profile-directory="{0}" ' -f $Profile } else { '' }) + $Page
+    $arg = $(if ($ProfileDir -match '^(Default|Profile \d+)$') { '--profile-directory="{0}" ' -f $ProfileDir } else { '' }) + $Page
     # Toujours dans la session normale, sans droits admin (le navigateur peut être installé dans le dossier perso)
     if (-not (Start-AsSessionUser $Exe $arg)) { Log "⚠ Ouvre ton navigateur et tape $Page dans la barre d'adresse." }
 }
@@ -1450,7 +1466,7 @@ function Test-RegBackupSafe([string]$Path) {
 # Remet une sauvegarde de réglages imposés (annulation depuis l'historique) : uniquement nos propres sauvegardes
 function Restore-RegBackup([string]$File) {
     $root = [IO.Path]::GetFullPath((Get-SecureDir 'sauvegardes')) + '\'
-    $old = [IO.Path]::GetFullPath((Join-Path $AppInfo.LogDir 'sauvegardes')) + '\'
+    $old = [IO.Path]::GetFullPath((Join-Path $AppInfo.OldLogDir 'sauvegardes')) + '\'
     $full = [IO.Path]::GetFullPath($File)
     if ($full.StartsWith($old, [StringComparison]::OrdinalIgnoreCase)) { throw "Cette sauvegarde vient d'une ancienne version d'AEROX, rangée dans un dossier modifiable sans droits admin : elle n'est pas remise, par sécurité. Pour retirer ces réglages, relance « Pubs et fausses alertes de virus » (onglet Réparation)." }
     if (-not $full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -or $full -notmatch '(?i)\.reg$' -or -not (Test-Path -LiteralPath $full) -or -not [AeroxSafeDelete]::IsDirectPath($full)) { throw "Sauvegarde introuvable : $File" }
@@ -2846,14 +2862,22 @@ function Test-Drivers {
                 -FixLabel $(if ($fix) { "Télécharger le pilote officiel" } else { "Vérifier les pilotes" }) -FixAction $fix -UiFix $(if ($fix) { '' } else { 'drivers' }) -OpenOnly:([bool]$fix) -Steps $steps
         } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
     }
-    $errNames = @{ 1 = 'mal configuré'; 3 = 'pilote abîmé'; 10 = 'ne peut pas démarrer'; 28 = 'pilote non installé'; 31 = 'ne fonctionne pas correctement'; 39 = 'pilote abîmé ou manquant'; 43 = 'arrêté après une erreur'; 52 = 'pilote non signé' }
-    $bad = @(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' -ErrorAction SilentlyContinue | Where-Object { $_.ConfigManagerErrorCode -notin 22, 24, 45 })
+    $bad = @(Get-ProblemDevices -Full)
+    foreach ($d in $bad) { Log ("   • Périphérique en panne : {0} (type {1}, code {2} : {3}) {4}" -f $d.Name, $d.Class, $d.Code, $d.Reason, $d.HwId) }
     if ($bad.Count -gt 0) {
-        $desc = ($bad | Select-Object -First 3 | ForEach-Object { $n = if ($_.Name) { $_.Name } else { 'Périphérique inconnu' }; $r = $errNames[[int]$_.ConfigManagerErrorCode]; if (-not $r) { $r = "code $($_.ConfigManagerErrorCode)" }; "$n ($r)" }) -join ', '
-        Add-Issue -Id 'devices' -Sev 'warn' -Title "$($bad.Count) périphérique(s) ont un problème de pilote" -Detail $desc `
-            -Cause "Windows n'a pas de pilote fonctionnel pour ces éléments (pilote manquant, abîmé ou incompatible)." -Effect "L'élément concerné peut ne pas marcher (son, Wi-Fi, Bluetooth, USB...)." `
-            -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
-            -Steps @("Clique sur « Vérifier les pilotes » : AEROX cherche les pilotes proposés par Windows et tu choisis lesquels installer.", "Si le problème revient après le redémarrage, Windows n'a pas le bon pilote : prends-le sur le site du fabricant de ton PC ou de ta carte mère (rubrique Support, avec le modèle exact).", "Pour voir le détail : clic droit sur Démarrer > Gestionnaire de périphériques.")
+        $desc = ($bad | Select-Object -First 3 | ForEach-Object { "$($_.Name) ($($_.Reason))" }) -join ', '
+        $canRe = @($bad | Where-Object { $_.Reinstall }).Count -gt 0
+        # Dit clairement de quel élément il s'agit (retour testeur : « problème de pilote alors que la mise à jour est bonne »
+        # → il pensait à la carte graphique, alors que c'était un autre périphérique)
+        $who = if ($bad.Count -eq 1) { "« $($bad[0].Name) » ($($bad[0].Kind))" } else { (@($bad | Select-Object -First 3 | ForEach-Object { "« $($_.Name) » ($($_.Kind))" }) -join ', ') }
+        $notGpu = -not @($bad | Where-Object { $_.Class -eq 'Display' }).Count
+        $cause = $(if ($notGpu) { "Ce n'est pas la carte graphique : c'est $who. " } else { "C'est $who. " }) + ((@($bad | Select-Object -First 3 | ForEach-Object { $_.Why }) | Select-Object -Unique) -join ' ')
+        Add-Issue -Id 'devices' -Sev 'warn' -Title ("{0} : problème de pilote" -f $(if ($bad.Count -eq 1) { "« $($bad[0].Name) »" } else { "$($bad.Count) périphériques" })) -Detail $desc `
+            -Cause $cause `
+            -Effect "L'élément concerné peut ne pas marcher (son, Wi-Fi, Bluetooth, USB, manette...)." `
+            -FixLabel $(if ($canRe) { "Réinstaller ce périphérique" } else { "Vérifier les pilotes" }) -FixAction $(if ($canRe) { 'Repair-ProblemDevices' } else { '' }) -UiFix $(if ($canRe) { '' } else { 'drivers' }) `
+            -Confirm $(if ($canRe) { "Windows va retirer puis réinstaller le pilote de ce périphérique (il disparaît quelques secondes). Rien d'autre n'est touché.`n`nContinuer ?" } else { '' }) `
+            -Steps @(($bad | Select-Object -First 3 | ForEach-Object { $_.Step }) + "Si le problème revient après un redémarrage : prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (rubrique Support, avec le modèle exact)." | Select-Object -Unique)
     } else { Add-Ok "Tous les périphériques ont un pilote qui fonctionne" }
 }
 
@@ -3025,8 +3049,11 @@ function Test-NetBlockers {
     $blocked = @()
     foreach ($h in 'discord.com', 'dl.discordapp.net', 'download.microsoft.com', 'store.steampowered.com') {
         try {
-            $a = @(Resolve-DnsName -Name $h -Type A -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object { $_.IP4Address } | ForEach-Object { $_.IP4Address })
-            if (-not $a.Count -or @($a | Where-Object { $_ -match '^(0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)' }).Count) { $blocked += $h }
+            $a = @(Resolve-DnsName -Name $h -Type A -DnsOnly -QuickTimeout -ErrorAction SilentlyContinue | Where-Object { $_.IP4Address } | ForEach-Object { $_.IP4Address })
+            $a6 = @(Resolve-DnsName -Name $h -Type AAAA -DnsOnly -QuickTimeout -ErrorAction SilentlyContinue | Where-Object { $_.IP6Address } | ForEach-Object { "$($_.IP6Address)" })
+            # Bloqué seulement si le site n'a d'adresse ni en IPv4 ni en IPv6, ou une adresse locale / vide (filtre)
+            $bad = @($a | Where-Object { $_ -match '^(0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)' }).Count + @($a6 | Where-Object { $_ -match '^(::1?|fe80:|fc|fd)' }).Count
+            if ((-not $a.Count -and -not $a6.Count) -or $bad) { $blocked += $h }
         } catch { $blocked += $h }
     }
     if ($blocked.Count -and $blocked.Count -lt 4) {
@@ -3056,6 +3083,22 @@ function Set-UserProxy([int]$Enable, [string]$Server, [string]$Pac) {
     if ($Pac) { Set-ItemProperty -LiteralPath $k -Name AutoConfigURL -Value $Pac -Type String }
     Log "   ✔ Proxy remis comme avant."
 }
+# Écrit le fichier hosts même s'il a été verrouillé : lecture seule (souvent mise par le logiciel qui l'a détourné) ou
+# droits retirés (remis aux droits normaux de Windows). Si c'est un antivirus qui le protège, c'est dit clairement.
+function Write-HostsFile([string[]]$Lines) {
+    $f = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    $it = Get-Item -LiteralPath $f -Force
+    $wasRO = [bool]($it.Attributes -band [IO.FileAttributes]::ReadOnly)
+    if ($wasRO) { $it.Attributes = $it.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly); Log "   • Le fichier hosts était en lecture seule (souvent pour empêcher de le réparer) : déverrouillé" }
+    try { [IO.File]::WriteAllLines($f, $Lines); return }
+    catch [UnauthorizedAccessException] {
+        # Droits du fichier modifiés : AEROX en reprend la propriété (administrateurs) et remet les droits par défaut de Windows
+        $null = Invoke-Native 'takeown.exe' @('/f', $f, '/a') -Quiet
+        $null = Invoke-Native 'icacls.exe' @($f, '/reset') -Quiet
+        Log "   • Les droits du fichier hosts avaient été changés : remis comme Windows les met par défaut"
+        [IO.File]::WriteAllLines($f, $Lines)
+    }
+}
 function Repair-Hosts {
     Step "Déblocage des sites détournés (fichier hosts)"
     $f = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
@@ -3066,19 +3109,26 @@ function Repair-Hosts {
         $bak = Join-Path (Get-SecureDir 'sauvegardes') ("hosts-{0:yyyyMMdd-HHmmss}.txt" -f (Get-Date))
         [IO.File]::WriteAllLines($bak, $lines)
         $keep = for ($i = 0; $i -lt $lines.Count; $i++) { if ($bad -notcontains ($i + 1)) { $lines[$i] } }
-        [IO.File]::WriteAllLines($f, [string[]]@($keep))
+        Write-HostsFile ([string[]]@($keep))
         $null = Invoke-Native 'ipconfig.exe' @('/flushdns') -Quiet
         Log ("   ✔ {0} ligne(s) retirée(s) : {1}" -f $bad.Count, ((@($hj | ForEach-Object { $_.Host }) | Select-Object -Unique) -join ', '))
         Log "   → Fais aussi une analyse antivirus complète : ces lignes ont souvent été mises par un logiciel malveillant."
         Add-Change -Title "Sites débloqués (fichier hosts)" -Detail "Copie de l'ancien fichier gardée" -Undo ("Restore-HostsBackup {0}" -f (ConvertTo-PsLiteral $bak))
-    } catch { Add-TaskError -Title "Impossible de modifier le fichier hosts" -Cause $_.Exception.Message -Steps @("Un antivirus protège peut-être ce fichier : autorise la modification ou retire les lignes à la main (Bloc-notes en administrateur).") }
+    } catch {
+        # Encore refusé : c'est l'antivirus qui protège le fichier (Avast, Kaspersky, Bitdefender… le font)
+        $av = @(); try { $av = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | Where-Object { $_.displayName -notmatch '(?i)defender' } | ForEach-Object { "$($_.displayName)" }) } catch {}
+        $who = if ($av.Count) { "ton antivirus « $($av -join ', ') »" } else { "un antivirus ou un logiciel de protection" }
+        Add-TaskError -Title "Le fichier hosts est protégé par $who" -Cause ("Windows refuse la modification même en administrateur : c'est $who qui bloque le fichier. ($($_.Exception.Message))") `
+            -Effect "Les sites détournés restent bloqués pour l'instant." -FixLabel "Réessayer" -FixAction 'Repair-Hosts' `
+            -Steps @("Ouvre $(if ($av.Count) { $av[0] } else { "ton antivirus" }) et désactive sa protection 10 minutes (ou sa « protection du fichier hosts » / « auto-défense »).", "Clique sur « Réessayer » dans AEROX, puis réactive la protection.", "Si tu ne connais pas cet antivirus ou ne l'as pas installé toi-même : désinstalle-le (Windows Defender suffit).")
+    }
 }
 function Restore-HostsBackup([string]$Path) {
     Step "Remise de l'ancien fichier hosts"
     $root = Get-SecureDir 'sauvegardes'
     $full = [IO.Path]::GetFullPath($Path)
     if (-not $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($full) -notmatch '^hosts-\d{8}-\d{6}\.txt$' -or -not [AeroxSafeDelete]::IsDirectPath($full)) { throw "Copie de sauvegarde refusée (elle doit venir du dossier protégé d'AEROX)." }
-    Copy-Item -LiteralPath $full -Destination (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') -Force -ErrorAction Stop
+    Write-HostsFile ([string[]]@([IO.File]::ReadAllLines($full)))
     $null = Invoke-Native 'ipconfig.exe' @('/flushdns') -Quiet
     Log "   ✔ Ancien fichier hosts remis."
 }
@@ -3205,6 +3255,8 @@ function Test-BootSpeed {
         $f = Get-EventFields $e
         $n = @($f.FriendlyName, $f.FileName, $f.Name) | Where-Object { $_ } | Select-Object -First 1
         if (-not $n) { continue }
+        # Composants de Windows lui-même (mises à jour qui finissent au démarrage, recherche, services) : rien à décocher
+        if ("$($f.FileName) $($f.Name) $n" -match '(?i)tiworker|trustedinstaller|searchprotocolhost|searchindexer|svchost|services\.exe|wininit|winlogon|explorer\.exe|msmpeng|^(microsoft )?windows |processus hôte pour les services windows|host process for windows services|windows modules installer') { continue }
         $deg = 0; [void][int]::TryParse("$($f.DegradationTime)", [ref]$deg)
         $k = "$($e.Id)|$n"
         if (-not $agg.ContainsKey($k)) { $agg[$k] = @{ Name = $n; Kind = $kinds[[int]$e.Id]; Count = 0; Deg = 0 } }
@@ -4064,7 +4116,7 @@ function Install-SensorLib {
         $dest = Join-Path (Get-ToolsDir) 'lhm'
         $n = [AeroxNuget]::Install('LibreHardwareMonitorLib', '0.9.6', $dest)
         # Ancien emplacement (dossier perso, modifiable sans droits admin) : plus jamais utilisé, on le vide
-        $old = Join-Path $AppInfo.LogDir 'outils'
+        $old = Join-Path $AppInfo.OldLogDir 'outils'
         if (Test-Path -LiteralPath $old) { $null = Remove-PathContent $old; try { [IO.Directory]::Delete($old, $false) } catch {} }
         foreach ($l in [AeroxNuget]::Log) { Log "   • $l" }
         if (-not (Test-Path (Join-Path $dest 'LibreHardwareMonitorLib.dll'))) { throw "Le module n'a pas été trouvé dans le paquet téléchargé." }
@@ -4100,7 +4152,7 @@ function Uninstall-SensorLib {
     Step "Désinstallation du module de températures (LibreHardwareMonitor)"
     $d = Join-Path (Get-ToolsDir) 'lhm'
     # Ancien emplacement aussi (sinon le module serait réinstallé tout seul au prochain lancement)
-    $old = Join-Path $AppInfo.LogDir 'outils'
+    $old = Join-Path $AppInfo.OldLogDir 'outils'
     if (Test-Path -LiteralPath $old) { $null = Remove-PathContent $old; try { [IO.Directory]::Delete($old, $false) } catch {} }
     if (Test-Path -LiteralPath $d) { $null = Remove-PathContent $d; try { [IO.Directory]::Delete($d, $false) } catch {} }
     if (Test-Path -LiteralPath (Join-Path $d 'LibreHardwareMonitorLib.dll')) {
@@ -4277,13 +4329,55 @@ function Update-Windows {
 # Carte graphique : comparée au site du fabricant (Get-GpuDrivers). Autres pilotes : ceux que Windows Update propose
 # (recherche directe, sans ouvrir la page « Mises à jour facultatives » qui mélange pilotes et grosses mises à niveau de Windows).
 $script:DriverErrNames = @{ 1 = 'mal configuré'; 3 = 'pilote abîmé'; 10 = 'ne peut pas démarrer'; 28 = 'pilote non installé'; 31 = 'ne fonctionne pas correctement'; 39 = 'pilote abîmé ou manquant'; 43 = 'arrêté après une erreur'; 52 = 'pilote non signé' }
-function Get-ProblemDevices {
+# Périphériques en panne (Gestionnaire de périphériques) avec : ce que c'est, pourquoi, quoi faire, et si AEROX peut
+# réinstaller son pilote sans risque (jamais les disques, le processeur, la carte mère ou l'affichage)
+$script:DeviceKinds = @{ 'USB' = 'appareil ou port USB'; 'HIDClass' = 'clavier, souris ou manette'; 'Bluetooth' = 'Bluetooth'; 'Net' = 'carte réseau ou Wi-Fi'; 'MEDIA' = 'son'; 'AudioEndpoint' = 'son'
+    'Camera' = 'webcam'; 'Image' = 'webcam ou scanner'; 'Ports' = 'port série'; 'Biometric' = 'lecteur d''empreinte'; 'Printer' = 'imprimante'; 'SoftwareDevice' = 'appareil logiciel'
+    'Display' = 'carte graphique'; 'DiskDrive' = 'disque'; 'SCSIAdapter' = 'contrôleur de disque'; 'HDC' = 'contrôleur de disque'; 'System' = 'composant de la carte mère'; 'Processor' = 'processeur' }
+function Get-ProblemDevices([switch]$Full) {
     $out = New-Object System.Collections.ArrayList
     foreach ($d in @(Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' -ErrorAction SilentlyContinue | Where-Object { $_.ConfigManagerErrorCode -notin 22, 24, 45 })) {
-        $r = $script:DriverErrNames[[int]$d.ConfigManagerErrorCode]; if (-not $r) { $r = "code $($d.ConfigManagerErrorCode)" }
-        [void]$out.Add(@{ Name = $(if ($d.Name) { "$($d.Name)" } else { 'Périphérique inconnu' }); Reason = $r })
+        $code = [int]$d.ConfigManagerErrorCode
+        $r = $script:DriverErrNames[$code]; if (-not $r) { $r = "code $code" }
+        $cls = "$($d.PNPClass)"; $kind = $script:DeviceKinds[$cls]; if (-not $kind) { $kind = if ($cls) { $cls } else { 'type inconnu' } }
+        $name = if ($d.Name) { "$($d.Name)" } else { 'Périphérique inconnu' }
+        $hw = @($d.HardwareID) | Select-Object -First 1
+        $why = switch ($code) {
+            28 { "Windows n'a aucun pilote pour lui." }
+            43 { "Il s'est arrêté après une erreur (souvent un appareil USB qui décroche, ou son pilote)." }
+            10 { "Il n'arrive pas à démarrer (pilote abîmé ou pas adapté)." }
+            { $_ -in 3, 31, 39 } { "Son pilote est abîmé ou manquant." }
+            52 { "Son pilote n'est pas signé (installé depuis une source non officielle)." }
+            default { "Son pilote ne fonctionne pas correctement." }
+        }
+        $step = switch ($code) {
+            28 { "« $name » : clique sur « Vérifier les pilotes » (Windows Update), sinon prends le pilote sur le site du fabricant de l'appareil." }
+            43 { "« $name » : débranche-le et rebranche-le sur un autre port USB (de préférence à l'arrière du PC)." }
+            52 { "« $name » : réinstalle son pilote depuis le site officiel du fabricant." }
+            default { "« $name » : réinstalle son pilote (bouton vert), puis redémarre le PC." }
+        }
+        $safe = ($cls -notin 'Display', 'DiskDrive', 'SCSIAdapter', 'HDC', 'System', 'Processor', 'Volume', 'VolumeSnapshot', 'Computer', 'Firmware', 'SecurityDevices') -and $code -in 3, 10, 31, 39, 43 -and "$($d.PNPDeviceID)"
+        if ($Full) { [void]$out.Add(@{ Name = $name; Reason = $r; Code = $code; Class = $cls; Kind = $kind; Why = $why; Step = $step; HwId = $(if ($hw) { "[$hw]" } else { '' }); Id = "$($d.PNPDeviceID)"; Reinstall = $safe }) }
+        else { [void]$out.Add(@{ Name = $name; Reason = $r }) }
     }
     return $out.ToArray()
+}
+# Réinstalle le pilote des périphériques en panne qui peuvent l'être sans risque : retiré puis Windows le retrouve tout seul
+function Repair-ProblemDevices {
+    Step "Réinstallation des périphériques en panne"
+    $pnp = Join-Path $env:SystemRoot 'System32\pnputil.exe'
+    foreach ($d in @(Get-ProblemDevices -Full | Where-Object { $_.Reinstall })) {
+        $ec = Invoke-Native $pnp @('/remove-device', $d.Id) -Quiet
+        Log ("   {0} {1} : {2}" -f $(if ($ec -eq 0) { '✔' } else { '•' }), $d.Name, $(if ($ec -eq 0) { 'pilote retiré' } else { "retrait refusé par Windows (code $ec)" }))
+    }
+    $null = Invoke-Native $pnp @('/scan-devices') -Quiet
+    Start-Sleep -Seconds 3
+    $left = @(Get-ProblemDevices)
+    if ($left.Count) {
+        Add-TaskError -Title ("{0} périphérique(s) encore en panne" -f $left.Count) -Cause (($left | ForEach-Object { "$($_.Name) ($($_.Reason))" }) -join ', ') `
+            -Effect "Windows n'a pas trouvé de pilote qui marche pour eux." `
+            -Steps @("Redémarre le PC : certains pilotes ne repartent qu'au redémarrage.", "Sinon : prends le pilote sur le site du fabricant de ton PC, de ta carte mère ou de l'appareil.")
+    } else { Log "✅ Tous les périphériques ont de nouveau un pilote qui fonctionne." }
 }
 
 function Get-DriverReport {
@@ -4458,18 +4552,40 @@ function Repair-System {
         }
     }
     Step "Étape 2/2 : vérification des fichiers système (SFC)"
+    $sfcStart = Get-Date
     $null = Invoke-Native 'sfc.exe' @('/scannow') ([System.Text.Encoding]::Unicode)
     $out = ($script:NativeOutput -join "`n")
-    if ($out -match "(?i)unable to fix|n.a pas pu (en )?(réparer|corriger)|impossible de (réparer|corriger)") {
+    # Résultat lu dans le journal technique de Windows (CBS.log), le même dans toutes les langues de Windows ;
+    # le texte affiché par SFC (français / anglais) ne sert que si ce journal ne dit rien
+    $cbs = Get-SfcResultFromCbs $sfcStart
+    if ($cbs -eq 'unrepaired' -or (-not $cbs -and $out -match "(?i)unable to fix|n.a pas pu (en )?(réparer|corriger)|impossible de (réparer|corriger)")) {
         Add-TaskError -Title "Des fichiers système abîmés n'ont pas pu être réparés" -Cause "SFC a trouvé des fichiers corrompus mais n'a pas pu tous les remplacer." `
             -Effect "Des bugs ou plantages de Windows peuvent continuer." -FixLabel "Redémarrer puis relancer" -FixAction 'Request-Reboot' `
             -Steps @("Redémarre le PC.", "Relance « Réparer les fichiers de Windows ».", "Si l'erreur revient : Paramètres > Système > Récupération > « Résoudre les problèmes avec Windows Update » réinstalle Windows en gardant tes fichiers.")
-    } elseif ($out -match "(?i)could not perform|n.a pas pu effectuer") {
+    } elseif (-not $cbs -and $out -match "(?i)could not perform|n.a pas pu effectuer") {
         Add-TaskError -Title "La vérification SFC n'a pas pu se lancer" -Cause "Une réparation ou une mise à jour Windows est déjà en attente de redémarrage." -FixLabel "Redémarrer" -FixAction 'Request-Reboot'
-    } elseif ($out -match "(?i)successfully repaired|les a réparés|a réparé") {
+    } elseif ($cbs -eq 'repaired' -or (-not $cbs -and $out -match "(?i)successfully repaired|les a réparés|a réparé")) {
         Log "✅ Des fichiers abîmés ont été trouvés et réparés. Redémarre le PC."
         $sync.NeedReboot = $true
-    } else { Log "✅ Réparation terminée : aucun fichier système abîmé." }
+    } elseif ($cbs -eq 'clean' -or $out -match "(?i)did not find any integrity|n.a trouvé aucune violation") { Log "✅ Réparation terminée : aucun fichier système abîmé." }
+    else { Log "✅ Vérification terminée. (Windows n'a pas donné de résultat lisible : si les bugs continuent, relance-la après un redémarrage.)" }
+}
+# Résultat de SFC d'après CBS.log (lignes « [SR] » écrites depuis $Since) : 'unrepaired', 'repaired', 'clean' ou '' (rien lu)
+function Get-SfcResultFromCbs([datetime]$Since, [string]$File = '') {
+    $f = if ($File) { $File } else { Join-Path $env:SystemRoot 'Logs\CBS\CBS.log' }
+    try {
+        $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite')
+        try {
+            if ($fs.Length -gt 30MB) { [void]$fs.Seek(-30MB, 'End') }
+            $txt = (New-Object IO.StreamReader($fs)).ReadToEnd()
+        } finally { $fs.Close() }
+        $sr = @($txt -split "`r?`n" | Where-Object { $_ -match '\[SR\]' -and $_ -match '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)' -and [datetime]::ParseExact($matches[1], 'yyyy-MM-dd HH:mm:ss', $null) -ge $Since.AddSeconds(-5) })
+        if (-not $sr.Count) { return '' }
+        if (@($sr | Where-Object { $_ -match '(?i)cannot repair' }).Count) { return 'unrepaired' }
+        if (@($sr | Where-Object { $_ -match '(?i)repairing corrupted file|repaired file|repairing [1-9]\d* components' }).Count) { return 'repaired' }
+        if (@($sr | Where-Object { $_ -match '(?i)verify complete|beginning verify and repair' }).Count) { return 'clean' }
+    } catch {}
+    return ''
 }
 
 function Test-Disk {
@@ -4657,6 +4773,8 @@ function Install-AppUpdate {
     Step ("Téléchargement d'AEROX PC Care {0} depuis GitHub" -f $u.Version)
     try {
         $sha = if ("$($u.Digest)" -match '^sha256:([0-9a-fA-F]{64})$') { $Matches[1] } else { '' }
+        # Sans empreinte publiée, impossible de vérifier le fichier : il n'est pas installé (relecture complète 2.3.0)
+        if (-not $sha) { throw "GitHub ne donne pas l'empreinte de sécurité de cette version : elle ne peut pas être vérifiée, donc pas installée automatiquement. Télécharge-la à la main sur la page du logiciel." }
         # Dossier du logiciel (Program Files, modifiable seulement en administrateur) : le fichier ne peut pas être échangé
         $dest = Join-Path (Get-SecureDir 'maj') ("AeroxPCCare_Setup_{0}.exe" -f $u.Version)
         [AeroxUpdate]::Download($u.Setup, $dest, $sha)

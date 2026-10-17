@@ -522,6 +522,35 @@ public static class AeroxUpdate {
 // 1) Moteur principal : Speedtest® CLI d'Ookla (l'outil officiel de speedtest.net, mêmes serveurs et
 //    même méthode que le site : résultats comparables). Téléchargé à la demande depuis install.speedtest.net.
 // 2) Secours : serveurs publics de Cloudflare (speed.cloudflare.com) si Ookla est indisponible.
+// Signature Windows (Authenticode) d'un programme : valide ET signée par l'éditeur attendu. Utilisé avant de lancer
+// un outil téléchargé avec les droits admin d'AEROX (ex. speedtest.exe d'Ookla).
+public static class AeroxTrust {
+    [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+    static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, IntPtr data);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    class FileInfo { public uint cbStruct; [MarshalAs(UnmanagedType.LPWStr)] public string path; public IntPtr hFile; public IntPtr known; }
+    [StructLayout(LayoutKind.Sequential)]
+    class TrustData { public uint cbStruct; public IntPtr policy; public IntPtr sip; public uint ui; public uint revocation; public uint union; public IntPtr file; public uint stateAction; public IntPtr state; public IntPtr url; public uint provFlags; public uint uiContext; }
+    public static bool IsSignedBy(string path, string organization) {
+        IntPtr pf = IntPtr.Zero, pd = IntPtr.Zero;
+        try {
+            if (!File.Exists(path)) return false;
+            FileInfo fi = new FileInfo(); fi.cbStruct = (uint)Marshal.SizeOf(typeof(FileInfo)); fi.path = path;
+            pf = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FileInfo))); Marshal.StructureToPtr(fi, pf, false);
+            TrustData td = new TrustData(); td.cbStruct = (uint)Marshal.SizeOf(typeof(TrustData)); td.ui = 2; td.revocation = 0; td.union = 1; td.file = pf;
+            pd = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(TrustData))); Marshal.StructureToPtr(td, pd, false);
+            int r = WinVerifyTrust(new IntPtr(-1), new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE"), pd);
+            if (r != 0) return false;
+            string subj = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path).Subject;
+            return subj.IndexOf("O=" + organization, StringComparison.OrdinalIgnoreCase) >= 0 || subj.IndexOf("O=\"" + organization, StringComparison.OrdinalIgnoreCase) >= 0;
+        } catch { return false; }
+        finally {
+            if (pf != IntPtr.Zero) { try { Marshal.DestroyStructure(pf, typeof(FileInfo)); } catch { } Marshal.FreeHGlobal(pf); }
+            if (pd != IntPtr.Zero) Marshal.FreeHGlobal(pd);
+        }
+    }
+}
+
 public static class AeroxSpeed {
     const string CfBase = "https://speed.cloudflare.com/";
     public const string OoklaZip = "https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-win64.zip";
@@ -590,6 +619,11 @@ public static class AeroxSpeed {
             }
             try { File.Delete(zip); } catch { }
             if (!File.Exists(exe)) throw new Exception("speedtest.exe introuvable dans le paquet d'Ookla");
+        }
+        // Lancé avec les droits admin d'AEROX : seulement s'il est bien signé par Ookla (sinon : retéléchargé une fois, puis Cloudflare)
+        if (!AeroxTrust.IsSignedBy(exe, "Ookla")) {
+            try { File.Delete(exe); } catch { }
+            throw new Exception("le programme de test n'a pas la signature d'Ookla : il n'est pas lancé, par sécurité");
         }
         Phase = "meta"; Engine = "ookla";
         ProcessStartInfo psi = new ProcessStartInfo(exe, "--accept-license --accept-gdpr --format=jsonl --progress=yes");

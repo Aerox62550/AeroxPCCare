@@ -175,10 +175,16 @@ static class Program {
         throw new IOException("Impossible de lire AeroxPCCare.ps1 depuis 30 secondes : ton antivirus le bloque peut-être. Ajoute le dossier AEROX PC Care à ses exceptions.", last);
     }
 
+    // En administrateur : dossier protégé (Program Files), jamais le dossier perso qu'un autre programme du compte peut piéger.
+    // Sans droits admin (avant l'élévation) : le dossier perso, sans risque puisqu'on n'a alors aucun droit en plus.
     static string LogDir() {
         string d = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AeroxPCCare");
+        try {
+            if (new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+                d = Path.Combine(Path.Combine(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"AeroxPCCare\protege\donnees"), WindowsIdentity.GetCurrent().User.Value), "");
+        } catch { }
         Directory.CreateDirectory(d);
-        return d;
+        return d.TrimEnd('\\');
     }
 
     static void Report(string dir, string text) {

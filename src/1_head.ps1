@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '2.2.1'
+$AppVersion = '2.3.0'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -43,7 +43,13 @@ try {
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
 
-$LogDir = Join-Path $env:LOCALAPPDATA 'AeroxPCCare'
+# Dossier protégé (Program Files : modifiable seulement en administrateur) : outils lancés avec les droits admin,
+# sauvegardes remises en administrateur, installateurs de mise à jour, et (2.3.0) toutes les données d'AEROX
+$SecureRoot = Join-Path $env:ProgramFiles 'AeroxPCCare\protege'
+# Ancien dossier des données (jusqu'à la 2.2) : modifiable par n'importe quel programme du compte, alors qu'AEROX y écrit
+# en administrateur (un programme malveillant pouvait y glisser un lien pour lui faire écraser un fichier de Windows)
+$OldLogDir = Join-Path $env:LOCALAPPDATA 'AeroxPCCare'
+$LogDir = $OldLogDir
 # Version portable (clé USB) : un fichier « portable.txt » à côté du programme.
 # Réglages, journaux et historique restent sur la clé, dans un dossier par PC
 # (l'historique et les annulations d'un PC ne doivent jamais s'appliquer à un autre).
@@ -59,20 +65,33 @@ if ($PortRoot -and (Test-Path -LiteralPath (Join-Path $PortRoot 'portable.txt'))
     } catch {}   # clé protégée en écriture : on garde le dossier du PC
     $Portable = $true
 }
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-# Dossier perso d'AEROX (modifiable sans droits admin) : aucun lien vers un autre endroit, sinon AEROX, en administrateur,
-# écrirait ses fichiers ailleurs (dans un dossier de Windows par exemple). Un lien trouvé est retiré (le lien seulement).
 if (-not $Portable) {
-    try {
-        foreach ($d in @($LogDir) + @('jeux', 'sauvegardes', 'sauvegardes\navigateurs', 'outils', 'maj' | ForEach-Object { Join-Path $LogDir $_ })) {
-            $it = Get-Item -LiteralPath $d -Force -ErrorAction SilentlyContinue
-            if ($it -and ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { [IO.Directory]::Delete($d, $false); New-Item -ItemType Directory -Force -Path $d | Out-Null }
-        }
-        foreach ($f in @(Get-ChildItem -LiteralPath $LogDir -Force -ErrorAction SilentlyContinue | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })) {
-            if ($f.PSIsContainer) { [IO.Directory]::Delete($f.FullName, $false) } else { [IO.File]::Delete($f.FullName) }
-        }
-    } catch {}
-}
+    # Données dans le dossier protégé, une par compte Windows (comme avant dans le dossier de chaque compte)
+    $sidDir = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $LogDir = Join-Path (Join-Path $SecureRoot 'donnees') $sidDir
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    # Reprise unique des anciennes données (réglages, historique, bilans, fiches de jeux, journaux) : fichiers ordinaires
+    # seulement, aucun lien suivi, pas les anciens outils ni installateurs. Elles sont recopiées, l'ancien dossier reste.
+    $mark = Join-Path $LogDir '.reprise'
+    if (-not (Test-Path -LiteralPath $mark) -and (Test-Path -LiteralPath $OldLogDir)) {
+        try {
+            $stack = New-Object System.Collections.Stack; $stack.Push(@($OldLogDir, $LogDir, 0))
+            while ($stack.Count) {
+                $x = $stack.Pop(); $src = $x[0]; $dst = $x[1]; $depth = $x[2]
+                $di = New-Object IO.DirectoryInfo $src
+                if (($di.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $depth -gt 4) { continue }
+                [void][IO.Directory]::CreateDirectory($dst)
+                foreach ($f in $di.GetFiles()) {
+                    if (($f.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $f.Length -gt 50MB) { continue }
+                    $to = Join-Path $dst $f.Name
+                    if (-not (Test-Path -LiteralPath $to)) { try { [IO.File]::WriteAllBytes($to, [IO.File]::ReadAllBytes($f.FullName)) } catch {} }
+                }
+                foreach ($d in $di.GetDirectories()) { if ($d.Name -notin 'outils', 'maj') { $stack.Push(@($d.FullName, (Join-Path $dst $d.Name), ($depth + 1))) } }
+            }
+        } catch {}
+        try { [IO.File]::WriteAllText($mark, (Get-Date).ToString('s')) } catch {}
+    }
+} else { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
 
 # Filet de sécurité : si le logiciel plante, l'erreur est écrite dans plantage.txt et affichée
 trap {
@@ -88,10 +107,7 @@ $LastReportFile = Join-Path $LogDir 'dernier_rapport.txt'
 $SettingsFile   = Join-Path $LogDir 'reglages.json'
 $OldSettings    = Join-Path $LogDir 'reglages.txt'
 
-# Dossier protégé (Program Files : modifiable seulement en administrateur) : outils lancés avec les droits admin,
-# sauvegardes remises en administrateur, installateurs de mise à jour
-$SecureRoot = Join-Path $env:ProgramFiles 'AeroxPCCare\protege'
-$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); StabilityFixAt = @{}; Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
+$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; OldLogDir = $OldLogDir; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); StabilityFixAt = @{}; Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{
@@ -109,6 +125,8 @@ $sync = [hashtable]::Synchronized(@{
     UpdateReady = $null
     SysInfo    = $null
     BugRelay   = ''
+    Drives     = @()
+    DrivesNew  = $false
     AppList    = $null
     CleanList  = $null
     SpaceScan  = $null
