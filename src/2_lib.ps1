@@ -509,7 +509,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS'
+    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -2944,7 +2944,217 @@ function Test-Network {
                 -Steps @("Le mieux : branche un câble Ethernet entre le PC et la box.", "Sinon : rapproche la box ou ajoute un répéteur Wi-Fi / CPL.", "Évite de poser la box dans un meuble fermé.")
         } else { Add-Ok "Signal Wi-Fi correct ($($n.Signal) %)" }
     }
-    if ($n.Internet -or $n.Dns) { Test-ConnectionStability }
+    if ($n.Internet -or $n.Dns) { Test-ConnectionStability; Test-NetBlockers }
+}
+
+# ---------------------------------------------------------------- Ce qui empêche des sites ou des téléchargements de passer
+# (retour testeur : « impossible de retélécharger Discord » alors qu'Internet marche). Quatre causes classiques :
+# un proxy réglé en douce, le fichier hosts qui détourne des sites, l'heure du PC fausse, un DNS qui bloque un site.
+$script:HostsWatch = '(?i)(^|\.)(discord(app)?\.(com|net|gg|media)|discordcdn\.com|microsoft\.com|windowsupdate\.com|windows\.com|live\.com|google\.[a-z.]+|youtube\.com|gstatic\.com|steampowered\.com|steamcommunity\.com|steamstatic\.com|epicgames\.com|riotgames\.com|battle\.net|blizzard\.com|ea\.com|ubisoft\.com|nvidia\.com|amd\.com|intel\.com|github\.com|malwarebytes\.com|kaspersky\.[a-z]+|avast\.com|bitdefender\.[a-z]+|eset\.com|norton\.com|mcafee\.com)$'
+$script:HostsIgnore = '(?i)(telemetry|vortex|watson|settings-win|\.data\.microsoft\.com|(^|\.)ads?\.|adservice|doubleclick|analytics|metrics)'
+function Get-HostsHijacks([string]$File = '') {
+    $f = if ($File) { $File } else { Join-Path $env:SystemRoot 'System32\drivers\etc\hosts' }
+    $out = @()
+    try {
+        $n = 0
+        foreach ($l in [IO.File]::ReadAllLines($f)) {
+            $n++
+            $t = ($l -replace '#.*$', '').Trim()
+            if (-not $t) { continue }
+            $p = $t -split '\s+'
+            if ($p.Count -lt 2) { continue }
+            foreach ($h in $p[1..($p.Count - 1)]) { if ($h -match $script:HostsWatch -and $h -notmatch $script:HostsIgnore) { $out += @{ Line = $n; Host = $h; Ip = $p[0] } } }
+        }
+    } catch {}
+    return $out
+}
+function Get-ClockSkew {
+    # Heure donnée par un serveur de Microsoft (en-tête « Date »), d'abord sans chiffrement : si l'heure du PC est très
+    # fausse, les connexions sécurisées échouent justement à cause d'elle
+    foreach ($u in 'http://www.msftconnecttest.com/connecttest.txt', 'https://www.microsoft.com/') {
+        try {
+            $r = Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
+            $d = [datetime]::Parse($r.Headers['Date'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+            return ((Get-Date).ToUniversalTime() - $d).TotalSeconds
+        } catch {}
+    }
+    return $null
+}
+function Get-UserProxy {
+    $k = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    try { $p = Get-ItemProperty -LiteralPath $k -ErrorAction Stop; return @{ Enable = [int]$p.ProxyEnable; Server = "$($p.ProxyServer)"; Pac = "$($p.AutoConfigURL)" } } catch { return $null }
+}
+function Test-NetBlockers {
+    # 1. Proxy
+    $px = Get-UserProxy
+    if ($px -and (($px.Enable -eq 1 -and $px.Server) -or $px.Pac)) {
+        $what = if ($px.Pac) { "script de configuration $($px.Pac)" } else { "serveur $($px.Server)" }
+        Add-Issue -Id 'proxy' -Sev 'warn' -Title "Un proxy fait passer tes connexions par un autre serveur" -Detail $what `
+            -Cause "Windows envoie tes connexions Internet par un intermédiaire ($what). Normal sur un PC d'entreprise ou d'école ; sinon, c'est souvent un logiciel publicitaire ou un « VPN » mal désinstallé." `
+            -Effect "Sites ou téléchargements qui ne passent pas (Discord, mises à jour…), connexion lente, et tes connexions peuvent être espionnées." `
+            -FixLabel "Désactiver le proxy" -FixAction 'Disable-UserProxy' -Confirm "Le proxy sera désactivé : Windows se connectera directement à Internet.`n`nSur un PC d'entreprise ou d'école, ne le fais pas. Annulable dans l'historique." `
+            -Steps @("Si c'est un PC d'entreprise ou d'école : ne touche à rien, c'est voulu.", "Sinon : désactive-le (bouton vert), puis désinstalle le logiciel qui l'a mis (VPN gratuit, « optimiseur », barre d'outils…).")
+    } elseif ($px) { Add-Ok "Pas de proxy : connexion directe à Internet" }
+    # 2. Fichier hosts
+    $hj = @(Get-HostsHijacks)
+    if ($hj.Count) {
+        $names = @($hj | ForEach-Object { $_.Host } | Select-Object -Unique)
+        Add-Issue -Id 'hosts' -Sev 'warn' -Title "Des sites sont bloqués ou détournés sur ce PC (fichier hosts)" -Detail ((@($names | Select-Object -First 6) -join ', ') + $(if ($names.Count -gt 6) { " et $($names.Count - 6) autre(s)" } else { '' })) `
+            -Cause "Le fichier « hosts » de Windows envoie ces sites vers une autre adresse : ils ne s'ouvrent plus, ou ouvrent un faux site. C'est souvent un virus, un logiciel de triche/crack ou un ancien « bloqueur »." `
+            -Effect "Ces sites, leurs mises à jour ou leurs téléchargements ne marchent pas (ex. impossible de télécharger Discord)." `
+            -FixLabel "Débloquer ces sites" -FixAction 'Repair-Hosts' -Confirm "Les lignes qui détournent ces sites seront retirées du fichier hosts (une copie est gardée, annulable dans l'historique).`n`nLes autres lignes ne sont pas touchées." `
+            -Steps @("Le bouton retire seulement les lignes de ces sites (copie de sauvegarde gardée).", "Puis fais une analyse antivirus complète (Windows Defender > Analyse complète).")
+    } else { Add-Ok "Aucun site important détourné (fichier hosts)" }
+    # 3. Heure du PC
+    $sk = Get-ClockSkew
+    if ($null -ne $sk -and [math]::Abs($sk) -ge 300) {
+        $mins = [math]::Round([math]::Abs($sk) / 60)
+        $txt = if ($mins -ge 120) { "{0} h" -f [math]::Round($mins / 60) } else { "$mins min" }
+        Add-Issue -Id 'clock' -Sev $(if ([math]::Abs($sk) -ge 3600) { 'crit' } else { 'warn' }) -Title "L'heure du PC est fausse de $txt" -Detail $(if ($sk -gt 0) { "Le PC est en avance" } else { "Le PC est en retard" }) `
+            -Cause "Les sites sécurisés vérifient l'heure : si celle du PC est fausse, ils refusent la connexion. Souvent la pile de la carte mère usée, ou la synchronisation de l'heure désactivée." `
+            -Effect "Sites « connexion non sécurisée », téléchargements et mises à jour qui échouent, jeux en ligne qui refusent de se connecter." `
+            -FixLabel "Remettre à l'heure" -FixAction 'Repair-Clock' -Steps @("Le bouton active la mise à l'heure automatique et synchronise tout de suite.", "Si l'heure redevient fausse à chaque allumage : la pile de la carte mère (CR2032, ~3 €) est à changer.")
+    } elseif ($null -ne $sk) { Add-Ok "Heure du PC juste" }
+    # 4. Sites importants qui ne répondent pas au nom (DNS qui bloque, contrôle parental de la box…)
+    $blocked = @()
+    foreach ($h in 'discord.com', 'dl.discordapp.net', 'download.microsoft.com', 'store.steampowered.com') {
+        try {
+            $a = @(Resolve-DnsName -Name $h -Type A -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object { $_.IP4Address } | ForEach-Object { $_.IP4Address })
+            if (-not $a.Count -or @($a | Where-Object { $_ -match '^(0\.0\.0\.0|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)' }).Count) { $blocked += $h }
+        } catch { $blocked += $h }
+    }
+    if ($blocked.Count -and $blocked.Count -lt 4) {
+        Add-Issue -Id 'dnsblock' -Sev 'warn' -Title "Certains sites sont bloqués par le DNS" -Detail ($blocked -join ', ') `
+            -Cause "Le service qui traduit les noms de sites (DNS de ta box ou de ton fournisseur) ne donne pas la bonne adresse pour ces sites : contrôle parental, filtre de la box, ou DNS en panne." `
+            -Effect "Ces sites et leurs téléchargements ne marchent pas." `
+            -Steps @("Regarde le contrôle parental / filtrage de ta box (interface de la box, souvent 192.168.1.1).", "Ou passe sur un DNS public (Cloudflare 1.1.1.1 ou Google 8.8.8.8) dans Paramètres > Réseau > propriétés de ta connexion > Attribution du serveur DNS.")
+    }
+}
+function Disable-UserProxy {
+    Step "Désactivation du proxy"
+    $k = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    $old = Get-UserProxy
+    try {
+        Set-ItemProperty -LiteralPath $k -Name ProxyEnable -Value 0 -Type DWord -ErrorAction Stop
+        if ($old.Pac) { Remove-ItemProperty -LiteralPath $k -Name AutoConfigURL -ErrorAction SilentlyContinue }
+        Log "   ✔ Proxy désactivé : Windows se connecte directement à Internet."
+        Log "   → Désinstalle le logiciel qui l'avait mis (VPN gratuit, « optimiseur »…), sinon il peut le remettre."
+        Add-Change -Title "Proxy désactivé" -Detail $(if ($old.Pac) { "Script : $($old.Pac)" } else { "Serveur : $($old.Server)" }) -Undo ("Set-UserProxy {0} {1} {2}" -f [int]$old.Enable, (ConvertTo-PsLiteral $old.Server), (ConvertTo-PsLiteral $old.Pac))
+    } catch { Add-TaskError -Title "Impossible de désactiver le proxy" -Cause $_.Exception.Message -FixLabel "Ouvrir les réglages du proxy" -FixAction "Open-WinUri 'ms-settings:network-proxy'" }
+}
+function Set-UserProxy([int]$Enable, [string]$Server, [string]$Pac) {
+    Step "Remise du proxy"
+    $k = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    Set-ItemProperty -LiteralPath $k -Name ProxyEnable -Value $Enable -Type DWord
+    if ($Server) { Set-ItemProperty -LiteralPath $k -Name ProxyServer -Value $Server -Type String }
+    if ($Pac) { Set-ItemProperty -LiteralPath $k -Name AutoConfigURL -Value $Pac -Type String }
+    Log "   ✔ Proxy remis comme avant."
+}
+function Repair-Hosts {
+    Step "Déblocage des sites détournés (fichier hosts)"
+    $f = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    try {
+        $lines = [IO.File]::ReadAllLines($f)
+        $hj = @(Get-HostsHijacks); if (-not $hj.Count) { Log "   • Rien à débloquer."; return }
+        $bad = @($hj | ForEach-Object { $_.Line })
+        $bak = Join-Path (Get-SecureDir 'sauvegardes') ("hosts-{0:yyyyMMdd-HHmmss}.txt" -f (Get-Date))
+        [IO.File]::WriteAllLines($bak, $lines)
+        $keep = for ($i = 0; $i -lt $lines.Count; $i++) { if ($bad -notcontains ($i + 1)) { $lines[$i] } }
+        [IO.File]::WriteAllLines($f, [string[]]@($keep))
+        $null = Invoke-Native 'ipconfig.exe' @('/flushdns') -Quiet
+        Log ("   ✔ {0} ligne(s) retirée(s) : {1}" -f $bad.Count, ((@($hj | ForEach-Object { $_.Host }) | Select-Object -Unique) -join ', '))
+        Log "   → Fais aussi une analyse antivirus complète : ces lignes ont souvent été mises par un logiciel malveillant."
+        Add-Change -Title "Sites débloqués (fichier hosts)" -Detail "Copie de l'ancien fichier gardée" -Undo ("Restore-HostsBackup {0}" -f (ConvertTo-PsLiteral $bak))
+    } catch { Add-TaskError -Title "Impossible de modifier le fichier hosts" -Cause $_.Exception.Message -Steps @("Un antivirus protège peut-être ce fichier : autorise la modification ou retire les lignes à la main (Bloc-notes en administrateur).") }
+}
+function Restore-HostsBackup([string]$Path) {
+    Step "Remise de l'ancien fichier hosts"
+    $root = Get-SecureDir 'sauvegardes'
+    $full = [IO.Path]::GetFullPath($Path)
+    if (-not $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($full) -notmatch '^hosts-\d{8}-\d{6}\.txt$' -or -not [AeroxSafeDelete]::IsDirectPath($full)) { throw "Copie de sauvegarde refusée (elle doit venir du dossier protégé d'AEROX)." }
+    Copy-Item -LiteralPath $full -Destination (Join-Path $env:SystemRoot 'System32\drivers\etc\hosts') -Force -ErrorAction Stop
+    $null = Invoke-Native 'ipconfig.exe' @('/flushdns') -Quiet
+    Log "   ✔ Ancien fichier hosts remis."
+}
+function Repair-Clock {
+    Step "Remise à l'heure du PC"
+    try {
+        Set-Service -Name W32Time -StartupType Automatic -ErrorAction SilentlyContinue
+        if ((Get-Service W32Time).Status -ne 'Running') { Start-Service W32Time -ErrorAction Stop }
+        $null = Invoke-Native 'w32tm.exe' @('/config', '/manualpeerlist:time.windows.com,0x9', '/syncfromflags:manual', '/update') -Quiet
+        $null = Invoke-Native 'w32tm.exe' @('/resync', '/force') -Quiet
+        try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters' -Name Type -Value 'NTP' -ErrorAction SilentlyContinue } catch {}
+        Start-Sleep -Seconds 2
+        $sk = Get-ClockSkew
+        if ($null -ne $sk -and [math]::Abs($sk) -lt 120) { Log "   ✔ Le PC est à l'heure, et se remettra à l'heure tout seul." }
+        else { Log "   • Synchronisation demandée. Si l'heure reste fausse : Paramètres > Heure et langue > « Synchroniser maintenant »." }
+        Add-Change -Kind 'info' -Title "Heure du PC remise à l'heure (synchronisation automatique activée)"
+    } catch { Add-TaskError -Title "Impossible de remettre le PC à l'heure" -Cause $_.Exception.Message -FixLabel "Ouvrir les réglages de l'heure" -FixAction "Open-WinUri 'ms-settings:dateandtime'" }
+}
+
+# ---------------------------------------------------------------- Discord qui bugue ou ne s'installe plus
+function Repair-Discord {
+    Step "Discord : vérification et réparation"
+    $roam = Get-SessionFolder 'AppData'; $loc = Get-SessionFolder 'Local AppData'
+    # 1. Fermer Discord (sinon ses fichiers sont verrouillés)
+    $ps = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(Discord|DiscordPTB|DiscordCanary)$' -or ($_.ProcessName -eq 'Update' -and "$($_.Path)" -match '(?i)\\Discord') })
+    if ($ps.Count) { $ps | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Log "   ✔ Discord fermé" }
+    # 2. Caches (Discord les recrée ; tu restes connecté, tes réglages sont gardés)
+    $freed = [double]0
+    foreach ($v in 'discord', 'discordptb', 'discordcanary') {
+        foreach ($c in 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache') {
+            $d = Join-Path (Join-Path $roam $v) $c
+            if (Test-Path -LiteralPath $d) { $before = [double][AeroxNative]::FolderSize($d); $null = Remove-PathContent $d; $freed += [math]::Max([double]0, $before - [double][AeroxNative]::FolderSize($d)) }
+        }
+    }
+    Log ("   ✔ Cache de Discord vidé ({0}) : ça règle la plupart des bugs d'affichage, d'écran gris ou de chargement sans fin" -f (Format-Size $freed))
+    # 3. Installation abîmée (cause n° 1 de « Installation has failed »)
+    $inst = Join-Path $loc 'Discord'
+    if ((Test-Path -LiteralPath $inst) -and -not (Test-Path -LiteralPath (Join-Path $inst 'Update.exe'))) {
+        Log "   ⚠ L'installation de Discord est incomplète (dossier sans son programme de mise à jour) : c'est ce qui fait échouer la réinstallation."
+        Add-TaskError -Title "Installation de Discord abîmée" -Cause "Un ancien dossier de Discord à moitié supprimé bloque la nouvelle installation." `
+            -FixLabel "Mettre l'ancien dossier à la corbeille" -FixAction 'Remove-DiscordLeftovers' -Confirm "L'ancien dossier du programme Discord ira à la corbeille (tes messages et serveurs sont sur Internet, rien n'est perdu ; il faudra peut-être te reconnecter).`n`nContinuer ?" `
+            -Steps @("Après ça, télécharge Discord sur discord.com et installe-le.")
+    }
+    # 4. Le site de téléchargement répond-il ? Sinon, pourquoi (DNS, heure, proxy, hosts, antivirus)
+    $why = Test-SiteReachable 'https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64'
+    if ($why -eq 'ok') { Log "   ✔ Le téléchargement de Discord est joignable depuis ce PC" }
+    else {
+        Log "   ⚠ Le téléchargement de Discord ne passe pas : $why"
+        Add-TaskError -Title "Discord ne peut pas être téléchargé depuis ce PC" -Cause $why -Effect "L'installateur de Discord ne se télécharge pas." `
+            -Steps @("Lance le diagnostic complet : il cherche ce qui bloque (proxy, fichier hosts, heure du PC, DNS).", "Si tu as un antivirus en plus de Windows Defender : désactive son « analyse web » le temps du téléchargement.")
+    }
+    Log "✅ Relance Discord. S'il ne s'ouvre plus du tout : réinstalle-le depuis discord.com (tes serveurs et messages sont gardés sur ton compte)."
+}
+function Remove-DiscordLeftovers {
+    Step "Ancien dossier de Discord à la corbeille"
+    $inst = Join-Path (Get-SessionFolder 'Local AppData') 'Discord'
+    if (-not (Test-Path -LiteralPath $inst) -or -not [AeroxSafeDelete]::IsDirectPath($inst)) { Log "   • Rien à retirer."; return }
+    Get-Process -ErrorAction SilentlyContinue | Where-Object { "$($_.Path)" -like "$inst\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($inst, 'OnlyErrorDialogs', 'SendToRecycleBin')
+    if (Test-Path -LiteralPath $inst) { Add-TaskError -Title "L'ancien dossier de Discord n'a pas pu être retiré" -Cause "Un fichier est encore utilisé." -Steps @("Redémarre le PC puis réessaie.") }
+    else { Log "   ✔ Ancien dossier mis à la corbeille. Installe maintenant Discord depuis discord.com."; [void](Open-Url 'https://discord.com/download') }
+}
+# Un site répond-il ? « ok », ou la raison en mots simples
+function Test-SiteReachable([string]$Url) {
+    try { $null = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing -TimeoutSec 12 -MaximumRedirection 3 -ErrorAction Stop; return 'ok' }
+    catch {
+        $ex = $_.Exception
+        if ($ex -is [System.Net.WebException]) {
+            if ($ex.Response) { return 'ok' }   # le serveur a répondu (même par un refus) : le chemin est ouvert
+            switch ("$($ex.Status)") {
+                'NameResolutionFailure' { return "le nom du site n'est pas trouvé (DNS ou fichier hosts qui le bloque)" }
+                'TrustFailure' { return "la connexion sécurisée est refusée (heure du PC fausse, ou antivirus qui inspecte le web)" }
+                'SecureChannelFailure' { return "la connexion sécurisée échoue (antivirus qui inspecte le web, ou Windows trop ancien)" }
+                'ProxyNameResolutionFailure' { return "le proxy réglé sur ce PC ne répond pas" }
+                'ConnectFailure' { return "la connexion est refusée (pare-feu, antivirus ou filtrage de la box)" }
+                'Timeout' { return "le site ne répond pas à temps (connexion très lente ou filtrée)" }
+                default { return "erreur réseau ($($ex.Status))" }
+            }
+        }
+        return $ex.Message
+    }
 }
 
 function Get-StartupKey($Entry) { return ("$($Entry.ValueName)").ToLowerInvariant() }
@@ -3934,7 +4144,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
     $wg = Get-Winget
     if (-not $wg) { Add-WingetError "La mise à jour des logiciels est"; return }
     $extra = Get-WingetExtraArgs $wg
-    $failed = @(); $ok = 0; $n = 0; $self = 0
+    $failed = @(); $ok = 0; $n = 0; $self = 0; $done = New-Object System.Collections.ArrayList
     for ($k = 0; $k -lt $Ids.Count; $k++) {
         if ($sync.Cancel) { Log ("⏹ Arrêt demandé : {0} logiciel(s) restant(s) pas mis à jour." -f ($Ids.Count - $k)); break }
         $id = $Ids[$k]; $name = if ($Names -and $k -lt $Names.Count -and $Names[$k]) { $Names[$k] } else { $id }
@@ -3943,7 +4153,7 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
         Step ("Mise à jour {0}/{1} : {2}" -f $n, $Ids.Count, $name)
         $idArgs = if ($id.EndsWith([string][char]0x2026)) { @('--id', $id.TrimEnd([char]0x2026)) } else { @('--id', $id, '--exact') }
         $ec = Invoke-Native $wg (@('upgrade') + $idArgs + @('--silent', '--accept-package-agreements', '--accept-source-agreements') + $extra) ([System.Text.Encoding]::UTF8)
-        if ($ec -eq 0) { $ok++; Log "   ✔ $name mis à jour"; Add-Change -Kind 'info' -Title "« $name » mis à jour" -Detail "Pour revenir à l'ancienne version, il faut la réinstaller depuis le site du logiciel." }
+        if ($ec -eq 0) { $ok++; [void]$done.Add(@{ Id = $id; Ver = $ver; Name = $name }); Log "   ✔ $name mis à jour"; Add-Change -Kind 'info' -Title "« $name » mis à jour" -Detail "Pour revenir à l'ancienne version, il faut la réinstaller depuis le site du logiciel." }
         elseif ($ec -eq -1978335189) {
             # « Aucune mise à jour applicable » : winget voit une version plus récente qui ne s'applique pas à ce PC
             $self++; Add-SelfUpdating $id $ver
@@ -3969,6 +4179,19 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
         Add-TaskError -Title ("{0} mise(s) à jour n'ont pas pu s'installer" -f $failed.Count) -Cause ($failed -join ' ; ') `
             -Effect "Ces logiciels restent dans leur ancienne version. Les autres ont bien été mis à jour." `
             -Steps @("Ferme les logiciels concernés, y compris ceux près de l'horloge (Discord, Steam...), puis réessaie.", "Si un logiciel bloque toujours, mets-le à jour depuis son propre menu ou son site officiel, ou ignore-le dans « Choisir les mises à jour ».")
+    }
+    # Vérification : un logiciel « mis à jour » qui annonce encore la même mise à jour = le catalogue de winget installe en
+    # réalité une version plus ancienne que celle qu'il affiche (vu avec VS Code). Il n'est plus proposé pour cette version.
+    if ($done.Count -and -not $sync.Cancel) {
+        $after = $null; try { $after = Get-AppUpdates } catch {}
+        foreach ($d in $done) {
+            if (-not $d.Ver) { continue }
+            $again = @(@($after) | Where-Object { $_ -and $_.Id -eq $d.Id -and "$($_.Available)" -eq $d.Ver })
+            if ($again.Count) {
+                Add-SelfUpdating $d.Id $d.Ver
+                Log ("   • {0} : installé, mais il affiche encore l'ancienne version ({1}) : le catalogue de Microsoft annonce la {2} et installe en fait une version plus ancienne. Rien à faire de ton côté (il se met à jour tout seul) : il ne sera plus proposé pour cette version." -f $d.Name, $again[0].Version, $d.Ver)
+            }
+        }
     }
     Log ("✅ {0} logiciel(s) mis à jour sur {1}{2}." -f $ok, $Ids.Count, $(if ($self) { " ($self se met(tent) à jour tout seul(s))" } else { '' }))
 }

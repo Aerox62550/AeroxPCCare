@@ -360,6 +360,20 @@ function Invoke-Smoke {
         Test-BootSpeed; Test-Stability; Test-DiskHealth
         Write-Host ("        problèmes : {0} · OK : {1}" -f (($script:Issues | ForEach-Object { $_.Id }) -join ', '), ($script:OkList -join ' | '))
     }
+    Smoke 'Réseau : ce qui bloque des sites ou des téléchargements' {
+        $f = Join-Path $env:TEMP 'aerox-hosts-test'
+        [IO.File]::WriteAllLines($f, [string[]]@('# commentaire', '127.0.0.1 localhost', '0.0.0.0 discord.com', '0.0.0.0 vortex.data.microsoft.com', '1.2.3.4 www.google.fr  # pirate', '0.0.0.0 downloads.exemple.org'))
+        $h = @(Get-HostsHijacks $f); Remove-Item -LiteralPath $f -Force
+        Write-Host ("        hosts détournés : {0}" -f (($h | ForEach-Object { $_.Host }) -join ', '))
+        if (($h | ForEach-Object { $_.Host }) -join ',' -ne 'discord.com,www.google.fr') { throw "lecture du fichier hosts fausse" }
+        $ok = Test-SiteReachable 'https://discord.com/'; $ko = Test-SiteReachable 'https://aerox-site-qui-n-existe-pas.invalid/'
+        Write-Host "        discord.com : $ok · site inexistant : $ko"
+        if ($ok -ne 'ok' -or $ko -eq 'ok') { throw "test de site joignable faux" }
+        $sk = Get-ClockSkew; Write-Host "        décalage de l'heure : $sk s"
+        $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:IgnoredList = New-Object System.Collections.ArrayList
+        Test-NetBlockers; Write-Host ("        problèmes : {0} · OK : {1}" -f (($script:Issues | ForEach-Object { $_.Id }) -join ', '), ($script:OkList -join ' | '))
+    }
+    Smoke 'Dépannage : Discord' { Repair-Discord }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
         Find-BiosPage
         if (-not $sync.BiosUrl -or $sync.BiosUrl.Url -notmatch '^https://') { throw "aucune adresse" }
