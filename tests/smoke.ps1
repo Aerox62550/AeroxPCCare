@@ -553,8 +553,10 @@ function Invoke-Smoke {
                     [void]$out.Add(@{ M = $c.Request.HttpMethod; P = $c.Request.Url.AbsolutePath; H = "$($c.Request.Headers['X-Aerox'])"; B = $body })
                     $txt = if ($c.Request.HttpMethod -ne 'GET') { '{"ok":true}' } elseif ($old) { 'AEROX PC Care : relais des rapports de bug et des avis.' } else { '{"aerox":"stats","ok":true}' }
                     $bytes = [Text.Encoding]::UTF8.GetBytes($txt); $c.Response.ContentType = $(if ($old -and $c.Request.HttpMethod -eq 'GET') { 'text/plain' } else { 'application/json' })
-                    $c.Response.OutputStream.Write($bytes, 0, $bytes.Length); $c.Response.Close()
+                    $c.Response.ContentLength64 = $bytes.Length
+                    $c.Response.OutputStream.Write($bytes, 0, $bytes.Length); $c.Response.OutputStream.Close(); $c.Response.Close()
                 }
+                Start-Sleep -Milliseconds 1500   # laisse le logiciel lire la dernière réponse avant de fermer
             } finally { $l.Stop() }
         }
         $run = {
@@ -587,7 +589,7 @@ function Invoke-Smoke {
             $b = $g[1].B | ConvertFrom-Json
             if ($b.ev.'lent:rien' -ne 2 -or $b.ev.'probleme:diskd' -ne 1 -or $b.nouveau_mois -ne $true -or $b.v -ne $AppVersion) { throw "contenu faux : $($g[1].B)" }
             foreach ($bad in @($env:COMPUTERNAME, $env:USERNAME, $AppInfo.LogDir) | Where-Object { "$_".Length -ge 3 }) { if ($g[1].B -like "*$bad*") { throw "donnée personnelle dans l'envoi" } }
-            if ($AppInfo.StatsQueue.Count -or -not (Test-Path -LiteralPath $stamp)) { throw "file non vidée après l'envoi" }
+            if ($AppInfo.StatsQueue.Count -or -not (Test-Path -LiteralPath $stamp)) { throw "file non vidée après l'envoi ($($AppInfo.StatsQueue.Count) restant(s), erreur : $($AppInfo.StatsLastError))" }
             Write-Host ("        envoyé ({0} compteur(s)) : {1}" -f $n0, $g[1].B)
         } finally { $AppInfo.StatsOff = $oldOff; $sync.BugRelay = $oldRelay; $AppInfo.StatsQueue = $oldQ; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue }
     }

@@ -2394,8 +2394,9 @@ function Send-Stats([switch]$Force) {
             [System.Threading.Monitor]::Enter($q.SyncRoot)
             try { $q.RemoveRange(0, [math]::Min($keys.Count, $q.Count)); Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
             [IO.File]::WriteAllText($stamp, ("{0}|{1}" -f (Get-Date).ToString('s'), $month))
-        }
-    } catch {} finally { [System.Threading.Monitor]::Exit($AppInfo.StatsLock) }
+            $AppInfo.StatsLastError = ''
+        } else { $AppInfo.StatsLastError = "réponse du relais : $($r | ConvertTo-Json -Compress)" }
+    } catch { $AppInfo.StatsLastError = $_.Exception.Message } finally { [System.Threading.Monitor]::Exit($AppInfo.StatsLock) }
 }
 
 # Diagnostic : causes de fond des lenteurs (réglages), sans mesure longue
