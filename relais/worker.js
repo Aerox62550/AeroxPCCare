@@ -4,6 +4,8 @@
 //   POST /       : rapport de bug (étiquette « bug »)
 //   POST /avis   : avis (note 1 à 5 + commentaire), étiquette « avis », publié directement ; un seul avis par PC (modifiable)
 //   GET  /note   : note moyenne pour le badge de la page GitHub (format shields.io)
+//   POST /stats  : statistiques anonymes (compteurs seulement, additionnés par mois dans l'espace KV)
+//   GET  /stats  : le logiciel vérifie que le relais sait les recevoir ; GET /stats?voir=1 : les compteurs des 3 derniers mois
 //
 // Variables du Worker :
 //   REPO          : Aerox62550/AeroxPCCare
@@ -49,6 +51,61 @@ async function overLimit(request, env, kind) {
     await caches.default.put(key, new Response(String(n + 1), { headers: { 'Cache-Control': 'max-age=3600' } }));
   }
   return false;
+}
+
+// Statistiques anonymes : le logiciel envoie des compteurs (« probleme:bsod » : 1, « lent:rien » : 2…), au plus toutes
+// les 6 heures par PC. Rien d'autre n'est gardé : ni adresse IP, ni identifiant, ni texte libre. Une seule écriture KV
+// par envoi ; au-delà de STATS_PER_DAY envois par jour, les suivants sont ignorés (offre gratuite KV : 1000 écritures/jour).
+const STATS_KEY = /^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$/;
+const STATS_PER_DAY = 800;
+const monthOf = (d) => d.toISOString().slice(0, 7);
+
+async function statsGet(env, url) {
+  if (!url.searchParams.has('voir')) return json({ aerox: 'stats', ok: !!env.LIMITES });
+  if (!env.LIMITES) return json({ error: "Pas d'espace KV lié sous le nom LIMITES." }, 503);
+  const out = {};
+  const now = new Date();
+  for (let i = 0; i < 3; i++) {
+    const m = monthOf(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)));
+    const raw = await env.LIMITES.get('stats:' + m);
+    if (!raw) continue;
+    let s; try { s = JSON.parse(raw); } catch { continue; }
+    const envois = Object.values(s._jours || {}).reduce((a, b) => a + b, 0);
+    delete s._jours;
+    const tri = Object.fromEntries(Object.entries(s).sort((a, b) => b[1] - a[1]));
+    out[m] = { envois, compteurs: tri };
+  }
+  return new Response(JSON.stringify(out, null, 2), { headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+}
+
+async function statsPost(request, env) {
+  if (!env.LIMITES) return json({ error: 'Statistiques indisponibles.' }, 503);
+  let d;
+  try { d = await request.json(); } catch { return json({ error: 'Illisible.' }, 400); }
+  const v = String((d && d.v) || '').replace(/[^0-9.]/g, '').slice(0, 12);
+  const ev = (d && d.ev && typeof d.ev === 'object' && !Array.isArray(d.ev)) ? d.ev : {};
+  const add = {};
+  let n = 0;
+  for (const [k, c] of Object.entries(ev)) {
+    if (++n > 60) break;
+    const c2 = Math.floor(Number(c));
+    if (!STATS_KEY.test(k) || !(c2 >= 1)) continue;
+    add[k] = Math.min(c2, 50);
+  }
+  // Une fois par mois et par PC : compte les PC actifs et les versions utilisées
+  if (d && d.nouveau_mois === true) { add['actifs'] = 1; if (v) add['version:' + v.replace(/\./g, '-')] = 1; }
+  if (!Object.keys(add).length) return json({ ok: true });
+  const now = new Date();
+  const key = 'stats:' + monthOf(now);
+  const day = now.toISOString().slice(0, 10);
+  let s = {};
+  try { s = JSON.parse((await env.LIMITES.get(key)) || '{}'); } catch { s = {}; }
+  s._jours = s._jours || {};
+  if ((s._jours[day] || 0) >= STATS_PER_DAY) return json({ ok: true, ignore: true });
+  s._jours[day] = (s._jours[day] || 0) + 1;
+  for (const [k, c] of Object.entries(add)) s[k] = (s[k] || 0) + c;
+  await env.LIMITES.put(key, JSON.stringify(s));
+  return json({ ok: true });
 }
 
 // Avis : note de 1 à 5, commentaire libre, pseudo facultatif. Publié tout de suite (Sam supprime après coup si besoin).
@@ -99,12 +156,15 @@ async function badge(env) {
 
 export default {
   async fetch(request, env) {
-    const path = new URL(request.url).pathname.replace(/\/+$/, '');
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/+$/, '');
     if (request.method === 'GET' && path === '/note') return badge(env);
+    if (request.method === 'GET' && path === '/stats') return statsGet(env, url);
     if (request.method !== 'POST') return new Response('AEROX PC Care : relais des rapports de bug et des avis.', { status: 200 });
     if (request.headers.get('X-Aerox') !== '1') return json({ error: 'Requête refusée.' }, 400);
     if (Number(request.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'Envoi trop long.' }, 413);
     if (path === '/avis') return postReview(request, env);
+    if (path === '/stats') return statsPost(request, env);
     if (request.headers.get('X-Aerox') !== '1') return json({ error: 'Requête refusée.' }, 400);
     if (Number(request.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'Rapport trop long.' }, 413);
 

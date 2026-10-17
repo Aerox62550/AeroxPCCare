@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '2.3.0'
+$AppVersion = '2.4.0'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -107,7 +107,7 @@ $LastReportFile = Join-Path $LogDir 'dernier_rapport.txt'
 $SettingsFile   = Join-Path $LogDir 'reglages.json'
 $OldSettings    = Join-Path $LogDir 'reglages.txt'
 
-$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; OldLogDir = $OldLogDir; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); StabilityFixAt = @{}; Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
+$AppInfo = [hashtable]::Synchronized(@{ Secure = $SecureRoot; OldLogDir = $OldLogDir; Name = $AppName; Version = $AppVersion; LogDir = $LogDir; BugFile = $BugFile; Repo = $GitHubRepo; IgnoredApps = @(); IgnoredIssues = @(); StartupKept = @(); StartupOff = @(); StabilityFixAt = @{}; StatsOff = $false; StatsQueue = $null; StatsLock = (New-Object Object); Beta = $false; Launcher = $AeroxLauncher; Portable = $Portable })
 
 # Objet partagé entre l'interface et les tâches en arrière-plan
 $sync = [hashtable]::Synchronized(@{

@@ -235,6 +235,7 @@ $script:Settings = @{
     StabilityFixAt = @{}
     SpeedHistory = @()
     BetaChannel = $false
+    StatsOff = $false
     PostOptimize = $false
     InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''; LastSeenVersion = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
@@ -250,7 +251,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
             if ($h.StabilityFixAt -is [hashtable]) { $script:Settings.StabilityFixAt = $h.StabilityFixAt }
@@ -271,11 +272,14 @@ function Load-Settings {
     $AppInfo.StartupOff = @($script:Settings.StartupOff)
     $AppInfo.StabilityFixAt = $script:Settings.StabilityFixAt
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
+    $AppInfo.StatsOff = [bool]$script:Settings.StatsOff
+    $AppInfo.StatsQueue = Read-StatsQueue
     Update-VersionText
 }
 function Update-VersionText { $VersionText.Text = "Version $AppVersion" + $(if ($Portable) { "  ·  portable" } else { '' }) + $(if ($script:Settings.BetaChannel) { "  ·  canal test" } else { '' }) }
 function Save-Settings {
     $AppInfo.Beta = [bool]$script:Settings.BetaChannel
+    $AppInfo.StatsOff = [bool]$script:Settings.StatsOff
     $AppInfo.IgnoredApps = @($script:Settings.IgnoredApps)
     $AppInfo.IgnoredIssues = @($script:Settings.IgnoredIssues | ForEach-Object { [string]$_.Id })
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
@@ -334,7 +338,7 @@ $script:CardIcons = @{
     appupdates = 'E896'; 'Update-Apps' = 'E895'; 'Update-Windows' = 'E777'; drivers = 'E713'; 'Open-WindowsUpdate' = 'E8A7'
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
     browser = 'EA18'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
-    slow = 'E9D9'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
+    slow = 'E9D9'; lag = 'E839'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
 }
@@ -600,6 +604,7 @@ $PageDefs = [ordered]@{
     @{ T = "L'imprimante n'imprime plus"; Badge = "Dépannage rapide"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
     @{ T = "Bureau ou barre des tâches figés"; Badge = "Dépannage rapide"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
     @{ T = "Pubs et fausses alertes de virus"; Badge = "Arnaques"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." },
+    @{ T = "Ça lague en ligne (jeu, Discord)"; Badge = "Nouveau"; B = "Analyser"; UI = 'lag'; UiBusy = $true; D = "Personnages qui « sautent », voix hachée, déconnexions ? Mesure ta connexion pendant 1 minute (liaison PC ↔ box, Internet, Wi-Fi, téléchargements en fond, VPN) et te dit d'où vient le lag." },
     @{ T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
     @{ T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
     @{ T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
@@ -620,6 +625,7 @@ $PageDefs = [ordered]@{
     @{ T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
     @{ T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
     @{ T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
+    @{ T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
     @{ T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
 }
 
@@ -638,6 +644,10 @@ function Get-FxCardStatus {
 function Get-SenseCardStatus {
     if (Get-StorageSenseOn) { return @{ StatusText = 'Activé : Windows nettoie tout seul'; StatusKind = 'on'; B = 'Désactiver'; A = 'Disable-StorageSense'; P = $false } }
     return @{ StatusText = 'Désactivé'; StatusKind = 'off'; B = 'Activer'; A = 'Enable-StorageSense'; P = $true }
+}
+function Get-StatsCardStatus {
+    if ($script:Settings.StatsOff) { return @{ B = 'Activer'; StatusText = "Désactivées : rien n'est envoyé"; StatusKind = 'off' } }
+    return @{ B = 'Désactiver'; StatusText = "Activées : compteurs anonymes seulement"; StatusKind = 'on' }
 }
 function Get-StartupCardStatus {
     $n = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count
@@ -1019,9 +1029,11 @@ function Receive-IssueChecks {
         $changed = $true
         if ($p[1] -eq 'still') {
             $i.Status = 'open'; $i.VerifyFailed = $true
+            Add-StatsEvent ("pascorrige:" + (ConvertTo-StatsId $i.Id))
             Write-UiLog ("⚠ Vérifié : « {0} » est toujours là, la réparation n'a pas suffi. Regarde « Voir comment faire » ou envoie un rapport de bug." -f $i.Title)
         } else {
             $i.Status = 'done'
+            if ($p[1] -eq 'gone') { Add-StatsEvent ("corrige:" + (ConvertTo-StatsId $i.Id)) }
             Write-UiLog $(if ($p[1] -eq 'gone') { "✅ Vérifié : « $($i.Title) » est réglé." } else { "✅ Corrigé : $($i.Title)" })
         }
     }
@@ -1098,7 +1110,7 @@ function Complete-Job {
         } else {
             $fi = $script:FixingIssue
             $fi.VerifyFailed = $false
-            if ($errs.Count) { $fi.Status = 'open' }
+            if ($errs.Count) { $fi.Status = 'open'; Add-StatsEvent ("echec:" + (ConvertTo-StatsId $fi.Id)) }
             elseif ($sync.NeedReboot) { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : {0} (effectif après le redémarrage)" -f $fi.Title) }
             elseif (Start-IssueCheck $fi) { $fi.Status = 'verifying'; Write-UiLog ("🔎 Vérification : {0}…" -f $fi.Title) }
             else { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : " + $fi.Title) }
@@ -1120,6 +1132,7 @@ function Complete-Job {
         $script:UndoId = $null
     }
     Refresh-Page
+    if ($job.Action -match '^(Invoke-Diagnostic|Get-SlowReport|Get-LagReport)') { Start-Background 'Send-Stats' }
     try {
     # Erreurs d'abord, puis la fenêtre de résultat quand même : une erreur mineure pendant une analyse ne doit pas cacher
     # ce qui a été trouvé (relecture Gemini n° 4)
@@ -1284,6 +1297,16 @@ function Invoke-UiCommand($T) {
                     'report' { Show-BugReport '' }
                     'review' { Show-ReviewDialog }
                     'whatsnew' { Show-WhatsNew '' }
+                    'lag' { Start-LagReport }
+                    'stats-toggle' {
+                        $off = -not [bool]$script:Settings.StatsOff
+                        if (-not $off -or (Confirm-Box "Ne plus envoyer de statistiques anonymes ?`n`nElles ne contiennent que des compteurs (version d'AEROX, types de problèmes trouvés, lenteurs non reconnues), jamais ton nom, celui du PC ni tes fichiers. Elles aident le développeur à corriger d'abord ce qui touche le plus de monde.")) {
+                            $script:Settings.StatsOff = $off; Save-Settings
+                            if ($off) { try { $AppInfo.StatsQueue.Clear(); Save-StatsQueue } catch {} }
+                            Write-UiLog $(if ($off) { "📊 Statistiques anonymes désactivées." } else { "📊 Statistiques anonymes activées. Merci !" })
+                            Refresh-Page
+                        }
+                    }
                     'review-later' { $script:Settings.ReviewSnooze = (Get-Date).AddDays(14).ToString('s'); Save-Settings; Refresh-Page }
                     'review-never' { $script:Settings.ReviewNever = $true; Save-Settings; Refresh-Page }
                     'remotehelp' { Show-RemoteHelpDialog }
@@ -2061,6 +2084,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.4.0' = @("« Pourquoi mon PC rame ? » va beaucoup plus loin : carte graphique, processeur bridé par la chauffe ou la batterie, pilote qui fait saccader, connexion qui lague, téléchargement qui sature, disque plein. Et il montre tout ce qu'il a vérifié.", "Rien trouvé ? Dis à AEROX ce qui rame (ça lague en ligne, les jeux saccadent, lent au démarrage, un logiciel précis, tout est lent) : il lance l'analyse qui correspond. Pour les jeux, la mesure se fait pendant que tu joues.", "Nouveau dépannage « Ça lague en ligne (jeu, Discord) » : 1 minute de mesure, et AEROX te dit si c'est ton Wi-Fi, ta box, ta ligne, un téléchargement, un VPN ou la carte réseau.", "Statistiques anonymes : des compteurs (types de problèmes trouvés, lenteurs non reconnues), jamais ton nom ni tes fichiers, pour corriger d'abord ce qui touche le plus de monde. Désactivables dans l'onglet Aide.")
     '2.3.0' = @("Grande mise à jour de correctifs et de sécurité : les données d'AEROX (réglages, historique, bilans, journaux) sont rangées dans son dossier protégé, que seul un administrateur peut modifier. Elles ont été reprises automatiquement.", "Sites bloqués (fichier hosts) : AEROX débloque maintenant même un fichier verrouillé, et te dit si c'est ton antivirus qui le protège.", "Pilotes : AEROX dit exactement quel périphérique a un problème (ce n'est souvent pas la carte graphique), pourquoi, et peut réinstaller son pilote en un clic.", "Rapport de batterie et boutons « Ouvrir Steam » : ils remarchent. « Réparer les fichiers Windows » donne un résultat fiable quelle que soit la langue de Windows.", "Sécurité : la mise à jour d'AEROX n'est installée que si son empreinte est vérifiée, et l'outil du test de débit seulement si c'est bien le programme officiel d'Ookla.", "BIOS : « Mettre à jour » trouve la page de ton modèle même si les infos du PC n'étaient pas encore chargées.")
     '2.2.1' = @("Sécurité renforcée (relecture externe) : un désinstalleur rangé hors des dossiers protégés de Windows n'est plus lancé avec les droits administrateur, et les raccourcis temporaires d'AEROX sont dans son dossier protégé.", "Test de débit : s'il se bloque, il passe tout seul sur un autre serveur au lieu de rester figé. Une petite erreur pendant une analyse n'empêche plus d'afficher les résultats.")
     '2.2.0' = @("Diagnostic plus poussé : démarrage lent (Windows dit lui-même ce qui le ralentit), extinctions brutales expliquées (bouton maintenu, veille ou coupure nette), pilote graphique qui décroche, logiciels qui se figent, erreurs de lecture des disques et résultat du test de mémoire de Windows. Chaque fois avec la cause et quoi faire.", "Avis et rapports : les gros mots sont masqués par des étoiles avant d'être publiés.", "Sites ou téléchargements qui ne passent pas (ex. Discord) : AEROX cherche la cause (proxy, fichier hosts qui détourne des sites, heure du PC fausse, DNS qui bloque) et la répare.", "Nouveau dépannage « Discord bugue ou ne s'installe plus » : cache vidé, installation abîmée repérée, téléchargement vérifié.", "Mises à jour : un logiciel qui se réaffiche juste après sa mise à jour (VS Code) n'est plus proposé en boucle. « C'est fait » sur une extinction brutale ou un plantage n'est plus resignalé au diagnostic suivant.")
@@ -3280,29 +3304,75 @@ function New-Meter([string]$Label, [double]$Pct, [string]$Sub) {
     $b.Child = $sp
     return $b
 }
+function New-StatTile([string]$Label, [string]$Value, [string]$Color, [string]$Sub) {
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 0
+    $sp = New-Object System.Windows.Controls.StackPanel
+    Add-Child $sp (New-Text $Label 12 '#8B93A7' 'SemiBold')
+    Add-Child $sp (New-Text $Value 24 $Color 'Bold')
+    if ($Sub) { Add-Child $sp (New-Text $Sub 11.5 '#7A8399') }
+    $b.Child = $sp
+    return $b
+}
+function Start-LagReport { [void](Start-AeroxTask 'Get-LagReport' 'Analyse de la connexion' 'slowdialog') }
+function Start-GameMeasure {
+    if ($script:Job) { return }
+    [System.Windows.MessageBox]::Show("Lance ton jeu maintenant et joue normalement.`n`nLa mesure démarre dans 1 minute et dure 20 secondes. Reviens ensuite sur AEROX : le résultat t'attendra.", $AppName, 'OK', 'Information') | Out-Null
+    if (-not $script:GameSess -and -not $script:GameProbe) { try { Stop-Monitoring } catch {} }
+    [void](Start-AeroxTask 'Get-SlowReport -Delay 60 -Mode jeu' 'Mesure pendant ton jeu' 'slowdialog')
+}
+# « Dis-moi ce qui rame » : quand la mesure ne trouve rien (ou pas la bonne chose), la personne dit ce qu'elle vit
+# et AEROX lance l'analyse qui correspond (comme un réparateur qui pose la question avant de chercher)
+$script:SlowSymptoms = @(
+    @('lag', "Ça lague en ligne", "Jeu ou Discord : personnages qui sautent, voix hachée, déconnexions. Mesure la connexion pendant 1 minute."),
+    @('fps', "Les jeux saccadent / FPS bas", "La mesure se fait pendant que tu joues (tu as 1 minute pour lancer ton jeu)."),
+    @('demarrage', "Lent à démarrer", "Choisis ce qui se lance au démarrage. Le diagnostic complet regarde aussi ce que Windows a noté sur ses démarrages."),
+    @('logiciel', "Un logiciel précis bugue", "Discord, navigateur, imprimante, son, Windows Update… : les dépannages rapides."),
+    @('tout', "Tout est lent, tout le temps", "Lance le diagnostic complet : santé du disque, pilotes, plantages, logiciels inutiles, Windows.")
+)
 function Show-SlowDialog {
     $r = $sync.SlowReport
     if (-not $r) { return }
-    $w = New-Dialog "$AppName : pourquoi mon PC rame" 820
-    $script:SlowWin = $w; $script:SlowNext = $null
+    $mode = "$($r.Mode)"
+    $title = switch ($mode) { 'lag' { "Pourquoi ça lague ?" } 'jeu' { "Ce qui ralentit ton jeu" } default { "Pourquoi mon PC rame ?" } }
+    $w = New-Dialog ("$AppName : " + $(switch ($mode) { 'lag' { "pourquoi ça lague" } 'jeu' { "mesure pendant ton jeu" } default { "pourquoi mon PC rame" } })) 820
+    $script:SlowWin = $w; $script:SlowNext = $null; $script:SlowArg = $null
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Pourquoi mon PC rame ?" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Mesure faite pendant 20 secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." 13 '#A9B0C2'
-    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    Add-Child $sp (New-Text $title 18 '#FFFFFF' 'Bold')
+    $sub = switch ($mode) {
+        'lag' { "Connexion mesurée pendant 1 minute : entre le PC et la box, puis vers Internet. Si ça lague seulement à certains moments, relance l'analyse à ce moment-là." }
+        'jeu' { "Mesure faite pendant 20 secondes, pendant que tu jouais." }
+        default { "Mesure faite pendant 20 secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." }
+    }
+    $p = New-Text $sub 13 '#A9B0C2'; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $body = New-Object System.Windows.Controls.StackPanel
-    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 500; $sv.Content = $body
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 520; $sv.Content = $body
     Add-Child $sp $sv
     $mg = New-Object System.Windows.Controls.Grid
-    for ($k = 0; $k -lt 3; $k++) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star); $mg.ColumnDefinitions.Add($cd) }
-    $m1 = New-Meter 'PROCESSEUR' $r.Cpu ("pointe à {0} %" -f $r.CpuMax); [System.Windows.Controls.Grid]::SetColumn($m1, 0); Add-Child $mg $m1
-    $m2 = New-Meter 'MÉMOIRE (RAM)' $r.Ram ("sur {0}" -f (Format-Size $r.RamTotal)); [System.Windows.Controls.Grid]::SetColumn($m2, 1); Add-Child $mg $m2
-    $m3 = New-Meter 'DISQUE' $r.Disk $(if ($r.Hdd) { 'disque dur classique (HDD)' } else { "activité moyenne" }); $m3.Margin = Th 0 0 0 0; [System.Windows.Controls.Grid]::SetColumn($m3, 2); Add-Child $mg $m3
+    $tiles = @()
+    if ($mode -eq 'lag') {
+        $col = { param($v, $warn, $bad) if ($v -ge $bad) { '#FF6B6B' } elseif ($v -ge $warn) { '#FFB547' } else { '#4ADE80' } }
+        $tiles += $(if ($r.Gw.Ok) { New-StatTile 'PC ↔ BOX' ("{0} ms" -f [math]::Round($r.Gw.Avg)) (& $col $r.Gw.Avg 10 30) ("±{0} ms · {1} % perdus" -f $r.Gw.Jitter, $r.Gw.Loss) } else { New-StatTile 'PC ↔ BOX' '—' '#8B93A7' 'la box ne répond pas au ping' })
+        $tiles += $(if ($r.Net.Ok) { New-StatTile 'INTERNET' ("{0} ms" -f [math]::Round($r.Net.Avg)) (& $col $r.Net.Avg 50 80) ("variations ±{0} ms" -f $r.Net.Jitter) } else { New-StatTile 'INTERNET' '—' '#8B93A7' 'ping bloqué sur ce réseau' })
+        $tiles += $(if ($r.Net.Ok) { New-StatTile 'PAQUETS PERDUS' ("{0} %" -f $r.Net.Loss) (& $col $r.Net.Loss 1 3) 'vers Internet' } else { New-StatTile 'PAQUETS PERDUS' '—' '#8B93A7' 'non mesuré' })
+    } else {
+        $tiles += New-Meter 'PROCESSEUR' $r.Cpu ("pointe à {0} %" -f $r.CpuMax)
+        $tiles += New-Meter 'MÉMOIRE (RAM)' $r.Ram ("sur {0}" -f (Format-Size $r.RamTotal))
+        $tiles += New-Meter 'DISQUE' $r.Disk $(if ($r.Hdd) { 'disque dur classique (HDD)' } else { "activité moyenne" })
+        if ($r.GpuOk) { $tiles += New-Meter 'CARTE GRAPHIQUE' $r.Gpu 'utilisation moyenne' }
+    }
+    for ($k = 0; $k -lt $tiles.Count; $k++) {
+        $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star); $mg.ColumnDefinitions.Add($cd)
+        if ($k -eq $tiles.Count - 1) { $tiles[$k].Margin = Th 0 0 0 0 }
+        [System.Windows.Controls.Grid]::SetColumn($tiles[$k], $k); Add-Child $mg $tiles[$k]
+    }
     Add-Child $body $mg
 
     $fs = @($r.Findings | Where-Object { $_ })
-    $h = New-Text $(if ($fs.Count) { "CE QUI RALENTIT TON PC ($($fs.Count))" } else { 'RÉSULTAT' }) 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 16 0 8; Add-Child $body $h
+    $h = New-Text $(if ($fs.Count) { $(if ($mode -eq 'lag') { "CE QUI FAIT LAGUER ($($fs.Count))" } else { "CE QUI RALENTIT TON PC ($($fs.Count))" }) } else { 'RÉSULTAT' }) 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 16 0 8; Add-Child $body $h
     if (-not $fs.Count) {
-        $t = New-Text "Rien d'anormal pendant la mesure : processeur, mémoire et disque respirent. Si le PC rame à un moment précis, relance l'analyse à ce moment-là." 13 '#4ADE80'; $t.Margin = Th 2 0 0 6; Add-Child $body $t
+        $msg = if ($mode -eq 'lag') { "Rien d'anormal pendant la mesure : la connexion est stable. Si ça lague seulement dans un jeu précis, c'est souvent le serveur du jeu (regarde le ping affiché dans le jeu) ou un autre appareil de la maison qui télécharge à ce moment-là." }
+               else { "Rien d'anormal pendant la mesure : tout ce qui est listé plus bas a été vérifié. Dis-moi juste en dessous ce qui rame exactement : AEROX lance l'analyse qui correspond." }
+        $t = New-Text $msg 13 '#4ADE80'; $t.Margin = Th 2 0 0 6; Add-Child $body $t
     }
     foreach ($x in $fs) {
         $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 14 12; $card.Margin = Th 0 0 0 8
@@ -3311,9 +3381,23 @@ function Show-SlowDialog {
         Add-Child $cs (New-Text $x.Title 14 '#FFFFFF' 'SemiBold')
         if ($x.Text) { $t = New-Text $x.Text 12.5 '#C3CAD9'; $t.Margin = Th 0 3 0 0; Add-Child $cs $t }
         if ($x.Advice) { $t = New-Text ("→ " + $x.Advice) 12.5 '#A9B0C2'; $t.Margin = Th 0 5 0 0; Add-Child $cs $t }
-        $lbl = switch ($x.Action) { 'taskmgr' { 'Ouvrir le Gestionnaire des tâches' } 'startup' { 'Choisir les programmes au démarrage' } 'balanced' { 'Passer en mode Équilibré' } 'cpumax' { 'Remettre à 100 %' } default { '' } }
-        if ($lbl) { $b = New-DlgButton $lbl 'ActionBtn'; $b.Tag = $x.Action; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 0; $b.Add_Click({ $script:SlowNext = [string]$this.Tag; $script:SlowWin.Close() }); Add-Child $cs $b }
+        $lbl = switch ($x.Action) { 'taskmgr' { 'Ouvrir le Gestionnaire des tâches' } 'startup' { 'Choisir les programmes au démarrage' } 'balanced' { 'Passer en mode Équilibré' } 'cpumax' { 'Remettre à 100 %' }
+                                    'space' { 'Voir ce qui prend de la place' } 'drivers' { 'Vérifier les pilotes' } 'pagefile' { 'Remettre en automatique' } 'netpower' { "Désactiver cette économie d'énergie" } default { '' } }
+        if ($lbl) {
+            $b = New-DlgButton $lbl 'ActionBtn'; $b.Tag = @($x.Action, "$($x.Adapter)"); $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 0
+            $b.Add_Click({ $script:SlowNext = [string]$this.Tag[0]; $script:SlowArg = [string]$this.Tag[1]; $script:SlowWin.Close() }); Add-Child $cs $b
+        }
         $card.Child = $cs; Add-Child $body $card
+    }
+
+    # Ce qui a été vérifié, avec les valeurs mesurées (rien n'est « OK » sans avoir été regardé)
+    $ck = @($r.Checked | Where-Object { $_ })
+    if ($ck.Count) {
+        $h = New-Text "CE QUI A ÉTÉ VÉRIFIÉ" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+        $cb = New-Object System.Windows.Controls.Border; $cb.Background = Brush '#13161E'; $cb.CornerRadius = Corner 10; $cb.Padding = Th 14 8 14 8
+        $cl = New-Object System.Windows.Controls.StackPanel
+        foreach ($c in $ck) { $t = New-Text ($(if ($c.Ok) { '✔  ' } else { '⚠  ' }) + $c.T) 12.5 $(if ($c.Ok) { '#9FE3B4' } else { '#FFC870' }); $t.Margin = Th 0 2 0 2; Add-Child $cl $t }
+        $cb.Child = $cl; Add-Child $body $cb
     }
 
     $top = @($r.Top | Where-Object { $_ })
@@ -3321,12 +3405,12 @@ function Show-SlowDialog {
         $h = New-Text "CE QUI CONSOMME LE PLUS (MOYENNE SUR 20 S)" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
         $tb = New-Object System.Windows.Controls.Border; $tb.Background = Brush '#13161E'; $tb.CornerRadius = Corner 10; $tb.Padding = Th 14 6 14 8
         $tg = New-Object System.Windows.Controls.Grid
-        foreach ($wd in 5, 1, 1.3, 1.3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength($wd, [System.Windows.GridUnitType]::Star); $tg.ColumnDefinitions.Add($cd) }
-        $row = 0
+        $widths = if ($r.GpuOk) { @(5, 1.1, 1.1, 1.3, 1.3) } else { @(5, 1, 1.3, 1.3) }
+        foreach ($wd in $widths) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength($wd, [System.Windows.GridUnitType]::Star); $tg.ColumnDefinitions.Add($cd) }
         $addRow = {
             param($cells, $color, $weight)
             $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $tg.RowDefinitions.Add($rd)
-            for ($c = 0; $c -lt 4; $c++) {
+            for ($c = 0; $c -lt $cells.Count; $c++) {
                 $t = New-Text $cells[$c] 12.5 $color $weight; $t.Margin = Th 0 3 8 3
                 if ($c -gt 0) { $t.TextAlignment = 'Right' }
                 [System.Windows.Controls.Grid]::SetRow($t, $script:SlowRow); [System.Windows.Controls.Grid]::SetColumn($t, $c); Add-Child $tg $t
@@ -3334,13 +3418,26 @@ function Show-SlowDialog {
             $script:SlowRow++
         }
         $script:SlowRow = 0
-        & $addRow @('Programme', 'Processeur', 'Mémoire', 'Lect./écrit.') '#7A8399' 'SemiBold'
+        if ($r.GpuOk) { & $addRow @('Programme', 'Processeur', 'Carte gr.', 'Mémoire', 'Lect./écrit.') '#7A8399' 'SemiBold' } else { & $addRow @('Programme', 'Processeur', 'Mémoire', 'Lect./écrit.') '#7A8399' 'SemiBold' }
         foreach ($x in $top) {
             $nm = if ($x.Label -and $x.Label -ne $x.Name) { "$($x.Label)  ($($x.Name))" } else { $x.Name }
-            & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $(if ($x.Io -ge 1KB) { (Format-Size $x.Io) + '/s' } else { '—' })) '#E6E9F2' 'Normal'
+            $io = $(if ($x.Io -ge 1KB) { (Format-Size $x.Io) + '/s' } else { '—' })
+            if ($r.GpuOk) { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), $(if ($x.Gpu -ge 1) { "{0} %" -f $x.Gpu } else { '—' }), (Format-Size $x.Mem), $io) '#E6E9F2' 'Normal' }
+            else { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $io) '#E6E9F2' 'Normal' }
         }
         $tb.Child = $tg; Add-Child $body $tb
     }
+
+    # Dis-moi ce qui rame
+    $h = New-Text $(if ($fs.Count) { "CE N'EST PAS ÇA ? DIS-MOI CE QUI RAME" } else { "DIS-MOI CE QUI RAME EXACTEMENT" }) 11.5 $(if ($fs.Count) { '#7A8399' } else { '#B9A8FF' }) 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+    $wp = New-Object System.Windows.Controls.WrapPanel
+    foreach ($sy in $script:SlowSymptoms) {
+        if (($mode -eq 'lag' -and $sy[0] -eq 'lag') -or ($mode -eq 'jeu' -and $sy[0] -eq 'fps')) { continue }
+        $b = New-DlgButton $sy[1] 'ActionBtn'; $b.Tag = $sy[0]; $b.ToolTip = $sy[2]; $b.Margin = Th 0 0 8 8
+        $b.Add_Click({ $script:SlowNext = 'sym'; $script:SlowArg = [string]$this.Tag; $script:SlowWin.Close() })
+        Add-Child $wp $b
+    }
+    Add-Child $body $wp
 
     $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
     $bAgain = New-DlgButton 'Refaire la mesure' 'ActionBtn'; $bAgain.Margin = Th 0 0 8 0
@@ -3351,11 +3448,32 @@ function Show-SlowDialog {
     $w.Content = $sp
     [void]$w.ShowDialog()
     switch ($script:SlowNext) {
-        'again'    { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') }
+        'again'    { switch ($mode) { 'lag' { Start-LagReport } 'jeu' { Start-GameMeasure } default { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') } } }
         'taskmgr'  { Start-Process taskmgr.exe }
         'startup'  { Show-StartupDialog $null }
         'balanced' { [void](Start-AeroxTask 'Set-BalancedPower' 'Mode Équilibré') }
         'cpumax'   { if (Confirm-Box "Le processeur pourra de nouveau utiliser 100 % de sa puissance sur secteur.`n`nAnnulable dans l'historique des changements.") { [void](Start-AeroxTask 'Set-CpuMaxState 100' 'Puissance du processeur') } }
+        'space'    { Start-SpaceScan }
+        'drivers'  { Start-DriverCheck $null }
+        'pagefile' { if (Confirm-Box "Windows gérera de nouveau la mémoire virtuelle lui-même (réglage d'origine). Un redémarrage sera nécessaire.") { [void](Start-AeroxTask 'Enable-AutoPagefile' 'Mémoire virtuelle') } }
+        'netpower' {
+            if ($script:SlowArg -and (Confirm-Box "La carte réseau ne sera plus mise en veille par Windows. La connexion peut se couper 2 ou 3 secondes pendant le réglage.`n`nTu pourras annuler dans l'historique des changements.")) {
+                [void](Start-AeroxTask ("Set-NetAdapterSleep {0} `$false" -f (ConvertTo-PsLiteral $script:SlowArg)) "Économie d'énergie de la carte réseau")
+            }
+        }
+        'sym' {
+            $k = $script:SlowArg
+            # Compteurs anonymes : ce que les gens vivent, et quand AEROX n'avait rien trouvé (= ce qu'il faut lui apprendre)
+            Add-StatsEvent "symptome:$k"
+            if (-not $fs.Count) { Add-StatsEvent ("inconnu:{0}-{1}" -f $(if ($mode) { $mode } else { 'lent' }), $k) }
+            switch ($k) {
+                'lag'       { Start-LagReport }
+                'fps'       { Start-GameMeasure }
+                'demarrage' { Write-UiLog "→ Démarrage lent : choisis ce qui se lance tout seul. Le diagnostic complet lit aussi ce que Windows a noté sur ses derniers démarrages (ce qui l'a ralenti)."; Show-StartupDialog $null }
+                'logiciel'  { Go-Page 'repair'; Write-UiLog "→ Dépannages rapides : choisis le logiciel qui bugue. S'il n'est pas dans la liste, envoie un rapport de bug en disant lequel : il sera ajouté." }
+                'tout'      { if (-not $script:Scanning) { Start-Diagnostic } else { Go-Page 'diag' } }
+            }
+        }
     }
 }
 
@@ -4961,7 +5079,7 @@ try {
 Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
-if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay' }
+if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay; Send-Stats' }
 Set-SplashStep 95 'Ouverture…'
 [void]$window.ShowDialog()
 $timer.Stop()
