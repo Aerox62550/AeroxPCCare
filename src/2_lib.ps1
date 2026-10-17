@@ -1581,6 +1581,10 @@ function Test-Browsers {
 #  BILAN AVANT / APRÈS : mesures simples et vérifiables de l'état du PC
 # =====================================================================
 # Temps du dernier démarrage complet mesuré par Windows lui-même (journal « Diagnostics-Performance », événement 100)
+# Lecture du journal de Windows qui ne bloque jamais un diagnostic (journal absent, filtre refusé…) : liste vide en cas d'erreur
+function Get-EventsSafe([hashtable]$Filter, [int]$Max = 0) {
+    try { if ($Max -gt 0) { return @(Get-WinEvent -FilterHashtable $Filter -MaxEvents $Max -ErrorAction Stop) } else { return @(Get-WinEvent -FilterHashtable $Filter -ErrorAction Stop) } } catch { return @() }
+}
 # Champs nommés d'un événement Windows (EventData) : @{ BootTime = '...'; FriendlyName = '...' }
 function Get-EventFields($E) {
     $h = @{}
@@ -2352,7 +2356,7 @@ function Test-Stability {
         }
     } else { Add-Ok "Aucun écran bleu ces 30 derniers jours" }
 
-    $kp = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = (Get-StabilitySince 'power41' (Get-Date).AddDays(-30)) } -ErrorAction SilentlyContinue |
+    $kp = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = (Get-StabilitySince 'power41' (Get-Date).AddDays(-30)) } |
             Where-Object { "$($_.Properties[0].Value)" -eq '0' })
     if ($kp.Count -ge 2) {
         # Comment le PC s'est coupé : bouton maintenu (le PC était figé), pendant une mise en veille, ou coupure nette
@@ -2370,7 +2374,7 @@ function Test-Stability {
     }
 
     # Le pilote graphique qui « cesse de répondre et récupère » (écran noir une seconde, jeu qui se fige ou se ferme)
-    $tdr = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = (Get-StabilitySince 'tdr' (Get-Date).AddDays(-7)) } -ErrorAction SilentlyContinue)
+    $tdr = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = (Get-StabilitySince 'tdr' (Get-Date).AddDays(-7)) })
     if ($tdr.Count -ge 2) {
         $drvName = ("$($tdr[0].Properties[0].Value)" -replace '[^\w.\-]', '')
         Add-Issue -Id 'tdr' -Sev 'warn' -Title "Le pilote graphique a décroché $($tdr.Count) fois cette semaine" -Detail $(if ($drvName) { "Pilote : $drvName" } else { 'Carte graphique' }) `
@@ -2380,7 +2384,7 @@ function Test-Stability {
     }
 
     # Test de la mémoire de Windows (« Diagnostic de mémoire Windows ») : son résultat est un fait, pas une supposition
-    $md = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = (Get-Date).AddDays(-90) } -MaxEvents 5 -ErrorAction SilentlyContinue | Sort-Object TimeCreated -Descending)
+    $md = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = (Get-Date).AddDays(-90) } 5 | Sort-Object TimeCreated -Descending)
     if ($md.Count -and $md[0].Id -eq 1202) {
         Add-Issue -Id 'ramtest' -Sev 'crit' -Title "Le test de mémoire de Windows a trouvé des erreurs" -Detail ("Test du {0}" -f $md[0].TimeCreated.ToString('dd/MM/yyyy')) `
             -Cause "Une barrette de mémoire vive (RAM) est défectueuse ou mal réglée (profil XMP/EXPO trop poussé)." -Effect "Écrans bleus, plantages au hasard, fichiers abîmés." `
@@ -2388,7 +2392,7 @@ function Test-Stability {
     } elseif ($md.Count -and $md[0].Id -eq 1201) { Add-Ok ("Test de mémoire de Windows sans erreur (le {0})" -f $md[0].TimeCreated.ToString('dd/MM/yyyy')) }
 
     # Logiciels qui se figent (« ne répond pas ») souvent
-    $hangs = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = 1002; StartTime = (Get-StabilitySince 'hang' (Get-Date).AddDays(-7)) } -ErrorAction SilentlyContinue |
+    $hangs = @(Get-EventsSafe @{ LogName = 'Application'; Id = 1002; StartTime = (Get-StabilitySince 'hang' (Get-Date).AddDays(-7)) } |
                Where-Object { "$($_.Properties[0].Value)" -notmatch '(?i)^(aerox ?pc ?care|aeroxpccare)' })
     $hg = @($hangs | Group-Object { "$($_.Properties[0].Value)" } | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending)
     if ($hg.Count) {
@@ -3191,7 +3195,8 @@ function Test-Startup {
 function Test-BootSpeed {
     $b = Get-LastBootTime
     $since = (Get-Date).AddDays(-30)
-    $ev = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Diagnostics-Performance/Operational'; Id = 101, 102, 103, 106, 109; StartTime = $since } -ErrorAction SilentlyContinue)
+    # Requête XPath (le filtre par table de ce journal renvoie « paramètre incorrect » sur certains Windows) ; jamais bloquant
+    $ev = @(); try { $ev = @(Get-WinEvent -LogName 'Microsoft-Windows-Diagnostics-Performance/Operational' -FilterXPath "*[System[(EventID=101 or EventID=102 or EventID=103 or EventID=106 or EventID=109) and TimeCreated[timediff(@SystemTime) <= 2592000000]]]" -ErrorAction Stop) } catch {}
     $kinds = @{ 101 = 'logiciel'; 102 = 'pilote'; 103 = 'service'; 106 = 'tâche de fond'; 109 = 'périphérique' }
     $agg = @{}
     foreach ($e in $ev) {
@@ -3260,7 +3265,7 @@ function Test-DiskHealth {
         # Erreurs relevées par Windows sur les disques (30 jours) : secteurs illisibles (7), erreurs de lecture de la mémoire
         # virtuelle (51), opérations relancées (153), système de fichiers abîmé (Ntfs 55 / 98)
         # Une requête par source : si une source n'existe pas sur ce PC, les autres sont quand même lues
-        $de = @(foreach ($pv in 'disk', 'Ntfs', 'Microsoft-Windows-Ntfs') { Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = $pv; Id = 7, 51, 153, 55, 98; StartTime = (Get-Date).AddDays(-30) } -ErrorAction SilentlyContinue })
+        $de = @(foreach ($pv in 'disk', 'Ntfs', 'Microsoft-Windows-Ntfs') { Get-EventsSafe @{ LogName = 'System'; ProviderName = $pv; Id = 7, 51, 153, 55, 98; StartTime = (Get-Date).AddDays(-30) } })
         # Après une réparation, seules les erreurs d'après comptent
         $sB = Get-StabilitySince 'diskbad' (Get-Date).AddDays(-30); $sR = Get-StabilitySince 'diskretry' (Get-Date).AddDays(-30); $sF = Get-StabilitySince 'ntfs' (Get-Date).AddDays(-30)
         $bad = @($de | Where-Object { $_.Id -in 7, 51 -and $_.TimeCreated -gt $sB }); $retry = @($de | Where-Object { $_.Id -eq 153 -and $_.TimeCreated -gt $sR }); $fs = @($de | Where-Object { $_.Id -in 55, 98 -and $_.TimeCreated -gt $sF })
