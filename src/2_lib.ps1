@@ -82,7 +82,7 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 # sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
 # Seulement les liens qu'AEROX utilise vraiment, en entier (pages des Paramètres, Sécurité Windows, Store, Steam, Caméra)
 function Test-WinUriAllowed([string]$Uri) {
-    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|microsoft\.windows\.camera:)$')
+    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|microsoft\.windows\.camera:)\z')
 }
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
@@ -5192,7 +5192,7 @@ function Find-BugRelay {
 }
 # Lien d'invitation du serveur Discord de la communauté (fichier discord.txt du dépôt : modifiable sans nouvelle version).
 # Seule une vraie invitation Discord est acceptée.
-function Test-DiscordInvite([string]$Url) { return ($Url -cmatch '^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}$') }
+function Test-DiscordInvite([string]$Url) { return ($Url -cmatch '^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}\z') }
 function Find-DiscordLink {
     try {
         if (-not $AppInfo.Repo) { return }

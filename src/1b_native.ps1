@@ -24,8 +24,9 @@ function Get-VerifiedNative([string]$Source, [string]$Sha, [string]$Dir) {
         [IO.File]::WriteAllBytes($copy, $bytes)
         if ((Get-FileSha256 ([IO.File]::ReadAllBytes($copy))) -ne $Sha.ToUpperInvariant()) { throw "La copie vérifiée du module AeroxPCCare.Native.dll n'a pas pu être écrite." }
     }
-    # Anciennes versions du module : plus utilisées
-    foreach ($o in @(Get-ChildItem -LiteralPath $Dir -Filter 'AeroxPCCare.Native.*.dll' -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -ne $copy })) { try { Remove-Item -LiteralPath $o.FullName -Force -ErrorAction Stop } catch {} }
+    # Anciennes versions du module : plus utilisées (comparées par leur nom : un chemin court « RUNNER~1 » et le
+    # chemin long du même fichier sont différents en texte)
+    foreach ($o in @(Get-ChildItem -LiteralPath $Dir -Filter 'AeroxPCCare.Native.*.dll' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne [IO.Path]::GetFileName($copy) })) { try { Remove-Item -LiteralPath $o.FullName -Force -ErrorAction Stop } catch {} }
     return $copy
 }
 if (-not ('AeroxNative' -as [type])) {

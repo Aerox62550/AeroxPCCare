@@ -386,7 +386,7 @@ function Invoke-Smoke {
         if ($r1 -ne 'clean' -or $r2 -ne 'unrepaired') { throw "lecture fausse : $r1 / $r2" }
     }
     Smoke 'Liens Steam et rapport de batterie' {
-        if ((Get-Command Open-WinUri).Definition -notmatch '\|steam\)') { throw "liens Steam toujours refusés" }
+        if (-not (Test-WinUriAllowed 'steam://open/games')) { throw "liens Steam toujours refusés" }
         if (Open-LocalFile "$env:SystemRoot\win.ini") { throw "fichier hors du dossier protégé ouvert" }
     }
     Smoke 'Hosts verrouillé (lecture seule) : déverrouillé puis réparé' {
