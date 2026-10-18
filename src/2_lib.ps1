@@ -80,9 +80,13 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 # compte, elle s'ouvre chez la personne devant l'écran (sinon : dans le compte admin, invisible ou en erreur).
 # Jamais ouvert directement avec les droits admin : le programme associé à un lien ou à un protocole peut être changé
 # sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
+# Seulement les liens qu'AEROX utilise vraiment, en entier (pages des Paramètres, Sécurité Windows, Store, Steam, Caméra)
+function Test-WinUriAllowed([string]$Uri) {
+    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|microsoft\.windows\.camera:)\z')
+}
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
-    if ($Uri -notmatch '^(ms-settings|windowsdefender|ms-windows-store|ms-availablenetworks|shell|steam):') { throw "Lien non autorisé : $Uri" }
+    if (-not (Test-WinUriAllowed $Uri)) { throw "Lien non autorisé : $Uri" }
     $explorer = Join-Path $env:SystemRoot 'explorer.exe'
     if (Test-OtherAccount) { if (Start-AsSessionUser $explorer $Uri) { return } }
     Start-Process -FilePath $explorer -ArgumentList $Uri
@@ -3728,12 +3732,32 @@ function Test-DiskHealth {
         $bad = @($de | Where-Object { $_.Id -in 7, 51 -and $_.TimeCreated -gt $sB }); $retry = @($de | Where-Object { $_.Id -eq 153 -and $_.TimeCreated -gt $sR }); $fs = @($de | Where-Object { $_.Id -in 55, 98 -and $_.TimeCreated -gt $sF })
         $diskOf = { param($e) $t = (@($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + " $($e.Message)"; if ($t -match '(?i)harddisk(\d+)') { [int]$matches[1] } else { -1 } }
         if ($bad.Count) {
-            $nums = @($bad | ForEach-Object { & $diskOf $_ } | Where-Object { $_ -ge 0 } | Select-Object -Unique)
-            $names = @($nums | ForEach-Object { $n = $_; $pd = @(Get-PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { "$($_.DeviceId)" -eq "$n" })[0]; if ($pd) { $pd.FriendlyName } else { "disque n° $n" } })
-            Add-Issue -Id 'diskbad' -Sev 'crit' -Title ("Windows n'arrive pas à lire certains endroits du disque ({0} fois ce mois-ci)" -f $bad.Count) -Detail $(if ($names.Count) { $names -join ', ' } else { 'Disque' }) `
-                -Cause "Windows a noté des secteurs illisibles ou des erreurs de lecture : le disque s'use ou est abîmé (ou, plus rarement, son câble / sa prise)." `
-                -Effect "Risque de perdre des fichiers. Ça empire en général avec le temps." -FixLabel "Vérifier le disque" -FixAction 'Test-Disk' `
-                -Steps @("SAUVEGARDE tout de suite tes fichiers importants (clé USB, disque externe, cloud).", "Disque interne SATA : change le câble SATA ou la prise sur la carte mère.", "Si ça continue : remplace le disque.")
+            # À quel disque appartiennent ces erreurs ? (\Device\HarddiskN dans l'événement). Une clé USB, une carte SD ou un
+            # disque externe débranché depuis ne doivent pas faire croire que le disque de Windows est en train de lâcher.
+            $pds = @(Get-PhysicalDisk -ErrorAction SilentlyContinue)
+            $groups = @($bad | Group-Object { & $diskOf $_ } | Sort-Object Count -Descending)
+            $parts = @(); $sysHit = $false; $unknown = $false; $internal = $false
+            foreach ($g in $groups) {
+                $n = [int]$g.Name
+                if ($n -lt 0) { $unknown = $true; $parts += "disque non précisé ($($g.Count) fois)"; continue }
+                $pd = @($pds | Where-Object { "$($_.DeviceId)" -eq "$n" })[0]
+                if ($n -eq [int]$sysNum) { $sysHit = $true; $parts += "$($pd.FriendlyName) (disque de Windows) : $($g.Count) fois"; continue }
+                if (-not $pd) { $parts += "disque n° $n, plus branché aujourd'hui (clé USB, carte mémoire ou disque externe) : $($g.Count) fois"; continue }
+                $ext = ("$($pd.BusType)" -match '(?i)usb|sd|mmc') -or ("$($pd.MediaType)" -match '(?i)removable')
+                if (-not $ext) { $internal = $true }
+                $parts += ("{0}{1} : {2} fois" -f $pd.FriendlyName, $(if ($ext) { ' (clé ou disque externe)' } else { '' }), $g.Count)
+            }
+            if ($sysHit -or $internal -or $unknown) {
+                Add-Issue -Id 'diskbad' -Sev 'crit' -Title ("Windows n'arrive pas à lire certains endroits d'un disque ({0} fois ce mois-ci)" -f $bad.Count) -Detail ($parts -join ' · ') `
+                    -Cause ("Windows a noté des secteurs illisibles ou des erreurs de lecture" + $(if ($sysHit) { " sur le disque de Windows" } else { "" }) + " : le disque s'use ou est abîmé (ou, plus rarement, son câble / sa prise). L'état « bonne santé » affiché par le disque ne suffit pas à l'exclure.") `
+                    -Effect "Risque de perdre des fichiers. Ça empire en général avec le temps." -FixLabel "Vérifier le disque" -FixAction 'Test-Disk' `
+                    -Steps @("SAUVEGARDE tout de suite tes fichiers importants (clé USB, disque externe, cloud).", "Disque interne SATA : change le câble SATA ou la prise sur la carte mère.", "SSD : mets à jour son firmware avec l'outil de sa marque.", "Si les erreurs continuent : remplace le disque.")
+            } else {
+                Add-Issue -Id 'diskbad' -Sev 'warn' -Title ("Une clé USB ou un disque externe a eu des erreurs de lecture ({0} fois ce mois-ci)" -f $bad.Count) -Detail ($parts -join ' · ') `
+                    -Cause "Ce n'est pas le disque de Windows : c'est une clé USB, une carte mémoire ou un disque externe qui a eu du mal à être lu (souvent retiré sans « éjecter », un port USB ou un câble fatigué, ou un support en fin de vie)." `
+                    -Effect "Les fichiers sur ce support peuvent être abîmés ou illisibles." `
+                    -Steps @("Si tu as des fichiers importants dessus, copie-les tout de suite sur le PC.", "Essaie un autre port USB (à l'arrière du PC) ou un autre câble.", "Si les erreurs reviennent avec ce support, remplace-le : une clé ou une carte mémoire, ça s'use.")
+            }
         } elseif ($retry.Count -ge 5) {
             Add-Issue -Id 'diskretry' -Sev 'warn' -Title ("Le disque a dû recommencer des lectures {0} fois ce mois-ci" -f $retry.Count) -Detail 'Opérations relancées par Windows' `
                 -Cause "Le disque a mis trop de temps à répondre et Windows a réessayé : câble ou prise qui fatigue, firmware du SSD à mettre à jour, ou disque qui s'use." `
@@ -4616,10 +4640,22 @@ function Update-Apps {
     Update-SelectedApps -Ids @($apps | ForEach-Object { $_.Id }) -Names @($apps | ForEach-Object { $_.Name }) -Versions @($apps | ForEach-Object { "$($_.Available)" })
 }
 
+# Ordre des mises à jour : winget lui-même (Microsoft.AppInstaller) toujours en dernier, les autres dans l'ordre donné
+function Get-UpdateOrder([string[]]$Ids) {
+    if (-not $Ids -or -not $Ids.Count) { return @() }
+    return @(@(0..($Ids.Count - 1) | Where-Object { $Ids[$_] -ne 'Microsoft.AppInstaller' }) + @(0..($Ids.Count - 1) | Where-Object { $Ids[$_] -eq 'Microsoft.AppInstaller' }))
+}
 function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versions = @()) {
     $wg = Get-Winget
     if (-not $wg) { Add-WingetError "La mise à jour des logiciels est"; return }
     $extra = Get-WingetExtraArgs $wg
+    # winget lui-même (« App Installer ») en dernier : sa mise à jour remplace winget.exe, et le chemin utilisé pour les
+    # logiciels suivants n'existerait plus (rapport n° 24 : « winget.exe n'a pas pu s'exécuter : Accès refusé »)
+    if (-not $Ids.Count) { return }
+    $order = @(Get-UpdateOrder $Ids)
+    $Ids = @($order | ForEach-Object { $Ids[$_] })
+    if ($Names) { $Names = @($order | ForEach-Object { if ($_ -lt $Names.Count) { $Names[$_] } else { '' } }) }
+    if ($Versions) { $Versions = @($order | ForEach-Object { if ($_ -lt $Versions.Count) { $Versions[$_] } else { '' } }) }
     $failed = @(); $ok = 0; $n = 0; $self = 0; $done = New-Object System.Collections.ArrayList
     for ($k = 0; $k -lt $Ids.Count; $k++) {
         if ($sync.Cancel) { Log ("⏹ Arrêt demandé : {0} logiciel(s) restant(s) pas mis à jour." -f ($Ids.Count - $k)); break }
@@ -4628,7 +4664,25 @@ function Update-SelectedApps([string[]]$Ids, [string[]]$Names, [string[]]$Versio
         $n++
         Step ("Mise à jour {0}/{1} : {2}" -f $n, $Ids.Count, $name)
         $idArgs = if ($id.EndsWith([string][char]0x2026)) { @('--id', $id.TrimEnd([char]0x2026)) } else { @('--id', $id, '--exact') }
-        $ec = Invoke-Native $wg (@('upgrade') + $idArgs + @('--silent', '--accept-package-agreements', '--accept-source-agreements') + $extra) ([System.Text.Encoding]::UTF8)
+        $ec = $null
+        for ($try = 0; $try -lt 2 -and $null -eq $ec; $try++) {
+            try { $ec = Invoke-Native $wg (@('upgrade') + $idArgs + @('--silent', '--accept-package-agreements', '--accept-source-agreements') + $extra) ([System.Text.Encoding]::UTF8) }
+            catch {
+                # winget ne démarre plus (mis à jour entre-temps, ou bloqué) : on le recherche une fois, puis on passe au suivant
+                Log ("   • L'outil de mise à jour (winget) n'a pas démarré : {0}" -f $_.Exception.Message)
+                $script:WingetPath = $null; $wg = Get-Winget
+                if (-not $wg) { break }
+                $extra = Get-WingetExtraArgs $wg
+            }
+        }
+        if ($null -eq $ec) {
+            $failed += "$name (l'outil de mise à jour de Windows n'a pas démarré)"
+            Log "   ✖ $name : pas mis à jour (l'outil de mise à jour de Windows n'a pas démarré)"
+            if (-not $wg) { Log "   ⚠ L'outil de mise à jour de Windows (winget) ne répond plus : les logiciels restants ne peuvent pas être mis à jour maintenant."; break }
+            continue
+        }
+        # winget vient de se mettre à jour lui-même : son ancien chemin n'existe plus
+        if ($id -eq 'Microsoft.AppInstaller') { $script:WingetPath = $null }
         if ($ec -eq 0) { $ok++; [void]$done.Add(@{ Id = $id; Ver = $ver; Name = $name }); Log "   ✔ $name mis à jour"; Add-Change -Kind 'info' -Title "« $name » mis à jour" -Detail "Pour revenir à l'ancienne version, il faut la réinstaller depuis le site du logiciel." }
         elseif ($ec -eq -1978335189) {
             # « Aucune mise à jour applicable » : winget voit une version plus récente qui ne s'applique pas à ce PC
@@ -5138,7 +5192,7 @@ function Find-BugRelay {
 }
 # Lien d'invitation du serveur Discord de la communauté (fichier discord.txt du dépôt : modifiable sans nouvelle version).
 # Seule une vraie invitation Discord est acceptée.
-function Test-DiscordInvite([string]$Url) { return ($Url -cmatch '^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}$') }
+function Test-DiscordInvite([string]$Url) { return ($Url -cmatch '^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}\z') }
 function Find-DiscordLink {
     try {
         if (-not $AppInfo.Repo) { return }

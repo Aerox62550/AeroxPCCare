@@ -7,12 +7,40 @@ $AppRoot = if ($PSScriptRoot) { $PSScriptRoot } elseif ($AeroxRoot) { $AeroxRoot
 $AppInfo.Root = $AppRoot
 $NativeDll = Join-Path $AppRoot 'AeroxPCCare.Native.dll'
 Set-SplashStep 40 'Chargement des modules…'
+function Get-FileSha256([byte[]]$Bytes) {
+    $h = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($h.ComputeHash($Bytes)) -replace '-', '') } finally { $h.Dispose() }
+}
+function Get-VerifiedNative([string]$Source, [string]$Sha, [string]$Dir) {
+    $bytes = $null; $err = $null
+    for ($i = 0; $i -lt 40 -and $null -eq $bytes; $i++) { try { $bytes = [IO.File]::ReadAllBytes($Source) } catch { $err = $_; Start-Sleep -Milliseconds 500 } }
+    if ($null -eq $bytes) { throw "Impossible de lire AeroxPCCare.Native.dll : $($err.Exception.Message)" }
+    if ((Get-FileSha256 $bytes) -ne $Sha.ToUpperInvariant()) { throw "Le module AeroxPCCare.Native.dll ne correspond pas à cette version d'AEROX PC Care : il a été modifié ou abîmé. Par sécurité, il n'est pas chargé.`n`nRetélécharge AEROX PC Care depuis sa page officielle (GitHub)." }
+    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    $copy = Join-Path $Dir ("AeroxPCCare.Native.{0}.dll" -f $Sha.Substring(0, 16).ToLowerInvariant())
+    $ok = $false
+    try { if (Test-Path -LiteralPath $copy) { $ok = ((Get-FileSha256 ([IO.File]::ReadAllBytes($copy))) -eq $Sha.ToUpperInvariant()) } } catch {}
+    if (-not $ok) {
+        [IO.File]::WriteAllBytes($copy, $bytes)
+        if ((Get-FileSha256 ([IO.File]::ReadAllBytes($copy))) -ne $Sha.ToUpperInvariant()) { throw "La copie vérifiée du module AeroxPCCare.Native.dll n'a pas pu être écrite." }
+    }
+    # Anciennes versions du module : plus utilisées (comparées par leur nom : un chemin court « RUNNER~1 » et le
+    # chemin long du même fichier sont différents en texte)
+    foreach ($o in @(Get-ChildItem -LiteralPath $Dir -Filter 'AeroxPCCare.Native.*.dll' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne [IO.Path]::GetFileName($copy) })) { try { Remove-Item -LiteralPath $o.FullName -Force -ErrorAction Stop } catch {} }
+    return $copy
+}
 if (-not ('AeroxNative' -as [type])) {
     if (-not (Test-Path -LiteralPath $NativeDll)) { throw "Le fichier AeroxPCCare.Native.dll est introuvable. Dézippe tout le dossier (pas seulement le programme) puis relance." }
+    # Lancé par AeroxPCCare.exe : le module chargé en administrateur doit être exactement celui de cette version
+    # (empreinte gravée dans le lanceur). Il est vérifié puis copié dans le dossier protégé (modifiable seulement par
+    # un administrateur), et c'est cette copie qui est chargée : rien ne peut le remplacer entre la vérification et le
+    # chargement, même en version portable dans un dossier modifiable.
+    $loadPath = $NativeDll
+    if ($AeroxNativeSha) { $loadPath = Get-VerifiedNative $NativeDll $AeroxNativeSha (Join-Path $SecureRoot 'module') }
     # L'antivirus peut verrouiller la DLL quelques secondes pendant son analyse : on réessaie
     $loaded = $false; $lastErr = $null
     for ($try = 0; $try -lt 40 -and -not $loaded; $try++) {
-        try { Add-Type -Path $NativeDll -ErrorAction Stop; $loaded = $true }
+        try { Add-Type -Path $loadPath -ErrorAction Stop; $loaded = $true }
         catch { $lastErr = $_; Start-Sleep -Milliseconds 500 }
     }
     if (-not $loaded) {

@@ -338,7 +338,7 @@ $script:CardIcons = @{
     appupdates = 'E896'; 'Update-Apps' = 'E895'; 'Update-Windows' = 'E777'; drivers = 'E713'; 'Open-WindowsUpdate' = 'E8A7'
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
     browser = 'EA18'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
-    slow = 'E9D9'; lag = 'E839'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
+    slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
 }
@@ -619,6 +619,7 @@ $PageDefs = [ordered]@{
     @{ T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." },
     @{ T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." }) }
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
+    @{ T = "Partager AEROX à un ami"; Badge = "💜"; P = $true; B = "Copier le message"; UI = 'share'; D = "Un pote dont le PC rame ou bugue ? Copie un petit message tout prêt avec le lien de téléchargement, à coller sur Discord, WhatsApp, Snap… AEROX est gratuit : plus on est nombreux, plus il s'améliore." },
     @{ T = "Rejoindre la communauté Discord"; Badge = "Communauté"; P = $true; B = "Rejoindre"; UI = 'discord'; StatusFn = { Get-DiscordCardStatus }; D = "Pose tes questions, partage ta config, propose des idées et suis les nouvelles versions avec les autres utilisateurs d'AEROX et le développeur." },
     @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
     @{ T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
@@ -1023,7 +1024,7 @@ function Set-StabilityFixed([string]$Id) {
     if (-not ($script:Settings.StabilityFixAt -is [hashtable])) { $script:Settings.StabilityFixAt = @{} }
     $script:Settings.StabilityFixAt[$Id] = (Get-Date).ToString('s')
     Save-Settings
-    Write-UiLog "   Les plantages déjà passés restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouveaux. S'il y en a encore, le prochain diagnostic te le dira."
+    Write-UiLog $(if ($Id -in 'diskbad', 'diskretry', 'ntfs') { "   Les erreurs de disque déjà notées restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouvelles. S'il y en a encore, le prochain diagnostic te le dira." } else { "   Les plantages déjà passés restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouveaux. S'il y en a encore, le prochain diagnostic te le dira." })
 }
 function Receive-IssueChecks {
     $line = $null; $changed = $false
@@ -1118,6 +1119,7 @@ function Complete-Job {
             if ($errs.Count) { $fi.Status = 'open'; Add-StatsEvent ("echec:" + (ConvertTo-StatsId $fi.Id)) }
             elseif ($sync.NeedReboot) { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : {0} (effectif après le redémarrage)" -f $fi.Title) }
             elseif (Start-IssueCheck $fi) { $fi.Status = 'verifying'; Write-UiLog ("🔎 Vérification : {0}…" -f $fi.Title) }
+            elseif ($fi.Id -in 'diskbad', 'diskretry') { $fi.Status = 'done'; Write-UiLog ("✅ Vérification faite : " + $fi.Title) }
             else { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : " + $fi.Title) }
         }
         $script:FixingIssue = $null
@@ -1303,6 +1305,7 @@ function Invoke-UiCommand($T) {
                     'review' { Show-ReviewDialog }
                     'whatsnew' { Show-WhatsNew '' }
                     'lag' { Start-LagReport }
+                    'share' { Copy-ShareMessage }
                     'discord' {
                         if ($sync.DiscordUrl) { if (Open-Url $sync.DiscordUrl) { Write-UiLog "💬 Invitation au serveur Discord ouverte dans ton navigateur." } }
                         else { Write-UiLog "💬 Le serveur Discord de la communauté ouvre bientôt : le bouton marchera dès que le lien sera prêt (sans mise à jour)." }
@@ -2093,6 +2096,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !", "Sécurité renforcée : AEROX vérifie l'empreinte de ses propres fichiers avant de les lancer avec les droits administrateur (utile surtout pour la version portable).", "Test de la webcam : l'application Caméra de Windows s'ouvre de nouveau pour vérifier l'image.", "Mise à jour des logiciels : elle ne s'arrête plus en plein milieu quand l'outil de mise à jour de Windows se met à jour lui-même.", "Erreurs de lecture d'une clé USB ou d'un disque externe : elles ne sont plus présentées comme une panne du disque de Windows, et AEROX te dit quel disque est concerné.")
     '2.4.2' = @("Écran qui devient noir quelques secondes puis revient : le diagnostic le repère beaucoup mieux (toutes les traces que Windows garde des décrochages de la carte graphique), te dit si ça a commencé avec ton dernier pilote, et ce qu'il faut faire.", "Si Windows 11 bloque AEROX au démarrage (Contrôle intelligent des applications), le message explique maintenant clairement pourquoi et quoi faire.")
     '2.4.1' = @("Nouveau : la communauté AEROX sur Discord ! Onglet Aide > « Rejoindre la communauté Discord » : pose tes questions, partage ta config, propose des idées.")
     '2.4.0' = @("« Pourquoi mon PC rame ? » va beaucoup plus loin : carte graphique, processeur bridé par la chauffe ou la batterie, pilote qui fait saccader, connexion qui lague, téléchargement qui sature, disque plein. Et il montre tout ce qu'il a vérifié.", "Rien trouvé ? Dis à AEROX ce qui rame (ça lague en ligne, les jeux saccadent, lent au démarrage, un logiciel précis, tout est lent) : il lance l'analyse qui correspond. Pour les jeux, la mesure se fait pendant que tu joues.", "Nouveau dépannage « Ça lague en ligne (jeu, Discord) » : 1 minute de mesure, et AEROX te dit si c'est ton Wi-Fi, ta box, ta ligne, un téléchargement, un VPN ou la carte réseau.", "Statistiques anonymes : des compteurs (types de problèmes trouvés, lenteurs non reconnues), jamais ton nom ni tes fichiers, pour corriger d'abord ce qui touche le plus de monde. Désactivables dans l'onglet Aide.")
@@ -2121,6 +2125,35 @@ $script:WhatsNew = [ordered]@{
 }
 function Compare-AppVersion([string]$A, [string]$B) { try { return ([version]$A).CompareTo([version]$B) } catch { return 0 } }
 # Au démarrage : nouveautés depuis la dernière version vue (rien au tout premier lancement)
+# ---------------------------------------------------------------- Partager AEROX à un ami
+function Get-ShareMessage {
+    $t = "Je te conseille AEROX PC Care 👍 Une appli gratuite qui analyse ton PC Windows et règle les soucis : PC qui rame, lags, bugs, nettoyage, pilotes, écrans bleus…`r`n" +
+         "Téléchargement : https://github.com/$GitHubRepo/releases/latest"
+    if ($sync.DiscordUrl) { $t += "`r`nLa communauté sur Discord : $($sync.DiscordUrl)" }
+    return $t
+}
+function Copy-ShareMessage {
+    $t = Get-ShareMessage
+    try { [System.Windows.Clipboard]::SetText($t) } catch { Write-Bug -Context 'Partager AEROX' -ErrorRecord $_; return }
+    Add-StatsEvent 'partage'
+    Write-UiLog "💜 Message de partage copié : colle-le à un ami (Ctrl+V). Merci !"
+    [System.Windows.MessageBox]::Show("Message copié ! Colle-le (Ctrl+V) à un ami sur Discord, WhatsApp, Snap, Messenger…`n`n$t", $AppName, 'OK', 'Information') | Out-Null
+}
+# Encadré « partage + retours » (fenêtre Quoi de neuf)
+function New-ShareBox {
+    $box = New-Object System.Windows.Controls.Border; $box.Background = Brush '#211B3D'; $box.BorderBrush = Brush '#7C5CFF'; $box.BorderThickness = Th 1 1 1 1
+    $box.CornerRadius = Corner 10; $box.Padding = Th 14 12 14 12; $box.Margin = Th 0 12 0 0
+    $bs = New-Object System.Windows.Controls.StackPanel
+    Add-Child $bs (New-Text "💜 Tu aimes AEROX PC Care ?" 14 '#FFFFFF' 'SemiBold')
+    $t = New-Text "N'hésite pas à le partager à tes amis : il est gratuit, et plus on est nombreux, plus il s'améliore. Et fais-nous un retour sur le moindre souci, même petit (Aide > Signaler un bug, ou sur le Discord) : chaque retour est lu et corrigé." 12.5 '#C3CAD9'
+    $t.Margin = Th 0 4 0 8; Add-Child $bs $t
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'
+    $b1 = New-DlgButton 'Partager à un ami' 'ActionBtn'; $b1.Margin = Th 0 0 8 0; $b1.Add_Click({ Copy-ShareMessage }); Add-Child $row $b1
+    if ($sync.DiscordUrl) { $b2 = New-DlgButton 'Rejoindre le Discord' 'ActionBtn'; $b2.Add_Click({ [void](Open-Url $sync.DiscordUrl) }); Add-Child $row $b2 }
+    Add-Child $bs $row
+    $box.Child = $bs
+    return $box
+}
 function Show-WhatsNewIfUpdated {
     $last = "$($script:Settings.LastSeenVersion)"
     if ($last -eq $AppVersion) { return }
@@ -2148,6 +2181,7 @@ function Show-WhatsNew([string]$Since) {
             $card.Child = (New-Text ("•  " + $line) 13 '#E6E9F2'); Add-Child $list $card
         }
     }
+    Add-Child $sp (New-ShareBox)
     $b = New-DlgButton 'Super !' 'PrimaryBtn'; $b.HorizontalAlignment = 'Right'; $b.Margin = Th 0 14 0 0
     $b.Add_Click({ $script:NewWin.Close() }); Add-Child $sp $b
     $w.Content = $sp
@@ -4597,7 +4631,8 @@ function Initialize-Tray {
     if ($script:Tray) { return }
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
     $ni = New-Object System.Windows.Forms.NotifyIcon
-    try { $ni.Icon = New-Object System.Drawing.Icon((Join-Path $AppRoot 'aerox.ico')) } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
+    # Icône du programme lui-même (pas un fichier du dossier, modifiable en version portable)
+    try { $ni.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($(if ($AeroxLauncher) { $AeroxLauncher } else { throw 'pas de lanceur' })) } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
     $ni.Text = 'AEROX PC Care'
     $m = New-Object System.Windows.Forms.ContextMenuStrip
     [void]$m.Items.Add('Ouvrir AEROX PC Care', $null, [EventHandler]{ Show-MainWindow '' })

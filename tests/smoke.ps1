@@ -386,7 +386,7 @@ function Invoke-Smoke {
         if ($r1 -ne 'clean' -or $r2 -ne 'unrepaired') { throw "lecture fausse : $r1 / $r2" }
     }
     Smoke 'Liens Steam et rapport de batterie' {
-        if ((Get-Command Open-WinUri).Definition -notmatch '\|steam\)') { throw "liens Steam toujours refusés" }
+        if (-not (Test-WinUriAllowed 'steam://open/games')) { throw "liens Steam toujours refusés" }
         if (Open-LocalFile "$env:SystemRoot\win.ini") { throw "fichier hors du dossier protégé ouvert" }
     }
     Smoke 'Hosts verrouillé (lecture seule) : déverrouillé puis réparé' {
@@ -636,6 +636,34 @@ function Invoke-Smoke {
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
+    Smoke 'Mises à jour : winget lui-même toujours en dernier' {
+        $o = (@(Get-UpdateOrder @('Microsoft.AppInstaller', 'ALCPU.CoreTemp', 'Discord.Discord', 'Valve.Steam')) -join ',')
+        if ($o -ne '1,2,3,0') { throw "ordre faux : $o" }
+        if (@(Get-UpdateOrder @('A.B')).Count -ne 1 -or @(Get-UpdateOrder @()).Count -ne 0) { throw "cas simples faux" }
+    }
+    Smoke 'Liens Windows : seulement ceux prévus' {
+        foreach ($u in 'ms-settings:sound', 'windowsdefender://threat', 'windowsdefender:', 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1', 'steam://open/games', 'microsoft.windows.camera:', 'ms-availablenetworks:') { if (-not (Test-WinUriAllowed $u)) { throw "refusé à tort : $u" } }
+        foreach ($u in 'shell:AppsFolder\x!y', 'shell:startup', 'steam://run/730', 'ms-settings:sound & calc', 'file:///C:/Windows/System32/calc.exe', 'ms-settings:SOUND', "ms-settings:sound`n", 'search-ms:query=x', 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1&x=1') { if (Test-WinUriAllowed $u) { throw "accepté à tort : $u" } }
+    }
+    Smoke 'Module natif : vérifié par son empreinte avant chargement' {
+        $src = $NativeDll; $bytes = [IO.File]::ReadAllBytes($src); $sha = Get-FileSha256 $bytes
+        $dir = Join-Path $env:TEMP ("aerox-module-" + [guid]::NewGuid().ToString('N'))
+        try {
+            $c = Get-VerifiedNative $src $sha $dir
+            if (-not (Test-Path -LiteralPath $c) -or (Get-FileSha256 ([IO.File]::ReadAllBytes($c))) -ne $sha) { throw "copie vérifiée absente ou fausse" }
+            $c2 = Get-VerifiedNative $src $sha.ToLowerInvariant() $dir; if ($c2 -ne $c) { throw "empreinte en minuscules mal gérée" }
+            $bad = Join-Path $dir 'modifie.dll'; $b2 = [byte[]]$bytes.Clone(); $b2[200] = $b2[200] -bxor 1; [IO.File]::WriteAllBytes($bad, $b2)
+            $refused = $false; try { [void](Get-VerifiedNative $bad $sha $dir) } catch { $refused = $true }
+            if (-not $refused) { throw "module modifié accepté" }
+            Write-Host "        copie vérifiée : $([IO.Path]::GetFileName($c))"
+        } finally { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    Smoke 'Partager AEROX : message tout prêt' {
+        $t = Get-ShareMessage
+        if ($t -notmatch "https://github\.com/$([regex]::Escape($GitHubRepo))/releases/latest" -or $t -match '\{\d\}') { throw "message incomplet : $t" }
+        if ($sync.DiscordUrl -and $t -notlike "*$($sync.DiscordUrl)*") { throw "lien Discord absent" }
+        Write-Host ("        " + ($t -replace "`r`n", ' / '))
+    }
     Smoke 'Fenêtre : avis' { Show-ReviewDialog; Write-Host ("        invitation sur l'accueil : {0}" -f (Test-ReviewInvite)) }
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
     Smoke 'Captures des pages' {

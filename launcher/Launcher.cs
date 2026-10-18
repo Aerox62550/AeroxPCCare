@@ -89,7 +89,7 @@ static class Program {
 
             // Écran de chargement tout de suite, le temps que le logiciel démarre
             splash = new AeroxSplash();
-            if (!discreet) splash.Show(Path.Combine(dir, "aerox.ico"));
+            if (!discreet) splash.Show();
 
             string script = Path.Combine(dir, "AeroxPCCare.ps1");
             if (!File.Exists(script)) {
@@ -101,7 +101,16 @@ static class Program {
             if (AllocConsole()) { IntPtr h = GetConsoleWindow(); if (h != IntPtr.Zero) ShowWindow(h, 0); }
 
             splash.SetProgress(8, "Lecture du programme…");
-            string code = ReadWithRetry(script);
+            // Le script va tourner en administrateur : seulement celui livré avec CE lanceur (empreinte gravée à la
+            // construction). Lu une seule fois en mémoire, vérifié, puis exécuté depuis la mémoire.
+            byte[] raw = ReadWithRetry(script);
+            if (!string.Equals(Sha256Hex(raw), AeroxIntegrite.Script, StringComparison.OrdinalIgnoreCase)) {
+                splash.Close();
+                MessageBox.Show("Le fichier AeroxPCCare.ps1 ne correspond pas à cette version d'AEROX PC Care : il a été modifié ou abîmé.\n\nPar sécurité, AEROX ne le lance pas avec les droits administrateur.\n\nRetélécharge AEROX PC Care depuis sa page officielle (GitHub).", Title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return 1;
+            }
+            string code;
+            using (StreamReader sr = new StreamReader(new MemoryStream(raw), Encoding.UTF8, true)) code = sr.ReadToEnd();
             UnblockFolder(dir);
             UnblockFolder(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"AeroxPCCare\protege\outils"));
 
@@ -120,6 +129,7 @@ static class Program {
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxLauncher", Assembly.GetExecutingAssembly().Location });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxSplash", splash });
             ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxDiscreet", discreet });
+            ssp.GetType().GetMethod("SetVariable", new Type[] { typeof(string), typeof(object) }).Invoke(ssp, new object[] { "AeroxNativeSha", AeroxIntegrite.Native });
 
             splash.SetProgress(25, "Vérification des droits…");
             object ps = FindMethod(psType, "Create", 0).Invoke(null, null);
@@ -162,13 +172,18 @@ static class Program {
         throw new MissingMethodException(t.FullName, name);
     }
 
+    static string Sha256Hex(byte[] data) {
+        using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+            return BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "");
+    }
+
     // Lit le script même si l'antivirus est en train de l'analyser (il le verrouille quelques secondes)
-    static string ReadWithRetry(string path) {
+    static byte[] ReadWithRetry(string path) {
         Exception last = null;
         for (int i = 0; i < 60; i++) {
             try {
-                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                using (StreamReader sr = new StreamReader(fs, Encoding.UTF8, true)) { return sr.ReadToEnd(); }
+                using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (MemoryStream ms = new MemoryStream()) { fs.CopyTo(ms); return ms.ToArray(); }
             } catch (IOException ex) { last = ex; Thread.Sleep(500); }
             catch (UnauthorizedAccessException ex) { last = ex; Thread.Sleep(500); }
         }
@@ -286,14 +301,24 @@ public class AeroxSplash {
     double shown = 0;
     const int BarW = 300;
 
-    public void Show(string icoPath) {
+    // Icône intégrée au programme (jamais lue depuis un fichier du dossier, qui peut être modifiable)
+    static System.Drawing.Icon OwnIcon(int size) {
+        try {
+            using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream("aerox.ico")) {
+                if (st != null) return size > 0 ? new System.Drawing.Icon(st, size, size) : new System.Drawing.Icon(st);
+            }
+        } catch { }
+        return null;
+    }
+
+    public void Show() {
         Thread t = new Thread(delegate() {
             try {
                 f = new Form();
                 f.Text = "AEROX PC Care"; f.FormBorderStyle = FormBorderStyle.None; f.StartPosition = FormStartPosition.CenterScreen;
                 f.BackColor = System.Drawing.Color.FromArgb(20, 23, 32); f.ShowInTaskbar = true;
                 f.AutoScaleMode = AutoScaleMode.None;
-                try { f.Icon = new System.Drawing.Icon(icoPath); } catch { }
+                try { System.Drawing.Icon wi = OwnIcon(0); if (wi != null) f.Icon = wi; } catch { }
                 // Tout est calculé selon la mise à l'échelle de l'écran (100 %, 125 %, 150 %…) et centré dans le cadre
                 float k = 1f;
                 try { using (System.Drawing.Graphics g = System.Drawing.Graphics.FromHwnd(IntPtr.Zero)) { k = g.DpiX / 96f; } } catch { }
@@ -306,7 +331,7 @@ public class AeroxSplash {
                     try { using (System.Drawing.Pen pen = new System.Drawing.Pen(System.Drawing.Color.FromArgb(44, 50, 68))) e.Graphics.DrawRectangle(pen, 0, 0, f.ClientSize.Width - 1, f.ClientSize.Height - 1); } catch { }
                 };
                 PictureBox pb = new PictureBox(); pb.Size = new System.Drawing.Size(S(44), S(44)); pb.Location = new System.Drawing.Point((W - S(44)) / 2, S(22)); pb.SizeMode = PictureBoxSizeMode.Zoom;
-                try { using (System.Drawing.Icon ic = new System.Drawing.Icon(icoPath, 64, 64)) { pb.Image = ic.ToBitmap(); } } catch { }
+                try { using (System.Drawing.Icon ic = OwnIcon(64)) { if (ic != null) pb.Image = ic.ToBitmap(); } } catch { }
                 Label t1 = new Label(); t1.Text = "AEROX PC Care"; t1.ForeColor = System.Drawing.Color.White; t1.Font = new System.Drawing.Font("Segoe UI", 14f, System.Drawing.FontStyle.Bold);
                 t1.AutoSize = false; t1.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; t1.Location = new System.Drawing.Point(0, S(72)); t1.Size = new System.Drawing.Size(W, S(30));
                 Label t2 = new Label(); t2.Text = stepText; t2.ForeColor = System.Drawing.Color.FromArgb(169, 176, 194); t2.Font = new System.Drawing.Font("Segoe UI", 9.5f);
