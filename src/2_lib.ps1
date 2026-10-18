@@ -5070,6 +5070,16 @@ function Find-BugRelay {
         if ($u -match '^https://[^\s]+$') { $sync.BugRelay = $u }
     } catch {}
 }
+# Lien d'invitation du serveur Discord de la communauté (fichier discord.txt du dépôt : modifiable sans nouvelle version).
+# Seule une vraie invitation Discord est acceptée.
+function Test-DiscordInvite([string]$Url) { return ($Url -cmatch '^https://(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]{2,32}$') }
+function Find-DiscordLink {
+    try {
+        if (-not $AppInfo.Repo) { return }
+        $u = "$((Invoke-WebRequest -Uri ("https://raw.githubusercontent.com/{0}/main/discord.txt" -f $AppInfo.Repo) -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop).Content)".Trim()
+        if (Test-DiscordInvite $u) { $sync.DiscordUrl = $u }
+    } catch {}
+}
 
 function Find-AppUpdate {
     $sync.UpdateDone = $false

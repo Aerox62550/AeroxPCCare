@@ -8,7 +8,7 @@
 #  RÉGLAGES (à modifier par le développeur)
 # =====================================================================
 $AppName    = 'AEROX PC Care'
-$AppVersion = '2.4.0'
+$AppVersion = '2.4.1'
 # Dépôt GitHub pour les rapports de bug et les nouvelles versions, ex : 'TonPseudo/AeroxPCCare'
 # Laisse vide pour désactiver l'envoi sur GitHub et la recherche de mise à jour.
 $GitHubRepo = 'Aerox62550/AeroxPCCare'
@@ -125,6 +125,7 @@ $sync = [hashtable]::Synchronized(@{
     UpdateReady = $null
     SysInfo    = $null
     BugRelay   = ''
+    DiscordUrl = ''
     Drives     = @()
     DrivesNew  = $false
     AppList    = $null
