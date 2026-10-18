@@ -56,16 +56,26 @@ async function overLimit(request, env, kind) {
 }
 
 // Copie dans Discord (facultative) : jamais bloquante, et aucune mention possible (@everyone, @here, rôles, membres)
-const DISCORD_HOOK = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+const DISCORD_HOOK = /^https:\/\/((canary|ptb)\.)?(discord|discordapp)\.com\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+\/?$/;
 const cut = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+// Dernier résultat de l'envoi vers Discord (sans l'adresse du webhook), visible dans GET /stats?voir=1 pour dépanner
+async function noteDiscord(env, hook, etat) {
+  if (env.LIMITES) { try { await env.LIMITES.put('discord:' + hook, `${new Date().toISOString()} · ${etat}`); } catch {} }
+}
 function discord(env, ctx, hook, embed) {
-  const url = String(env[hook] || '').trim();
-  if (!DISCORD_HOOK.test(url)) return;
-  const p = fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'AEROX PC Care', allowed_mentions: { parse: [] }, embeds: [embed] })
-  }).catch(() => {});
+  const raw = env[hook];
+  let p;
+  if (!raw) p = noteDiscord(env, hook, 'secret absent');
+  else {
+    const url = String(raw).trim();
+    if (!DISCORD_HOOK.test(url)) p = noteDiscord(env, hook, "le secret n'est pas une adresse de webhook Discord");
+    else p = fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'AEROX PC Care', allowed_mentions: { parse: [] }, embeds: [embed] })
+    }).then(async r => noteDiscord(env, hook, r.ok ? 'envoyé' : `refusé par Discord (${r.status}) ${(await r.text()).slice(0, 200)}`))
+      .catch(e => noteDiscord(env, hook, 'erreur : ' + String(e && e.message || e).slice(0, 200)));
+  }
   if (ctx && ctx.waitUntil) ctx.waitUntil(p);
 }
 
@@ -80,6 +90,7 @@ async function statsGet(env, url) {
   if (!url.searchParams.has('voir')) return json({ aerox: 'stats', ok: !!env.LIMITES });
   if (!env.LIMITES) return json({ error: "Pas d'espace KV lié sous le nom LIMITES." }, 503);
   const out = {};
+  for (const h of ['DISCORD_BUGS', 'DISCORD_AVIS']) out[h] = (await env.LIMITES.get('discord:' + h)) || (env[h] ? 'configuré, rien envoyé depuis' : 'secret absent');
   const now = new Date();
   for (let i = 0; i < 3; i++) {
     const m = monthOf(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)));
