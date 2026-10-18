@@ -636,6 +636,11 @@ function Invoke-Smoke {
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
+    Smoke 'Mises à jour : winget lui-même toujours en dernier' {
+        $o = (@(Get-UpdateOrder @('Microsoft.AppInstaller', 'ALCPU.CoreTemp', 'Discord.Discord', 'Valve.Steam')) -join ',')
+        if ($o -ne '1,2,3,0') { throw "ordre faux : $o" }
+        if (@(Get-UpdateOrder @('A.B')).Count -ne 1 -or @(Get-UpdateOrder @()).Count -ne 0) { throw "cas simples faux" }
+    }
     Smoke 'Liens Windows : seulement ceux prévus' {
         foreach ($u in 'ms-settings:sound', 'windowsdefender://threat', 'windowsdefender:', 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1', 'steam://open/games', 'microsoft.windows.camera:', 'ms-availablenetworks:') { if (-not (Test-WinUriAllowed $u)) { throw "refusé à tort : $u" } }
         foreach ($u in 'shell:AppsFolder\x!y', 'shell:startup', 'steam://run/730', 'ms-settings:sound & calc', 'file:///C:/Windows/System32/calc.exe', 'ms-settings:SOUND', "ms-settings:sound`n", 'search-ms:query=x', 'ms-windows-store://pdp/?ProductId=9NBLGGH4NNS1&x=1') { if (Test-WinUriAllowed $u) { throw "accepté à tort : $u" } }

@@ -1024,7 +1024,7 @@ function Set-StabilityFixed([string]$Id) {
     if (-not ($script:Settings.StabilityFixAt -is [hashtable])) { $script:Settings.StabilityFixAt = @{} }
     $script:Settings.StabilityFixAt[$Id] = (Get-Date).ToString('s')
     Save-Settings
-    Write-UiLog "   Les plantages déjà passés restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouveaux. S'il y en a encore, le prochain diagnostic te le dira."
+    Write-UiLog $(if ($Id -in 'diskbad', 'diskretry', 'ntfs') { "   Les erreurs de disque déjà notées restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouvelles. S'il y en a encore, le prochain diagnostic te le dira." } else { "   Les plantages déjà passés restent dans l'historique de Windows : à partir de maintenant, AEROX ne compte que les nouveaux. S'il y en a encore, le prochain diagnostic te le dira." })
 }
 function Receive-IssueChecks {
     $line = $null; $changed = $false
@@ -1119,6 +1119,7 @@ function Complete-Job {
             if ($errs.Count) { $fi.Status = 'open'; Add-StatsEvent ("echec:" + (ConvertTo-StatsId $fi.Id)) }
             elseif ($sync.NeedReboot) { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : {0} (effectif après le redémarrage)" -f $fi.Title) }
             elseif (Start-IssueCheck $fi) { $fi.Status = 'verifying'; Write-UiLog ("🔎 Vérification : {0}…" -f $fi.Title) }
+            elseif ($fi.Id -in 'diskbad', 'diskretry') { $fi.Status = 'done'; Write-UiLog ("✅ Vérification faite : " + $fi.Title) }
             else { $fi.Status = 'done'; Write-UiLog ("✅ Corrigé : " + $fi.Title) }
         }
         $script:FixingIssue = $null
@@ -2095,7 +2096,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !", "Sécurité renforcée : AEROX vérifie l'empreinte de ses propres fichiers avant de les lancer avec les droits administrateur (utile surtout pour la version portable).", "Test de la webcam : l'application Caméra de Windows s'ouvre de nouveau pour vérifier l'image.")
+    '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !", "Sécurité renforcée : AEROX vérifie l'empreinte de ses propres fichiers avant de les lancer avec les droits administrateur (utile surtout pour la version portable).", "Test de la webcam : l'application Caméra de Windows s'ouvre de nouveau pour vérifier l'image.", "Mise à jour des logiciels : elle ne s'arrête plus en plein milieu quand l'outil de mise à jour de Windows se met à jour lui-même.", "Erreurs de lecture d'une clé USB ou d'un disque externe : elles ne sont plus présentées comme une panne du disque de Windows, et AEROX te dit quel disque est concerné.")
     '2.4.2' = @("Écran qui devient noir quelques secondes puis revient : le diagnostic le repère beaucoup mieux (toutes les traces que Windows garde des décrochages de la carte graphique), te dit si ça a commencé avec ton dernier pilote, et ce qu'il faut faire.", "Si Windows 11 bloque AEROX au démarrage (Contrôle intelligent des applications), le message explique maintenant clairement pourquoi et quoi faire.")
     '2.4.1' = @("Nouveau : la communauté AEROX sur Discord ! Onglet Aide > « Rejoindre la communauté Discord » : pose tes questions, partage ta config, propose des idées.")
     '2.4.0' = @("« Pourquoi mon PC rame ? » va beaucoup plus loin : carte graphique, processeur bridé par la chauffe ou la batterie, pilote qui fait saccader, connexion qui lague, téléchargement qui sature, disque plein. Et il montre tout ce qu'il a vérifié.", "Rien trouvé ? Dis à AEROX ce qui rame (ça lague en ligne, les jeux saccadent, lent au démarrage, un logiciel précis, tout est lent) : il lance l'analyse qui correspond. Pour les jeux, la mesure se fait pendant que tu joues.", "Nouveau dépannage « Ça lague en ligne (jeu, Discord) » : 1 minute de mesure, et AEROX te dit si c'est ton Wi-Fi, ta box, ta ligne, un téléchargement, un VPN ou la carte réseau.", "Statistiques anonymes : des compteurs (types de problèmes trouvés, lenteurs non reconnues), jamais ton nom ni tes fichiers, pour corriger d'abord ce qui touche le plus de monde. Désactivables dans l'onglet Aide.")
