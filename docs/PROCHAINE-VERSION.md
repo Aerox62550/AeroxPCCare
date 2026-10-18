@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.4.2 : écrans noirs (carte graphique) et blocage par Windows 11
+
+- Retour testeur : « son écran se met en veille rapidement et il revient à lui ». Le diagnostic (même alerte « tdr », pas de nouvelle catégorie) réunit maintenant toutes les traces d'un décrochage de la carte graphique sur 14 jours : événement Display 4101, erreurs des pilotes (nvlddmkm, amdkmdag/amdwddmg/atikmdag, igfx), rapports Windows Error Reporting « LiveKernelEvent » 141/117/1a1/1a8 et fichiers LiveKernelReports\WATCHDOG. Un même incident laisse plusieurs traces : regroupées à 2 minutes près (Merge-GpuResets). Chaque incident est écrit dans le journal avec ses sources.
+- Comparaison avec la date d'installation du pilote graphique (Get-GpuDriverInstallDates) : « ça a commencé après le pilote du … » → installation propre puis version précédente ; « ça arrivait déjà avant et continue après » → pas la version du pilote : overclocking, température, câble / écran, alimentation. Conseils d'installation propre selon la marque (NVIDIA : Personnalisée > installation propre ; AMD : Réinitialisation d'usine ; Intel : Driver & Support Assistant). Température de la carte mentionnée si ≥ 83 °C. Grave à partir de 5 incidents. Un seul incident : noté comme normal.
+- Démarrage : un module bloqué par le Contrôle intelligent des applications de Windows 11 (HRESULT 0x800711C7, « stratégie de contrôle d'application ») est expliqué tel quel (avant : « ton antivirus la bloque peut-être »). Solution de fond prévue le 31 octobre : signature numérique (SignPath Foundation gratuit pour l'open source, ou certificat payant).
+
 ## Publié en 2.4.1 : communauté Discord
 
 - Bouton « Rejoindre la communauté Discord » (onglet Aide). Le lien vient du fichier discord.txt du dépôt (branche main), comme relais.txt : il se change sans nouvelle version. Seule une vraie invitation est acceptée (https://discord.gg/… ou https://discord.com/invite/…, rien d'autre). Sans fichier : « le lien arrive bientôt ».

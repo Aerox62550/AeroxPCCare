@@ -539,6 +539,12 @@ function Invoke-Smoke {
         if (-not $sync.SlowReport -or $sync.SlowReport.Mode -ne 'jeu') { throw "pas de rapport en mode jeu" }
     }
     Smoke 'Fenêtre : mesure en jeu' { Show-SlowDialog }
+    Smoke 'Carte graphique : décrochages regroupés par incident' {
+        $t0 = (Get-Date).Date.AddHours(20)
+        $m = @(Merge-GpuResets @(@{ Time = $t0; Src = 'a' }, @{ Time = $t0.AddSeconds(40); Src = 'b' }, @{ Time = $t0.AddSeconds(50); Src = 'a' }, @{ Time = $t0.AddHours(3); Src = 'c' }, @{ Time = $t0.AddMinutes(-90); Src = 'd' }))
+        if ($m.Count -ne 3 -or (@($m[1].Srcs) -join ',') -ne 'a,b' -or $m[0].Time -ne $t0.AddMinutes(-90)) { throw "regroupement faux : $($m.Count) incident(s), sources du 2e : $(@($m[1].Srcs) -join ',')" }
+        $r = @(Get-GpuResets (Get-Date).AddDays(-14)); Write-Host "        ce PC : $($r.Count) décrochage(s) en 14 jours"
+    }
     Smoke 'Discord : seule une vraie invitation est acceptée' {
         foreach ($x in @(@('https://discord.gg/AbC123', $true), @('https://discord.com/invite/aerox-pc', $true), @('https://discord.gg.pirate.com/x', $false), @('http://discord.gg/abc', $false),
                          @('https://discord.gg/abc?x=1', $false), @('https://discord.gg/', $false), @('https://evil.com/discord.gg/abc', $false), @("https://discord.gg/abc`nhttps://evil.com", $false))) {
