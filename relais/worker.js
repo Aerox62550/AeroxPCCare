@@ -217,7 +217,12 @@ export default {
     if (!r.ok) return json({ error: `GitHub a refusé le rapport (${r.status}).` }, 502);
     const issue = await r.json();
     // Discord : le titre et le début du rapport (le rapport complet reste sur GitHub)
-    const resume = body.replace(/\r/g, '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    // Dans Discord : version, Windows, ce qui s'est passé et les erreurs (sans la fin du journal ni l'en-tête répété)
+    const resume = body.replace(/\r/g, '').replace(/<!--[\s\S]*?-->/g, '')
+      .split(/\n#+ Fin du journal/)[0]
+      .replace(/^#+ Rapport AEROX PC Care[^\n]*\n/, '')
+      .replace(/#+ Bugs et erreurs enregistrés \(0 [^\n]*\)\n\(aucun\)\n?/, '')
+      .trim();
     discord(env, ctx, 'DISCORD_BUGS', { title: cut(`🐞 ${title}`, 250), description: cut(resume, 900) + `\n\n[Voir le rapport complet sur GitHub](${issue.html_url})`, url: issue.html_url, color: 0xff6b6b, footer: { text: `AEROX PC Care ${version} · rapport n° ${issue.number}` } });
     return json({ ok: true, number: issue.number, url: issue.html_url });
   }
