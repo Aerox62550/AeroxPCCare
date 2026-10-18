@@ -539,6 +539,14 @@ function Invoke-Smoke {
         if (-not $sync.SlowReport -or $sync.SlowReport.Mode -ne 'jeu') { throw "pas de rapport en mode jeu" }
     }
     Smoke 'Fenêtre : mesure en jeu' { Show-SlowDialog }
+    Smoke 'Discord : seule une vraie invitation est acceptée' {
+        foreach ($x in @(@('https://discord.gg/AbC123', $true), @('https://discord.com/invite/aerox-pc', $true), @('https://discord.gg.pirate.com/x', $false), @('http://discord.gg/abc', $false),
+                         @('https://discord.gg/abc?x=1', $false), @('https://discord.gg/', $false), @('https://evil.com/discord.gg/abc', $false), @("https://discord.gg/abc`nhttps://evil.com", $false))) {
+            if ((Test-DiscordInvite $x[0]) -ne $x[1]) { throw "« $($x[0]) » : $(-not $x[1]) au lieu de $($x[1])" }
+        }
+        Find-DiscordLink; Write-Host "        lien publié : « $($sync.DiscordUrl) »"
+        if ($sync.DiscordUrl -and -not (Test-DiscordInvite $sync.DiscordUrl)) { throw "lien invalide gardé" }
+    }
     Smoke 'Statistiques anonymes : filtre, désactivation et envoi (faux relais local)' {
         $oldOff = $AppInfo.StatsOff; $oldRelay = $sync.BugRelay; $oldQ = $AppInfo.StatsQueue
         $stamp = Join-Path $AppInfo.LogDir 'stats-envoi.txt'; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue

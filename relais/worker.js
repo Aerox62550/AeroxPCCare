@@ -11,6 +11,8 @@
 //   REPO          : Aerox62550/AeroxPCCare
 //   GITHUB_TOKEN  : (secret) jeton GitHub « fine-grained », accès au seul dépôt AeroxPCCare, permission Issues : Read and write
 //   LIMITES       : (liaison KV, recommandée) espace KV pour la limite anti-abus
+//   DISCORD_BUGS  : (secret, facultatif) adresse du webhook du salon Discord des rapports de bug
+//   DISCORD_AVIS  : (secret, facultatif) adresse du webhook du salon Discord des avis
 
 const MAX_BODY = 60000;      // taille maximale d'un rapport (octets)
 const PER_HOUR = 5;          // rapports maximum par heure et par adresse IP
@@ -51,6 +53,20 @@ async function overLimit(request, env, kind) {
     await caches.default.put(key, new Response(String(n + 1), { headers: { 'Cache-Control': 'max-age=3600' } }));
   }
   return false;
+}
+
+// Copie dans Discord (facultative) : jamais bloquante, et aucune mention possible (@everyone, @here, rôles, membres)
+const DISCORD_HOOK = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+$/;
+const cut = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+function discord(env, ctx, hook, embed) {
+  const url = String(env[hook] || '').trim();
+  if (!DISCORD_HOOK.test(url)) return;
+  const p = fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: 'AEROX PC Care', allowed_mentions: { parse: [] }, embeds: [embed] })
+  }).catch(() => {});
+  if (ctx && ctx.waitUntil) ctx.waitUntil(p);
 }
 
 // Statistiques anonymes : le logiciel envoie des compteurs (« probleme:bsod » : 1, « lent:rien » : 2…), au plus toutes
@@ -109,7 +125,7 @@ async function statsPost(request, env) {
 }
 
 // Avis : note de 1 à 5, commentaire libre, pseudo facultatif. Publié tout de suite (Sam supprime après coup si besoin).
-async function postReview(request, env) {
+async function postReview(request, env, ctx) {
   let d;
   try { d = await request.json(); } catch { return json({ error: 'Avis illisible.' }, 400); }
   const note = Math.round(Number(d.note));
@@ -128,12 +144,17 @@ async function postReview(request, env) {
   const known = (env.LIMITES && /^[0-9a-f]{16,64}$/.test(id)) ? await env.LIMITES.get('avis-pc:' + id) : null;
   if (known) {
     const u = await gh(env, `/issues/${known}`, 'PATCH', { title, body });
-    if (u.ok) { const i = await u.json(); return json({ ok: true, number: i.number, url: i.html_url, updated: true }); }
+    if (u.ok) {
+      const i = await u.json();
+      discord(env, ctx, 'DISCORD_AVIS', { title: cut(`✏️ Avis modifié · ${stars} ${note}/5 · ${pseudo}`, 250), description: cut(text || '(pas de commentaire)', 1500), url: i.html_url, color: 0x8b5cf6, footer: { text: `AEROX PC Care ${version}` } });
+      return json({ ok: true, number: i.number, url: i.html_url, updated: true });
+    }
   }
   const r = await gh(env, '/issues', 'POST', { title, body, labels: ['avis'] });
   if (!r.ok) return json({ error: `GitHub a refusé l'avis (${r.status}).` }, 502);
   const issue = await r.json();
   if (env.LIMITES && /^[0-9a-f]{16,64}$/.test(id)) await env.LIMITES.put('avis-pc:' + id, String(issue.number));
+  discord(env, ctx, 'DISCORD_AVIS', { title: cut(`${stars} ${note}/5 · ${pseudo}`, 250), description: cut(text || '(pas de commentaire)', 1500), url: issue.html_url, color: 0x8b5cf6, footer: { text: `AEROX PC Care ${version}` } });
   return json({ ok: true, number: issue.number, url: issue.html_url });
 }
 
@@ -155,7 +176,7 @@ async function badge(env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, '');
     if (request.method === 'GET' && path === '/note') return badge(env);
@@ -163,7 +184,7 @@ export default {
     if (request.method !== 'POST') return new Response('AEROX PC Care : relais des rapports de bug et des avis.', { status: 200 });
     if (request.headers.get('X-Aerox') !== '1') return json({ error: 'Requête refusée.' }, 400);
     if (Number(request.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'Envoi trop long.' }, 413);
-    if (path === '/avis') return postReview(request, env);
+    if (path === '/avis') return postReview(request, env, ctx);
     if (path === '/stats') return statsPost(request, env);
     if (request.headers.get('X-Aerox') !== '1') return json({ error: 'Requête refusée.' }, 400);
     if (Number(request.headers.get('Content-Length') || 0) > MAX_BODY) return json({ error: 'Rapport trop long.' }, 413);
@@ -184,6 +205,9 @@ export default {
     });
     if (!r.ok) return json({ error: `GitHub a refusé le rapport (${r.status}).` }, 502);
     const issue = await r.json();
+    // Discord : le titre et le début du rapport (le rapport complet reste sur GitHub)
+    const resume = body.replace(/\r/g, '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    discord(env, ctx, 'DISCORD_BUGS', { title: cut(`🐞 ${title}`, 250), description: cut(resume, 900) + `\n\n[Voir le rapport complet sur GitHub](${issue.html_url})`, url: issue.html_url, color: 0xff6b6b, footer: { text: `AEROX PC Care ${version} · rapport n° ${issue.number}` } });
     return json({ ok: true, number: issue.number, url: issue.html_url });
   }
 };

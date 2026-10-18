@@ -2,6 +2,11 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.4.1 : communauté Discord
+
+- Bouton « Rejoindre la communauté Discord » (onglet Aide). Le lien vient du fichier discord.txt du dépôt (branche main), comme relais.txt : il se change sans nouvelle version. Seule une vraie invitation est acceptée (https://discord.gg/… ou https://discord.com/invite/…, rien d'autre). Sans fichier : « le lien arrive bientôt ».
+- Relais : copie facultative des rapports de bug et des avis dans Discord (secrets Cloudflare DISCORD_BUGS et DISCORD_AVIS = adresses des webhooks, jamais dans le dépôt ni dans le logiciel). Embed avec titre, début du rapport et lien GitHub ; aucune mention possible (allowed_mentions vide) ; jamais bloquant (waitUntil, erreurs ignorées). Sans secret : rien ne change. Testé localement (GitHub et Discord simulés). **À faire par Sam : recopier relais/worker.js dans Cloudflare + créer les 2 webhooks et les 2 secrets.**
+
 ## Publié en 2.4.0 : AEROX comprend ce qui rame au lieu de dire « rien trouvé » + statistiques anonymes
 
 Demande de Sam : l'app doit analyser elle-même et régler, pas dépendre des rapports (« imagine 10 000 personnes »). Cas d'origine : le PC du pote qui lague, Discord bugué, et AEROX qui ne trouvait rien.

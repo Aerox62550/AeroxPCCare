@@ -338,7 +338,7 @@ $script:CardIcons = @{
     appupdates = 'E896'; 'Update-Apps' = 'E895'; 'Update-Windows' = 'E777'; drivers = 'E713'; 'Open-WindowsUpdate' = 'E8A7'
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
     browser = 'EA18'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
-    slow = 'E9D9'; lag = 'E839'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
+    slow = 'E9D9'; lag = 'E839'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
 }
@@ -619,6 +619,7 @@ $PageDefs = [ordered]@{
     @{ T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." },
     @{ T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." }) }
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
+    @{ T = "Rejoindre la communauté Discord"; Badge = "Communauté"; P = $true; B = "Rejoindre"; UI = 'discord'; StatusFn = { Get-DiscordCardStatus }; D = "Pose tes questions, partage ta config, propose des idées et suis les nouvelles versions avec les autres utilisateurs d'AEROX et le développeur." },
     @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
     @{ T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
     @{ T = "Donner mon avis"; Badge = "⭐"; B = "Donner mon avis"; UI = 'review'; D = "AEROX PC Care est gratuit : une note et un petit mot font plaisir au développeur et aident d'autres personnes à lui faire confiance. Ton avis est publié sur la page GitHub du logiciel." },
@@ -644,6 +645,10 @@ function Get-FxCardStatus {
 function Get-SenseCardStatus {
     if (Get-StorageSenseOn) { return @{ StatusText = 'Activé : Windows nettoie tout seul'; StatusKind = 'on'; B = 'Désactiver'; A = 'Disable-StorageSense'; P = $false } }
     return @{ StatusText = 'Désactivé'; StatusKind = 'off'; B = 'Activer'; A = 'Enable-StorageSense'; P = $true }
+}
+function Get-DiscordCardStatus {
+    if (-not $sync.DiscordUrl) { return @{ StatusText = "Le lien du serveur arrive bientôt"; StatusKind = 'off' } }
+    return $null
 }
 function Get-StatsCardStatus {
     if ($script:Settings.StatsOff) { return @{ B = 'Activer'; StatusText = "Désactivées : rien n'est envoyé"; StatusKind = 'off' } }
@@ -1298,6 +1303,10 @@ function Invoke-UiCommand($T) {
                     'review' { Show-ReviewDialog }
                     'whatsnew' { Show-WhatsNew '' }
                     'lag' { Start-LagReport }
+                    'discord' {
+                        if ($sync.DiscordUrl) { if (Open-Url $sync.DiscordUrl) { Write-UiLog "💬 Invitation au serveur Discord ouverte dans ton navigateur." } }
+                        else { Write-UiLog "💬 Le serveur Discord de la communauté ouvre bientôt : le bouton marchera dès que le lien sera prêt (sans mise à jour)." }
+                    }
                     'stats-toggle' {
                         $off = -not [bool]$script:Settings.StatsOff
                         if (-not $off -or (Confirm-Box "Ne plus envoyer de statistiques anonymes ?`n`nElles ne contiennent que des compteurs (version d'AEROX, types de problèmes trouvés, lenteurs non reconnues), jamais ton nom, celui du PC ni tes fichiers. Elles aident le développeur à corriger d'abord ce qui touche le plus de monde.")) {
@@ -2084,6 +2093,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.4.1' = @("Nouveau : la communauté AEROX sur Discord ! Onglet Aide > « Rejoindre la communauté Discord » : pose tes questions, partage ta config, propose des idées.")
     '2.4.0' = @("« Pourquoi mon PC rame ? » va beaucoup plus loin : carte graphique, processeur bridé par la chauffe ou la batterie, pilote qui fait saccader, connexion qui lague, téléchargement qui sature, disque plein. Et il montre tout ce qu'il a vérifié.", "Rien trouvé ? Dis à AEROX ce qui rame (ça lague en ligne, les jeux saccadent, lent au démarrage, un logiciel précis, tout est lent) : il lance l'analyse qui correspond. Pour les jeux, la mesure se fait pendant que tu joues.", "Nouveau dépannage « Ça lague en ligne (jeu, Discord) » : 1 minute de mesure, et AEROX te dit si c'est ton Wi-Fi, ta box, ta ligne, un téléchargement, un VPN ou la carte réseau.", "Statistiques anonymes : des compteurs (types de problèmes trouvés, lenteurs non reconnues), jamais ton nom ni tes fichiers, pour corriger d'abord ce qui touche le plus de monde. Désactivables dans l'onglet Aide.")
     '2.3.0' = @("Grande mise à jour de correctifs et de sécurité : les données d'AEROX (réglages, historique, bilans, journaux) sont rangées dans son dossier protégé, que seul un administrateur peut modifier. Elles ont été reprises automatiquement.", "Sites bloqués (fichier hosts) : AEROX débloque maintenant même un fichier verrouillé, et te dit si c'est ton antivirus qui le protège.", "Pilotes : AEROX dit exactement quel périphérique a un problème (ce n'est souvent pas la carte graphique), pourquoi, et peut réinstaller son pilote en un clic.", "Rapport de batterie et boutons « Ouvrir Steam » : ils remarchent. « Réparer les fichiers Windows » donne un résultat fiable quelle que soit la langue de Windows.", "Sécurité : la mise à jour d'AEROX n'est installée que si son empreinte est vérifiée, et l'outil du test de débit seulement si c'est bien le programme officiel d'Ookla.", "BIOS : « Mettre à jour » trouve la page de ton modèle même si les infos du PC n'étaient pas encore chargées.")
     '2.2.1' = @("Sécurité renforcée (relecture externe) : un désinstalleur rangé hors des dossiers protégés de Windows n'est plus lancé avec les droits administrateur, et les raccourcis temporaires d'AEROX sont dans son dossier protégé.", "Test de débit : s'il se bloque, il passe tout seul sur un autre serveur au lieu de rester figé. Une petite erreur pendant une analyse n'empêche plus d'afficher les résultats.")
@@ -5079,7 +5089,7 @@ try {
 Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
-if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay; Send-Stats' }
+if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay; Find-DiscordLink; Send-Stats' }
 Set-SplashStep 95 'Ouverture…'
 [void]$window.ShowDialog()
 $timer.Stop()
