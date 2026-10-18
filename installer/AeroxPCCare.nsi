@@ -239,6 +239,7 @@ Section "Uninstall"
   RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\outils"
   RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\maj"
   RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\session"
+  RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\module"
   DeleteRegKey HKLM "${UNINSTKEY}"
   ; Lancement avec Windows en mode discret (option de l'onglet Gaming)
   nsExec::Exec 'schtasks.exe /Delete /TN "AEROX PC Care (mode discret)" /F'

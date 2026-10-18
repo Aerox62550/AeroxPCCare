@@ -7,6 +7,10 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Carte « Partager AEROX à un ami » (onglet Aide) : copie un message tout prêt (ce que fait l'app + lien releases/latest + invitation Discord si connue) et l'affiche. Compteur anonyme « partage ».
 - Fenêtre « Quoi de neuf » (affichée après chaque mise à jour) : encadré « Tu aimes AEROX ? partage-le à tes amis, et fais un retour sur le moindre souci » avec les boutons « Partager à un ami » et « Rejoindre le Discord » (demande de Sam).
 - Suivi de l'objectif : compteur « actifs » des statistiques (PC distincts par mois).
+- Relecture Gemini n° 5, partie 1 (vérifiée point par point, validée par Sam avant modification) :
+  - « LPE en version portable » (vrai en partie : un programme du compte qui peut écrire dans le dossier peut aussi remplacer l'exe ; la version installée dans Program Files n'est pas concernée) → empreintes SHA-256 du script et du module gravées dans le lanceur à la construction (build/Integrite.cs). Le lanceur lit AeroxPCCare.ps1 une seule fois en mémoire, vérifie l'empreinte, et l'exécute depuis la mémoire ; sinon message et refus. Le module natif est vérifié puis copié dans protege\module (admin seulement) et c'est la copie qui est chargée (pas de remplacement possible entre vérification et chargement). Icône du splash et de la zone de notification lue depuis le programme (ressource / icône de l'exe), plus depuis aerox.ico du dossier. Désinstallation : protege\module supprimé.
+  - « Injection dans Start-AsSessionUser » : faux (lance justement sans droits admin, raccourci dans le dossier protégé, chemins venant du code).
+  - « Open-WinUri » : pas exploitable (liens écrits en dur), mais liste exacte des liens désormais (Test-WinUriAllowed) ; « shell: » retiré (inutilisé). Bug trouvé en vérifiant : le test de la webcam ouvrait « microsoft.windows.camera: », refusé par l'ancienne liste → l'appli Caméra ne s'ouvrait jamais. Corrigé.
 
 ## Publié en 2.4.2 : écrans noirs (carte graphique) et blocage par Windows 11
 

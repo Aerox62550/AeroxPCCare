@@ -2095,7 +2095,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !")
+    '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !", "Sécurité renforcée : AEROX vérifie l'empreinte de ses propres fichiers avant de les lancer avec les droits administrateur (utile surtout pour la version portable).", "Test de la webcam : l'application Caméra de Windows s'ouvre de nouveau pour vérifier l'image.")
     '2.4.2' = @("Écran qui devient noir quelques secondes puis revient : le diagnostic le repère beaucoup mieux (toutes les traces que Windows garde des décrochages de la carte graphique), te dit si ça a commencé avec ton dernier pilote, et ce qu'il faut faire.", "Si Windows 11 bloque AEROX au démarrage (Contrôle intelligent des applications), le message explique maintenant clairement pourquoi et quoi faire.")
     '2.4.1' = @("Nouveau : la communauté AEROX sur Discord ! Onglet Aide > « Rejoindre la communauté Discord » : pose tes questions, partage ta config, propose des idées.")
     '2.4.0' = @("« Pourquoi mon PC rame ? » va beaucoup plus loin : carte graphique, processeur bridé par la chauffe ou la batterie, pilote qui fait saccader, connexion qui lague, téléchargement qui sature, disque plein. Et il montre tout ce qu'il a vérifié.", "Rien trouvé ? Dis à AEROX ce qui rame (ça lague en ligne, les jeux saccadent, lent au démarrage, un logiciel précis, tout est lent) : il lance l'analyse qui correspond. Pour les jeux, la mesure se fait pendant que tu joues.", "Nouveau dépannage « Ça lague en ligne (jeu, Discord) » : 1 minute de mesure, et AEROX te dit si c'est ton Wi-Fi, ta box, ta ligne, un téléchargement, un VPN ou la carte réseau.", "Statistiques anonymes : des compteurs (types de problèmes trouvés, lenteurs non reconnues), jamais ton nom ni tes fichiers, pour corriger d'abord ce qui touche le plus de monde. Désactivables dans l'onglet Aide.")
@@ -4630,7 +4630,8 @@ function Initialize-Tray {
     if ($script:Tray) { return }
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
     $ni = New-Object System.Windows.Forms.NotifyIcon
-    try { $ni.Icon = New-Object System.Drawing.Icon((Join-Path $AppRoot 'aerox.ico')) } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
+    # Icône du programme lui-même (pas un fichier du dossier, modifiable en version portable)
+    try { $ni.Icon = [System.Drawing.Icon]::ExtractAssociatedIcon($(if ($AeroxLauncher) { $AeroxLauncher } else { throw 'pas de lanceur' })) } catch { $ni.Icon = [System.Drawing.SystemIcons]::Application }
     $ni.Text = 'AEROX PC Care'
     $m = New-Object System.Windows.Forms.ContextMenuStrip
     [void]$m.Items.Add('Ouvrir AEROX PC Care', $null, [EventHandler]{ Show-MainWindow '' })

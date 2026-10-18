@@ -80,9 +80,13 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 # compte, elle s'ouvre chez la personne devant l'écran (sinon : dans le compte admin, invisible ou en erreur).
 # Jamais ouvert directement avec les droits admin : le programme associé à un lien ou à un protocole peut être changé
 # sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
+# Seulement les liens qu'AEROX utilise vraiment, en entier (pages des Paramètres, Sécurité Windows, Store, Steam, Caméra)
+function Test-WinUriAllowed([string]$Uri) {
+    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|microsoft\.windows\.camera:)$')
+}
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
-    if ($Uri -notmatch '^(ms-settings|windowsdefender|ms-windows-store|ms-availablenetworks|shell|steam):') { throw "Lien non autorisé : $Uri" }
+    if (-not (Test-WinUriAllowed $Uri)) { throw "Lien non autorisé : $Uri" }
     $explorer = Join-Path $env:SystemRoot 'explorer.exe'
     if (Test-OtherAccount) { if (Start-AsSessionUser $explorer $Uri) { return } }
     Start-Process -FilePath $explorer -ArgumentList $Uri
