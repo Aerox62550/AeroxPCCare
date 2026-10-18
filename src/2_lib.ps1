@@ -2580,6 +2580,37 @@ function Test-SystemState {
 
 # Après une réparation de plantages / écrans bleus, seuls les NOUVEAUX comptent (les anciens restent dans l'historique
 # de Windows : sans ça, la vérification juste après la réparation les retrouvait toujours)
+# Décrochages de la carte graphique : toutes les traces que Windows garde, regroupées par incident
+function Merge-GpuResets($Events) {
+    # Un même décrochage laisse plusieurs traces (événement, rapport d'erreur, fichier) : regroupées à 2 minutes près
+    $out = New-Object System.Collections.ArrayList
+    foreach ($e in @($Events | Where-Object { $_ -and $_.Time } | Sort-Object { $_.Time })) {
+        $last = if ($out.Count) { $out[$out.Count - 1] } else { $null }
+        if ($last -and ($e.Time - $last.Time).TotalMinutes -le 2) { if ($last.Srcs -notcontains $e.Src) { $last.Srcs = @($last.Srcs) + $e.Src } }
+        else { [void]$out.Add(@{ Time = [datetime]$e.Time; Srcs = @($e.Src) }) }
+    }
+    return $out.ToArray()
+}
+function Get-GpuResets([datetime]$Since) {
+    $ev = New-Object System.Collections.ArrayList
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = $Since } 300)) { [void]$ev.Add(@{ Time = $e.TimeCreated; Src = 'pilote relancé (4101)' }) }
+    foreach ($pv in 'nvlddmkm', 'amdkmdag', 'amdwddmg', 'atikmdag', 'igfx', 'igfxn') {
+        foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = $pv; Level = 2; StartTime = $Since } 300)) { [void]$ev.Add(@{ Time = $e.TimeCreated; Src = "erreur $pv ($($e.Id))" }) }
+    }
+    # Rapports « LiveKernelEvent » de Windows : 141 / 117 = la carte graphique ne répondait plus
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'Application'; ProviderName = 'Windows Error Reporting'; Id = 1001; StartTime = $Since } 400)) {
+        $v = @($e.Properties | ForEach-Object { "$($_.Value)" })
+        $hit = ($v.Count -gt 5 -and $v[2] -eq 'LiveKernelEvent' -and $v[5] -match '^(141|117|1a1|1a8)$')
+        if (-not $hit) { try { $m = "$($e.Message)"; $hit = ($m -match 'LiveKernelEvent' -and $m -match '(?m)P1\s*:\s*(141|117|1a1|1a8)\b') } catch {} }
+        if ($hit) { [void]$ev.Add(@{ Time = $e.TimeCreated; Src = 'rapport LiveKernelEvent' }) }
+    }
+    try {
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $env:SystemRoot 'LiveKernelReports\WATCHDOG') -Filter '*.dmp' -File -ErrorAction Stop | Where-Object { $_.LastWriteTime -ge $Since })) {
+            [void]$ev.Add(@{ Time = $f.LastWriteTime; Src = 'fichier WATCHDOG' })
+        }
+    } catch {}
+    return @(Merge-GpuResets $ev.ToArray())
+}
 function Get-StabilitySince([string]$Id, [datetime]$Default) {
     try { $h = $AppInfo.StabilityFixAt; if ($h -and $h[$Id]) { $f = [datetime]$h[$Id]; if ($f -gt $Default) { return $f } } } catch {}
     return $Default
@@ -2728,15 +2759,50 @@ function Test-Stability {
             -Effect "Risque de fichiers abîmés et de perte de travail." -Steps $steps
     }
 
-    # Le pilote graphique qui « cesse de répondre et récupère » (écran noir une seconde, jeu qui se fige ou se ferme)
-    $tdr = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Display'; Id = 4101; StartTime = (Get-StabilitySince 'tdr' (Get-Date).AddDays(-7)) })
-    if ($tdr.Count -ge 2) {
-        $drvName = ("$($tdr[0].Properties[0].Value)" -replace '[^\w.\-]', '')
-        Add-Issue -Id 'tdr' -Sev 'warn' -Title "Le pilote graphique a décroché $($tdr.Count) fois cette semaine" -Detail $(if ($drvName) { "Pilote : $drvName" } else { 'Carte graphique' }) `
-            -Cause "Windows a dû relancer le pilote de la carte graphique (écran noir une seconde, jeu qui se fige ou se ferme). Causes classiques : pilote abîmé ou trop vieux/trop récent, overclocking de la carte, surchauffe, ou alimentation trop juste." `
-            -Effect "Écrans noirs, jeux qui plantent, parfois écran bleu." -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
-            -Steps @("Installe le dernier pilote de ta carte graphique en « installation propre » (option de l'installateur NVIDIA / AMD).", "Enlève tout overclocking de la carte graphique (MSI Afterburner…).", "Regarde les températures en jeu (Gaming > En direct) : au-dessus de 85 °C, dépoussière.", "Si ça continue : l'alimentation du PC est peut-être trop faible pour la carte.")
-    }
+    # Le pilote graphique qui « cesse de répondre et récupère » : écran noir quelques secondes qui revient tout seul,
+    # jeu qui se fige ou se ferme. Toutes les traces que Windows en garde sont réunies (événement 4101, erreurs du pilote,
+    # rapports « LiveKernelEvent » et fichiers WATCHDOG), et comparées à la date d'installation du pilote.
+    $sinceTdr = Get-StabilitySince 'tdr' (Get-Date).AddDays(-14)
+    $resets = @(Get-GpuResets $sinceTdr)
+    foreach ($r in $resets) { Log ("   • Carte graphique : décrochage le {0} ({1})" -f $r.Time.ToString('dd/MM HH:mm'), ($r.Srcs -join ', ')) }
+    if ($resets.Count -ge 2) {
+        $days = [math]::Max([double]1, [math]::Ceiling(((Get-Date) - $sinceTdr).TotalDays))
+        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox' })
+        $gpu = @($gpus | Sort-Object { if ("$($_.Name)" -match '(?i)intel') { 1 } else { 0 } } | Select-Object -First 1)
+        $gName = if ($gpu.Count) { "$($gpu[0].Name)" } else { 'Carte graphique' }
+        $vendor = if ($gName -match '(?i)nvidia|geforce|rtx|gtx') { 'NVIDIA' } elseif ($gName -match '(?i)amd|radeon') { 'AMD' } elseif ($gName -match '(?i)intel') { 'Intel' } else { '' }
+        $inst = $null; try { $dd = @((Get-GpuDriverInstallDates).Values | Where-Object { $_ } | Sort-Object -Descending); if ($dd.Count) { $inst = [datetime]$dd[0] } } catch {}
+        $before = 0; $after = 0
+        if ($inst) { $before = @($resets | Where-Object { $_.Time -lt $inst }).Count; $after = @($resets | Where-Object { $_.Time -ge $inst }).Count }
+        $temp = $null; try { if ($sync.Sens -and $sync.Sens['gpu.temp']) { $temp = [math]::Round([double]$sync.Sens['gpu.temp']) } } catch {}
+        $clean = switch ($vendor) {
+            'NVIDIA' { "Réinstalle le pilote proprement : télécharge-le sur nvidia.com (ou NVIDIA App), lance l'installation, choisis « Personnalisée » puis coche « Effectuer une installation propre »." }
+            'AMD'    { "Réinstalle le pilote proprement : télécharge AMD Software (Adrenalin) sur amd.com et coche « Réinitialisation d'usine » pendant l'installation." }
+            'Intel'  { "Réinstalle le pilote graphique avec « Intel Driver & Support Assistant » (site d'Intel), puis redémarre." }
+            default  { "Réinstalle le pilote de la carte graphique depuis le site de son fabricant, en « installation propre » si l'installateur le propose." }
+        }
+        $steps = New-Object System.Collections.ArrayList
+        if ($inst -and $inst -gt $sinceTdr -and $before -eq 0 -and $after -ge 2) {
+            $cause = "Ça a commencé après l'installation du pilote graphique du {0} : aucun décrochage avant sur la période. Ce pilote (ou son installation) est le suspect n°1." -f $inst.ToString('dd/MM/yyyy')
+            [void]$steps.Add($clean)
+            [void]$steps.Add("Si ça continue après une installation propre : installe la version précédente du pilote (le site du fabricant garde les anciennes versions).")
+        } elseif ($inst -and $before -ge 1 -and $after -ge 1) {
+            $cause = "Ça arrivait déjà avant la dernière installation du pilote (le {0}) et ça continue après : la version du pilote n'est probablement pas en cause. Causes les plus fréquentes : surchauffe, overclocking de la carte, alimentation du PC trop juste, ou câble / écran." -f $inst.ToString('dd/MM/yyyy')
+            [void]$steps.Add("Enlève tout overclocking ou undervolting de la carte graphique (MSI Afterburner, logiciel du fabricant).")
+            [void]$steps.Add("Regarde la température de la carte en jeu (Gaming > En direct) : au-dessus de 85 °C, dépoussière.")
+            [void]$steps.Add("Essaie un autre câble ou une autre prise de l'écran (DisplayPort / HDMI) : un câble fatigué fait aussi des écrans noirs.")
+            [void]$steps.Add("Si ça arrive surtout en jeu : l'alimentation du PC est peut-être trop faible ou fatiguée pour la carte.")
+        } else {
+            $cause = "Windows a dû relancer le pilote de la carte graphique (écran noir quelques secondes qui revient tout seul). Causes classiques : pilote abîmé, trop vieux ou bogué, overclocking, surchauffe, ou alimentation trop juste."
+            [void]$steps.Add($clean)
+            [void]$steps.Add("Enlève tout overclocking de la carte graphique et regarde sa température en jeu (Gaming > En direct).")
+            [void]$steps.Add("Si ça continue : essaie un autre câble ou une autre prise de l'écran, puis pense à l'alimentation du PC.")
+        }
+        if ($temp -ge 83) { $cause += " La carte est à $temp °C en ce moment : la chaleur peut suffire à la faire décrocher." }
+        Add-Issue -Id 'tdr' -Sev $(if ($resets.Count -ge 5) { 'crit' } else { 'warn' }) -Title ("L'écran devient noir et revient : la carte graphique a décroché {0} fois" -f $resets.Count) `
+            -Detail ("{0} · en {1} jours · dernier le {2}" -f $gName, $days, $resets[-1].Time.ToString('dd/MM à HH:mm')) `
+            -Cause $cause -Effect "Écrans noirs de quelques secondes, jeux qui se figent ou se ferment, parfois écran bleu." -FixLabel "Vérifier le pilote graphique" -UiFix 'drivers' -Steps $steps.ToArray()
+    } elseif ($resets.Count -eq 1) { Add-Ok ("Carte graphique : un seul décrochage en 14 jours (le {0}), rien d'inquiétant pour l'instant" -f $resets[0].Time.ToString('dd/MM')) }
 
     # Test de la mémoire de Windows (« Diagnostic de mémoire Windows ») : son résultat est un fait, pas une supposition
     $md = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = (Get-Date).AddDays(-90) } 5 | Sort-Object TimeCreated -Descending)
