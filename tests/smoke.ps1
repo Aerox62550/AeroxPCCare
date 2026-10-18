@@ -636,6 +636,12 @@ function Invoke-Smoke {
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
+    Smoke 'Partager AEROX : message tout prêt' {
+        $t = Get-ShareMessage
+        if ($t -notmatch "https://github\.com/$([regex]::Escape($GitHubRepo))/releases/latest" -or $t -match '\{\d\}') { throw "message incomplet : $t" }
+        if ($sync.DiscordUrl -and $t -notlike "*$($sync.DiscordUrl)*") { throw "lien Discord absent" }
+        Write-Host ("        " + ($t -replace "`r`n", ' / '))
+    }
     Smoke 'Fenêtre : avis' { Show-ReviewDialog; Write-Host ("        invitation sur l'accueil : {0}" -f (Test-ReviewInvite)) }
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
     Smoke 'Captures des pages' {

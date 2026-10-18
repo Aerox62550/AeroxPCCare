@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.4.3 : partager AEROX (objectif 30 testeurs avant la signature du 31 octobre)
+
+- Carte « Partager AEROX à un ami » (onglet Aide) : copie un message tout prêt (ce que fait l'app + lien releases/latest + invitation Discord si connue) et l'affiche. Compteur anonyme « partage ».
+- Fenêtre « Quoi de neuf » (affichée après chaque mise à jour) : encadré « Tu aimes AEROX ? partage-le à tes amis, et fais un retour sur le moindre souci » avec les boutons « Partager à un ami » et « Rejoindre le Discord » (demande de Sam).
+- Suivi de l'objectif : compteur « actifs » des statistiques (PC distincts par mois).
+
 ## Publié en 2.4.2 : écrans noirs (carte graphique) et blocage par Windows 11
 
 - Retour testeur : « son écran se met en veille rapidement et il revient à lui ». Le diagnostic (même alerte « tdr », pas de nouvelle catégorie) réunit maintenant toutes les traces d'un décrochage de la carte graphique sur 14 jours : événement Display 4101, erreurs des pilotes (nvlddmkm, amdkmdag/amdwddmg/atikmdag, igfx), rapports Windows Error Reporting « LiveKernelEvent » 141/117/1a1/1a8 et fichiers LiveKernelReports\WATCHDOG. Un même incident laisse plusieurs traces : regroupées à 2 minutes près (Merge-GpuResets). Chaque incident est écrit dans le journal avec ses sources.
