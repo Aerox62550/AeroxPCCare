@@ -1537,12 +1537,6 @@ function Get-BiosKeys([string]$Brand) {
         default { 'Suppr, F2 ou F10 (affiché brièvement au démarrage)' }
     }
 }
-function Open-BiosSupport {
-    $i = $sync.SysInfo; if (-not $i) { return }
-    $q = "$($i.Model) BIOS"
-    if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = "$($i.Maker) $q support" }
-    [void](Open-Url ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)))
-}
 function Restart-ToBios {
     $i = $sync.SysInfo
     $keys = Get-BiosKeys $(if ($i) { $i.Brand } else { '' })
@@ -3454,12 +3448,13 @@ function New-Meter([string]$Label, [double]$Pct, [string]$Sub) {
     $b.Child = $sp
     return $b
 }
-function New-StatTile([string]$Label, [string]$Value, [string]$Color, [string]$Sub) {
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 0
+# Tuile de chiffre clé (mesures du lag, carnet des jeux) : libellé, valeur en gros (couleur selon l'état), détail
+function New-StatTile([string]$Label, [string]$Value, [string]$Color = '', [string]$Sub = '') {
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 8
     $sp = New-Object System.Windows.Controls.StackPanel
-    Add-Child $sp (New-Text $Label 12 '#8B93A7' 'SemiBold')
-    Add-Child $sp (New-Text $Value 24 $Color 'Bold')
-    if ($Sub) { Add-Child $sp (New-Text $Sub 11.5 '#7A8399') }
+    Add-Child $sp (New-Text $Label.ToUpper() 11 '#7A8399' 'Bold')
+    $v = New-Text $Value 22 $(if ($Color) { $Color } else { '#FFFFFF' }) 'Bold'; $v.Margin = Th 0 4 0 0; Add-Child $sp $v
+    if ($Sub) { Add-Child $sp (New-Text $Sub 12 '#8B93A7') }
     $b.Child = $sp
     return $b
 }
@@ -4968,15 +4963,6 @@ function New-LineChart($Series, [double]$W = 640, [double]$H = 120, [string]$Uni
     Add-Child $dp $cv
     return $dp
 }
-function New-StatTile([string]$Label, [string]$Big, [string]$Small) {
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 10; $b.Margin = Th 0 0 8 8
-    $sp = New-Object System.Windows.Controls.StackPanel
-    Add-Child $sp (New-Text $Label 10.5 '#7A8399' 'Bold')
-    $t = New-Text $Big 20 '#FFFFFF' 'Bold'; $t.Margin = Th 0 4 0 0; Add-Child $sp $t
-    if ($Small) { Add-Child $sp (New-Text $Small 11.5 '#8B93A7') }
-    $b.Child = $sp
-    return $b
-}
 function New-LegendLine($Items) {
     $wp = New-Object System.Windows.Controls.WrapPanel; $wp.Margin = Th 44 6 0 0
     foreach ($it in $Items) {
@@ -5000,14 +4986,14 @@ function Show-GameDialog([string]$Key) {
     $withFps = @($ses | Where-Object { $null -ne $_.Fps })
     # Chiffres clés
     $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 4
-    if ($null -ne $last.Fps) { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' ("{0} FPS" -f [int][math]::Round([double]$last.Fps)) ("1 % low {0}" -f [int][math]::Round([double]$last.Low1))) }
-    else { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' (Format-GameTime ([double]$last.Min)) 'FPS non mesurés') }
+    if ($null -ne $last.Fps) { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' ("{0} FPS" -f [int][math]::Round([double]$last.Fps)) '' ("1 % low {0}" -f [int][math]::Round([double]$last.Low1))) }
+    else { Add-Child $ug (New-StatTile 'DERNIÈRE PARTIE' (Format-GameTime ([double]$last.Min)) '' 'FPS non mesurés') }
     $recent = @($withFps | Select-Object -Last 5)
-    if ($recent.Count) { Add-Child $ug (New-StatTile ("MOYENNE ({0} DERNIÈRES)" -f $recent.Count) ("{0} FPS" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Fps } | Measure-Object -Average).Average))) ("1 % low {0}" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Low1 } | Measure-Object -Average).Average)))) }
+    if ($recent.Count) { Add-Child $ug (New-StatTile ("MOYENNE ({0} DERNIÈRES)" -f $recent.Count) ("{0} FPS" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Fps } | Measure-Object -Average).Average))) '' ("1 % low {0}" -f [int][math]::Round((($recent | ForEach-Object { [double]$_.Low1 } | Measure-Object -Average).Average)))) }
     $gt = @($ses | Where-Object { $null -ne $_.GpuT } | ForEach-Object { [double]$_.GpuT })
-    if ($gt.Count) { Add-Child $ug (New-StatTile 'CARTE GRAPHIQUE' ("{0} °C" -f [int]($gt | Measure-Object -Maximum).Maximum) 'température max notée') }
+    if ($gt.Count) { Add-Child $ug (New-StatTile 'CARTE GRAPHIQUE' ("{0} °C" -f [int]($gt | Measure-Object -Maximum).Maximum) '' 'température max notée') }
     $stm = (@($withFps | ForEach-Object { [double]$_.Min }) | Measure-Object -Sum).Sum; $stn = (@($withFps | ForEach-Object { [double]$_.Stut }) | Measure-Object -Sum).Sum
-    if ($stm -gt 0) { Add-Child $ug (New-StatTile 'SACCADES' ("{0:N0} / h" -f ($stn * 60 / $stm)) 'en moyenne') }
+    if ($stm -gt 0) { Add-Child $ug (New-StatTile 'SACCADES' ("{0:N0} / h" -f ($stn * 60 / $stm)) '' 'en moyenne') }
     Add-Child $sp $ug
     # Évolution partie après partie
     if ($withFps.Count -ge 2) {

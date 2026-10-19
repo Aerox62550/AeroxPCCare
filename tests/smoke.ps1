@@ -635,6 +635,17 @@ function Invoke-Smoke {
         foreach ($c in $ok) { if (-not (Test-SafeUndo $c)) { throw "refusé à tort : $c" } }
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
+    Smoke 'Code : aucune fonction en double, aucune fonction jamais utilisée' {
+        $f = Join-Path (Split-Path $PSCommandPath) 'AeroxPCCare.ps1'
+        $src = [IO.File]::ReadAllText($f)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
+        $fns = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $dup = @($fns | Group-Object Name | Where-Object { $_.Count -gt 1 } | ForEach-Object { "$($_.Name) ($($_.Count) fois)" })
+        if ($dup.Count) { throw ("fonction(s) en double : " + ($dup -join ', ')) }
+        $dead = @($fns | Where-Object { [regex]::Matches($src, '(?<![\w-])' + [regex]::Escape($_.Name) + '(?![\w-])').Count -le 1 } | ForEach-Object { $_.Name })
+        if ($dead.Count) { throw ("fonction(s) jamais utilisée(s) : " + ($dead -join ', ')) }
+        Write-Host ("        {0} fonctions, aucune en double ni inutilisée" -f $fns.Count)
+    }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
     Smoke 'Infos BIOS : vitesse prévue des barrettes, canaux, XMP / EXPO' {
         $cases = @{ 'CMK32GX5M2B6000C36' = 6000; 'F4-3600C16-8GVKC' = 3600; 'F5-6000J3038F16G' = 6000; 'KF560C36BBEK2-32' = 6000; 'KF432C16BB/8' = 3200; 'BL8G32C16U4B' = 3200; 'CP2K16G56C46U5' = 5600; 'TF3D416G3200HC16F' = 3200; 'M471A1K43DB1-CWE' = 0; 'HMA81GS6CJR8N-XN' = 0; '' = 0; 'AX5U6000C3016G-B' = 6000; 'PSD48G266681' = 0 }

@@ -4226,21 +4226,6 @@ function Test-ComponentsPending {
 }
 $script:PendingMsg = "   • Anciens composants : une mise à jour de Windows attend un redémarrage. Ce nettoyage-là se fera après : redémarre le PC puis relance le nettoyage approfondi."
 
-function Start-DeepClean {
-    Step "Nettoyage profond des composants Windows (DISM)"
-    Log "   Ça peut prendre un moment, laisse le logiciel ouvert..."
-    if (Test-ComponentsPending) { Log $script:PendingMsg; return }
-    $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
-    $ec = Invoke-Native 'dism.exe' @('/Online', '/Cleanup-Image', '/StartComponentCleanup')
-    $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
-    $gain = [math]::Max([double]0, [double]$free1 - [double]$free0)
-    $script:TotalFreed += $gain
-    if ($ec -eq -2146498554) { Log $script:PendingMsg }
-    elseif ($ec -ne 0) {
-        Add-TaskError -Title "Le nettoyage profond n'a pas pu se terminer" -Code ('0x{0:X8}' -f $ec) -Cause "Windows est peut-être en train d'installer une mise à jour, ou un redémarrage est en attente." `
-            -Effect "Rien n'est cassé : les anciens composants sont juste encore là." -FixLabel "Redémarrer puis réessayer" -FixAction 'Request-Reboot' -Steps @("Redémarre le PC.", "Relance « Nettoyage profond » dans l'onglet Nettoyage.")
-    } else { Log ("✅ Nettoyage profond terminé : environ {0} libérés" -f (Format-Size $gain)) }
-}
 
 function Enable-StorageSense {
     Step "Activation du nettoyage automatique (Assistant stockage)"
@@ -5353,18 +5338,8 @@ function New-RestorePoint {
             -Steps @("Tape « Créer un point de restauration » dans Démarrer.", "Sélectionne le disque C:, clique sur « Configurer » puis « Activer la protection du système ».", "Reviens ici et réessaie.")
     }
 }
-function Open-SystemRestore { Start-Process 'rstrui.exe'; Log "   ✔ Restauration du système ouverte : choisis un point et suis les étapes." }
 
 # ---------------------------------------------------------------- PERFORMANCES
-function Show-Startup {
-    Step "Programmes lancés au démarrage"
-    $items = @(Get-StartupEntries | Sort-Object { $_.Name })
-    foreach ($i in $items) { Log ("   {0} {1}" -f $(if ($i.Enabled) { '•' } else { '○ (désactivé)' }), $i.Name) }
-    Log ("   {0} programme(s) actif(s) au démarrage." -f @($items | Where-Object { $_.Enabled }).Count)
-    Log "   → J'ouvre le Gestionnaire des tâches, onglet « Applications de démarrage » : clic droit > Désactiver sur ce qui ne sert pas."
-    Log "   → Ne désactive PAS : l'antivirus, les pilotes audio / graphiques."
-    Start-Process taskmgr.exe -ArgumentList '/0 /startup'
-}
 
 function Set-HighPerformance {
     Step "Mode d'alimentation performances maximales"
@@ -5397,12 +5372,6 @@ function Open-VisualEffects {
     Start-Process $exe
 }
 
-function Open-AppsSettings {
-    Step "Logiciels installés"
-    Log "   → Désinstalle ce que tu n'utilises plus : barres d'outils, « optimiseurs » douteux, antivirus en double, jeux d'essai..."
-    Log "   → Dans le doute (pilote, Microsoft Visual C++, .NET), n'y touche pas."
-    Open-WinUri 'ms-settings:appsfeatures'
-}
 
 function Start-QuickOptimize {
     New-RestorePoint
