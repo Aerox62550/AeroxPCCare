@@ -1,0 +1,45 @@
+# Lecture des statistiques anonymes du relais (compteurs seulement : versions, types de problèmes, nombre de PC).
+# Lancée à la demande ou une fois par jour. Le résultat est écrit dans le journal de la tâche (annotation),
+# sans l'état des webhooks Discord. Ne modifie rien.
+name: Statistiques
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  lire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: relais.txt
+          sparse-checkout-cone-mode: false
+      - name: Lire les compteurs
+        run: |
+          relais=$(tr -d '[:space:]' < relais.txt)
+          case "$relais" in https://*) ;; *) echo "::error title=Stats::adresse du relais invalide"; exit 1 ;; esac
+          curl -sS --max-time 20 "${relais%/}/stats?voir=1" -o stats.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('stats.json'))
+          for k in ('DISCORD_BUGS', 'DISCORD_AVIS'): d.pop(k, None)
+          lines = []
+          for mois in sorted(d, reverse=True):
+              v = d[mois]
+              if not isinstance(v, dict): continue
+              lines.append(f"== {mois} : {v.get('envois', 0)} envoi(s)")
+              for cle, n in v.get('compteurs', {}).items(): lines.append(f"{cle} = {n}")
+          txt = "\n".join(lines) or "aucun compteur"
+          print(txt)
+          # annotations par morceaux de 60 lignes (lisibles par l'API GitHub)
+          L = txt.split("\n")
+          for i in range(0, len(L), 60):
+              chunk = "\n".join(L[i:i+60]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print(f"::notice title=Stats {i//60+1}::{chunk}")
+          PY
