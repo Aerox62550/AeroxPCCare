@@ -2,6 +2,13 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche prochaine-version : corrections « Infos BIOS » (test de Sam)
+
+- Quantité de RAM affichée « 0 Ko » : la somme des barrettes (Measure-Object sur des tables) ne marche pas sous Windows PowerShell 5.1 → somme faite valeur par valeur. Test ajouté (quantité lue sur le PC de test ≥ 512 Mo).
+- « XMP / EXPO désactivé » affirmé à tort : PC de Sam (kit DDR5-6400 réglé à la main à 5600 dans le BIOS). Get-XmpState : « désactivé » seulement si la RAM tourne à la vitesse de départ sans profil (DDR5 4800, DDR4 2400, DDR3 1333) ; entre les deux → « Sous la vitesse prévue » avec « soit réglée à la main plus bas, soit profil pas activé ».
+- Ryzen 7000 / 8000 / 9000 (PC fixe, DDR5) : la vitesse idéale est en général 6000 MT/s (contrôleur mémoire en ratio 1:1). Kit prévu au-delà et RAM à 6000 → « Vitesse prévue », rien à changer ; profil pas activé ou vitesse plus basse → conseil « activer l'EXPO puis régler 6000 » ; RAM au-delà de 6000 → info sur le ratio 1:2.
+- Ventilateurs : « rien n'y est branché, c'est normal » était faux chez Sam (7 ventilateurs sur un hub relié à une seule prise) → « rien n'y est branché, ou tes ventilateurs passent par un hub (ou le boîtier) relié à une seule prise ».
+
 ## Publié en 2.4.5 : « Infos BIOS » et ventilateurs (demande de Sam)
 
 - Page Mon PC, section « Infos BIOS » (lecture seule, rien n'est modifié) :
