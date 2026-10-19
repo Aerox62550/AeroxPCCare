@@ -2,6 +2,10 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche 2.4.4 : fausse alerte « système de fichiers à réparer »
+
+- Vu dans les statistiques : « probleme:ntfs » sur 4 diagnostics sur 4. Cause : l'événement Ntfs 98 a deux sens selon son niveau — information à chaque démarrage (« le volume est en bon état, aucune action n'est nécessaire ») ou erreur (« le volume doit être vérifié par chkdsk »). AEROX ne regardait que le numéro. Corrigé : seuls les événements de disque de niveau critique / erreur / avertissement comptent (Select-DiskProblemEvents), pour toutes les alertes disque (diskbad, diskretry, ntfs). Explique aussi le rapport n° 24 (alerte puis vérification sans erreur).
+
 ## Publié en 2.4.3 : partager AEROX (objectif 30 testeurs avant la signature du 31 octobre)
 
 - Carte « Partager AEROX à un ami » (onglet Aide) : copie un message tout prêt (ce que fait l'app + lien releases/latest + invitation Discord si connue) et l'affiche. Compteur anonyme « partage ».
