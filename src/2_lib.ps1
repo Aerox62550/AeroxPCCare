@@ -139,8 +139,14 @@ function ConvertTo-DateSafe($d) {
     return $null
 }
 function Format-Date($d, [string]$Fmt = 'dd/MM/yyyy') { $x = ConvertTo-DateSafe $d; if ($x) { return $x.ToString($Fmt) } else { return '?' } }
+# Taille lisible : « 16 Go » (valeur ronde), « 28,40 Go », « 931,5 Go », « 1,82 To »
 function Format-Size([double]$Bytes) {
-    if ($Bytes -ge 1GB) { return ("{0:N2} Go" -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1GB) {
+        $v = $Bytes / 1GB; $u = 'Go'
+        if ($Bytes -ge 1TB) { $v = $Bytes / 1TB; $u = 'To' }
+        $fmt = if ($v -eq [math]::Floor($v)) { '{0:N0}' } elseif ($u -eq 'Go' -and $v -ge 100) { '{0:N1}' } else { '{0:N2}' }
+        return (($fmt -f $v) + " $u")
+    }
     if ($Bytes -ge 1MB) { return ("{0:N1} Mo" -f ($Bytes / 1MB)) }
     return ("{0:N0} Ko" -f ($Bytes / 1KB))
 }

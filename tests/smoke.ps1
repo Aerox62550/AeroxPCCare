@@ -635,6 +635,13 @@ function Invoke-Smoke {
         foreach ($c in $ok) { if (-not (Test-SafeUndo $c)) { throw "refusé à tort : $c" } }
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
+    Smoke 'Tailles lisibles (Format-Size)' {
+        $ci = [Threading.Thread]::CurrentThread.CurrentCulture; [Threading.Thread]::CurrentThread.CurrentCulture = 'fr-FR'
+        try {
+            $cases = @(@(16GB, '16 Go'), @(15.99GB, '15,99 Go'), @(931.51GB, '931,5 Go'), @(2TB, '2 To'), @(1.82TB, '1,82 To'), @(128GB, '128 Go'), @(291.2MB, '291,2 Mo'), @(545KB, '545 Ko'))
+            foreach ($c in $cases) { $r = (Format-Size $c[0]) -replace [char]0xA0, ' ' -replace [char]0x202F, ' '; if ($r -ne $c[1]) { throw "$($c[0]) octets : « $r » au lieu de « $($c[1]) »" } }
+        } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $ci }
+    }
     Smoke 'Code : aucune fonction en double, aucune fonction jamais utilisée' {
         $f = Join-Path (Split-Path $PSCommandPath) 'AeroxPCCare.ps1'
         $src = [IO.File]::ReadAllText($f)
