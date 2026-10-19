@@ -2,6 +2,17 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.5.2 : préparer la mise à jour du BIOS (demande de Sam)
+
+- Mon PC > « Préparer la mise à jour du BIOS » (Show-BiosUpdateDialog), 4 étapes : télécharger (page officielle), choisir le fichier, préparer la clé USB, installer.
+- Vérification du fichier (Get-BiosFileReport) : zip extrait dans le dossier protégé (nom de fichier seul, pas de chemin du zip), fichier BIOS reconnu à son nom officiel (MSI E7D75AMS.1H0, ASUS …-ASUS-3024.CAP, Gigabyte B650AORUSELITEAX.F20, ASRock …(2.02)ROM), taille 4 à 128 Mo. Modèle : numéro MS-xxxx (MSI) ou nom exact de la carte (ASUS, Gigabyte, ASRock ; un modèle voisin « WIFI »/« PLUS » n'est jamais accepté d'office). Verdicts : ok / bad (autre carte ou autre marque : clé refusée) / unknown (case « j'ai vérifié » obligatoire). Versions comparées seulement quand le format le permet (ASUS, Gigabyte, ASRock) ; MSI : « identique » ou simple affichage.
+- Clé USB (Initialize-BiosUsb) : uniquement un disque USB, jamais le disque de Windows, jamais plus de 256 Go ; formatage FAT32 (partition de 32 Go max, MBR) seulement après confirmation « TOUT sera effacé » ; copie vérifiée par empreinte ; copie de secours au nom Flashback (MSI.ROM, GIGABYTE.bin, creative.rom).
+- BitLocker actif → bouton « Mettre BitLocker en pause » (Suspend-BitLocker -RebootCount 3, réactivation automatique, annulable dans l'historique : Resume-BitLockerOs).
+- Étapes d'installation par marque (M-Flash, EZ Flash 3, Q-Flash, Instant Flash) + secours Flashback ; rappel : ne jamais couper le courant, réactiver XMP / EXPO après (réglages remis par défaut).
+- PC de marque / portables : programme officiel du fabricant ou Windows Update (pas de clé).
+- AEROX n'écrit jamais dans la puce du BIOS.
+- Tests : fichiers fabriqués (bonne carte, autre carte, autre marque, modèle voisin, trop petit, zip), le disque de Windows est refusé et n'est pas modifié, fenêtres capturées.
+
 ## Publié en 2.5.1 : mises à jour d'AEROX insistantes (demande de Sam)
 
 - Constat de Sam : des testeurs restent sur d'anciennes versions (seul un bandeau sur l'Accueil annonçait la mise à jour, et AEROX ne vérifiait qu'au démarrage).
