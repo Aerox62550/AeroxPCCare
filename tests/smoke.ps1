@@ -636,6 +636,15 @@ function Invoke-Smoke {
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
+    Smoke 'Disques : un message « volume en bon état » n est pas une erreur' {
+        $ev = @([pscustomobject]@{ Id = 98; Level = 4 }, [pscustomobject]@{ Id = 98; Level = 2 }, [pscustomobject]@{ Id = 55; Level = 2 }, [pscustomobject]@{ Id = 153; Level = 3 }, [pscustomobject]@{ Id = 7; Level = 0 }, [pscustomobject]@{ Id = 98; Level = 4 })
+        $k = @(Select-DiskProblemEvents $ev)
+        if ($k.Count -ne 3 -or @($k | Where-Object { $_.Id -eq 98 }).Count -ne 1) { throw "filtre faux : $($k.Count) gardé(s)" }
+        if (@(Select-DiskProblemEvents @()).Count -ne 0) { throw "liste vide mal gérée" }
+        # Ce PC : combien d'événements 98 « bon état » auraient été comptés avant
+        $all = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Ntfs'; Id = 98; StartTime = (Get-Date).AddDays(-30) })
+        Write-Host ("        ce PC : {0} événement(s) Ntfs 98 dont {1} vrai(s) problème(s)" -f $all.Count, @(Select-DiskProblemEvents $all).Count)
+    }
     Smoke 'Mises à jour : winget lui-même toujours en dernier' {
         $o = (@(Get-UpdateOrder @('Microsoft.AppInstaller', 'ALCPU.CoreTemp', 'Discord.Discord', 'Valve.Steam')) -join ',')
         if ($o -ne '1,2,3,0') { throw "ordre faux : $o" }

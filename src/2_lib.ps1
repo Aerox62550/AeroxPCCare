@@ -3687,6 +3687,13 @@ function Test-BootSpeed {
     } elseif ($b) { Add-Ok ("Démarrage de Windows : {0} s" -f $b.Sec) }
 }
 
+# Seulement les vrais problèmes : le même numéro d'événement peut être une simple information. Ntfs 98, par exemple,
+# est écrit à chaque démarrage en « information » (« le volume est en bon état, aucune action nécessaire ») et en
+# « erreur » seulement quand une vérification est nécessaire (statistiques : alerte « ntfs » sur 4 diagnostics sur 4).
+# Niveaux Windows : 1 critique, 2 erreur, 3 avertissement, 4 information, 0 toujours.
+function Select-DiskProblemEvents($Events) {
+    return @(@($Events) | Where-Object { $_ -and [int]$_.Level -ge 1 -and [int]$_.Level -le 3 })
+}
 function Test-DiskHealth {
     try {
         $sysNum = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop | Get-Disk).Number
@@ -3726,7 +3733,7 @@ function Test-DiskHealth {
         # Erreurs relevées par Windows sur les disques (30 jours) : secteurs illisibles (7), erreurs de lecture de la mémoire
         # virtuelle (51), opérations relancées (153), système de fichiers abîmé (Ntfs 55 / 98)
         # Une requête par source : si une source n'existe pas sur ce PC, les autres sont quand même lues
-        $de = @(foreach ($pv in 'disk', 'Ntfs', 'Microsoft-Windows-Ntfs') { Get-EventsSafe @{ LogName = 'System'; ProviderName = $pv; Id = 7, 51, 153, 55, 98; StartTime = (Get-Date).AddDays(-30) } })
+        $de = @(Select-DiskProblemEvents @(foreach ($pv in 'disk', 'Ntfs', 'Microsoft-Windows-Ntfs') { Get-EventsSafe @{ LogName = 'System'; ProviderName = $pv; Id = 7, 51, 153, 55, 98; StartTime = (Get-Date).AddDays(-30) } }))
         # Après une réparation, seules les erreurs d'après comptent
         $sB = Get-StabilitySince 'diskbad' (Get-Date).AddDays(-30); $sR = Get-StabilitySince 'diskretry' (Get-Date).AddDays(-30); $sF = Get-StabilitySince 'ntfs' (Get-Date).AddDays(-30)
         $bad = @($de | Where-Object { $_.Id -in 7, 51 -and $_.TimeCreated -gt $sB }); $retry = @($de | Where-Object { $_.Id -eq 153 -and $_.TimeCreated -gt $sR }); $fs = @($de | Where-Object { $_.Id -in 55, 98 -and $_.TimeCreated -gt $sF })
