@@ -635,6 +635,31 @@ function Invoke-Smoke {
         foreach ($c in $ok) { if (-not (Test-SafeUndo $c)) { throw "refusé à tort : $c" } }
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
+    Smoke 'Mise à jour d''AEROX : proposée, reportable, jamais forcée' {
+        $oldU = $sync.UpdateInfo; $oldS = @{ V = $script:Settings.UpdSnoozeVer; N = $script:Settings.UpdSnoozes; A = $script:Settings.AutoUpdate }; $oldJ = $script:Job
+        try {
+            $sync.UpdateInfo = @{ Version = '99.0.0'; Url = 'https://github.com/'; Setup = 'https://example.invalid/AeroxPCCare_Setup.exe'; Digest = ''; Test = $false; Notes = "- Nouveauté de test`n- Correction de test" }
+            $script:Settings.AutoUpdate = $true; $script:Settings.UpdSnoozeVer = ''; $script:Settings.UpdSnoozes = 0
+            # Fenêtre fermée sans choisir (croix) = « Plus tard » : rien n'est installé, report compté, reproposée dans 2 h
+            Show-UpdateDialog
+            if ($script:Job) { throw "une installation a été lancée alors que la fenêtre a été fermée" }
+            if ($script:Settings.UpdSnoozes -ne 1 -or $script:Settings.UpdSnoozeVer -ne '99.0.0') { throw "report non compté ($($script:Settings.UpdSnoozes))" }
+            if (-not $script:UpdPromptAt -or ($script:UpdPromptAt - (Get-Date)).TotalMinutes -lt 100) { throw "pas reproposée 2 h plus tard" }
+            Show-UpdateDialog; Show-UpdateDialog   # 3e fois : message d'insistance (capture)
+            if ($script:Settings.UpdSnoozes -ne 3) { throw "reports mal comptés ($($script:Settings.UpdSnoozes))" }
+            # Pendant une opération : pas de fenêtre, reproposée 1 minute plus tard
+            $script:Job = @{ Label = 'test' }; $script:UpdPromptAt = (Get-Date).AddSeconds(-1)
+            Request-UpdatePrompt
+            if (($script:UpdPromptAt - (Get-Date)).TotalSeconds -gt 70 -or ($script:UpdPromptAt - (Get-Date)).TotalSeconds -lt 30) { throw "pas reportée d'une minute pendant une opération" }
+            $script:Job = $oldJ
+            # Nouvelle version : le compteur repart de zéro
+            $sync.UpdateInfo.Version = '99.0.1'; if ((Get-UpdateSnoozes) -ne 0) { throw "compteur gardé pour une autre version" }
+            if (-not (Get-AutoUpdCardStatus).StatusText) { throw "carte du réglage vide" }
+        } finally {
+            $sync.UpdateInfo = $oldU; $script:Job = $oldJ; $script:UpdPromptAt = $null
+            $script:Settings.UpdSnoozeVer = $oldS.V; $script:Settings.UpdSnoozes = $oldS.N; $script:Settings.AutoUpdate = $oldS.A; Save-Settings
+        }
+    }
     Smoke 'Tailles lisibles (Format-Size)' {
         $ci = [Threading.Thread]::CurrentThread.CurrentCulture; [Threading.Thread]::CurrentThread.CurrentCulture = 'fr-FR'
         try {

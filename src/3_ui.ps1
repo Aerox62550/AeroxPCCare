@@ -309,6 +309,7 @@ $script:Settings = @{
     BetaChannel = $false
     StatsOff = $false
     PostOptimize = $false
+    AutoUpdate = $true; UpdSnoozeVer = ''; UpdSnoozes = 0
     InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''; LastSeenVersion = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
     Gaming = @{ Track = $true; Tray = $false; TrayTip = $false; Ignore = @() }
@@ -323,7 +324,7 @@ function Load-Settings {
     try {
         if (Test-Path -LiteralPath $SettingsFile) {
             $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion', 'AutoUpdate', 'UpdSnoozeVer', 'UpdSnoozes') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
             if ($h.StabilityFixAt -is [hashtable]) { $script:Settings.StabilityFixAt = $h.StabilityFixAt }
@@ -417,7 +418,7 @@ $script:CardIcons = @{
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
     browser = 'EA18'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
-    remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
+    'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
 }
 function New-CardIcon([string]$Hex, [bool]$Primary) {
@@ -751,6 +752,7 @@ $PageDefs = [ordered]@{
     @{ G = "Besoin d'aide"; T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
     @{ G = "Besoin d'aide"; T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Les nouveautés des dernières versions."; T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Installe chaque nouvelle version tout seul (10 s pour dire « Plus tard »)."; T = "Mises à jour automatiques"; B = "Changer"; UI = 'autoupd-toggle'; StatusFn = { Get-AutoUpdCardStatus }; D = "Quand une nouvelle version d'AEROX sort, elle s'installe toute seule au lancement après 10 secondes (tu peux toujours dire « Plus tard »). Le fichier est vérifié avant d'être installé. Désactivé : AEROX te la propose et tu choisis quand." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Vérifie s'il y a une nouvelle version et l'installe en un clic."; T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Compteurs anonymes pour corriger d'abord ce qui touche le plus de monde. Jamais ton nom ni tes fichiers."; T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Les journaux de chaque jour, enregistrés sur ce PC."; T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
@@ -775,6 +777,11 @@ function Get-SenseCardStatus {
 function Get-DiscordCardStatus {
     if (-not $sync.DiscordUrl) { return @{ StatusText = "Le lien du serveur arrive bientôt"; StatusKind = 'off' } }
     return $null
+}
+function Get-AutoUpdCardStatus {
+    if ($Portable) { return @{ StatusText = "Version portable : la nouvelle version se télécharge à la main"; StatusKind = 'off'; B = 'Changer' } }
+    if ($script:Settings.AutoUpdate) { return @{ B = 'Désactiver'; StatusText = 'Activées'; StatusKind = 'on' } }
+    return @{ B = 'Activer'; StatusText = 'Désactivées : AEROX te demande avant'; StatusKind = 'off' }
 }
 function Get-StatsCardStatus {
     if ($script:Settings.StatsOff) { return @{ B = 'Activer'; StatusText = "Désactivées : rien n'est envoyé"; StatusKind = 'off' } }
@@ -1480,7 +1487,7 @@ function Invoke-UiCommand($T) {
                     'battery-report' { [void](Start-AeroxTask 'Open-BatteryReport' 'Rapport de la batterie') }
                     'bios-reboot' { Restart-ToBios }
                     'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
-                    'selfupdate' { Start-SelfUpdate }
+                    'selfupdate' { Show-UpdateDialog -Manual }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
                     'startup' { Show-StartupDialog $null }
                     'slow' {
@@ -1514,6 +1521,11 @@ function Invoke-UiCommand($T) {
                     'game-tab' { $script:GameTab = $T.Def.Tab; Refresh-Page }
                     'ov-toggle' { Show-Overlay (-not ($script:Ov -and $script:Ov.IsVisible)); Refresh-Page }
                     'ov-edit' { Set-OverlayEdit (-not $script:OvEdit); Refresh-Page }
+                    'autoupd-toggle' {
+                        $script:Settings.AutoUpdate = -not [bool]$script:Settings.AutoUpdate; Save-Settings
+                        Write-UiLog $(if ($script:Settings.AutoUpdate) { "🔄 Mises à jour automatiques d'AEROX activées." } else { "🔄 Mises à jour automatiques désactivées : AEROX te demandera avant chaque nouvelle version." })
+                        Refresh-Page
+                    }
                     'ov-corner' { Set-OverlayCorner $T.Def.Corner }
                     'logs' { Start-Process explorer.exe $LogDir }
                     'checkupdate' {
@@ -1645,16 +1657,86 @@ function Show-HistoryDialog {
 }
 
 # ---------------------------------------------------------------- Mise à jour du logiciel
-function Start-SelfUpdate {
+# ---------------------------------------------------------------- Mise à jour d'AEROX : proposée avec insistance, jamais forcée
+# Automatique (réglage par défaut) : compte à rebours de 10 s, « Plus tard » toujours possible.
+# Chaque report est compté : la fenêtre revient 2 h plus tard (et à chaque lancement), avec un message de plus en plus clair.
+$script:UpdPromptAt = $null; $script:UpdateShownVer = ''; $script:LastUpdCheck = $null
+function Get-UpdateSnoozes {
+    $u = $sync.UpdateInfo
+    if (-not $u -or $script:Settings.UpdSnoozeVer -ne $u.Version) { return 0 }
+    return [int]$script:Settings.UpdSnoozes
+}
+function Add-UpdateSnooze {
+    $u = $sync.UpdateInfo; if (-not $u) { return }
+    $n = (Get-UpdateSnoozes) + 1
+    $script:Settings.UpdSnoozeVer = $u.Version; $script:Settings.UpdSnoozes = $n; Save-Settings
+    $script:UpdPromptAt = (Get-Date).AddHours(2)
+    Write-UiLog ("⏳ Mise à jour {0} reportée ({1} fois) : AEROX la reproposera dans 2 heures et au prochain lancement." -f $u.Version, $n)
+}
+# Moment pour proposer la mise à jour : jamais pendant une opération, une partie ou une autre fenêtre ; caché près de l'horloge → notification
+function Request-UpdatePrompt {
+    $u = $sync.UpdateInfo
+    if (-not $u) { $script:UpdPromptAt = $null; return }
+    $busy = $script:Job -or $script:GameSess -or $script:Wiz -or @($window.OwnedWindows | Where-Object { $_.IsVisible }).Count
+    if ($busy) { $script:UpdPromptAt = (Get-Date).AddMinutes(1); return }
+    if ($script:InTray -or -not $window.ShowInTaskbar) {
+        Show-TrayBalloon "AEROX PC Care $($u.Version) est disponible" "Clique ici pour l'installer : quelques secondes, tes réglages sont gardés." 'update'
+        $script:UpdPromptAt = (Get-Date).AddHours(6); return
+    }
+    $script:UpdPromptAt = $null
+    Show-UpdateDialog
+}
+function Show-UpdateDialog([switch]$Manual) {
     $u = $sync.UpdateInfo
     if (-not $u) { return }
+    if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours : la mise à jour te sera proposée juste après.", $AppName, 'OK', 'Information') | Out-Null; $script:UpdPromptAt = (Get-Date).AddMinutes(1); return }
+    $auto = [bool]$u.Setup -and [bool]$script:Settings.AutoUpdate -and -not $Manual
+    $n = Get-UpdateSnoozes
+    $w = New-Dialog "$AppName : mise à jour" 560
+    $script:UpdChoice = 'later'
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text ("AEROX PC Care {0} est disponible" -f $u.Version) $Typo.H2 $Pal.White 'Bold')
+    $t = New-Text ("Tu as la version {0}. Les mises à jour corrigent des bugs et des fausses alertes, et ajoutent des nouveautés." -f $AppVersion) $Typo.Body $Pal.Text3; $t.Margin = Th 0 6 0 12; Add-Child $sp $t
+    $notes = ("$($u.Notes)" -replace '\r', '' -replace '(?m)^#+\s*', '').Trim()
+    if ($notes) {
+        if ($notes.Length -gt 600) { $notes = $notes.Substring(0, 600).TrimEnd() + '…' }
+        $nb = New-Object System.Windows.Controls.Border; $nb.Background = Brush $Pal.Sunken; $nb.CornerRadius = Corner 10; $nb.Padding = Th 14 10 14 10; $nb.Margin = Th 0 0 0 12
+        $nsv = New-Object System.Windows.Controls.ScrollViewer; $nsv.MaxHeight = 200; $nsv.VerticalScrollBarVisibility = 'Auto'
+        $nt = New-Text $notes $Typo.Small $Pal.Text2; $nt.LineHeight = 18; $nsv.Content = $nt; $nb.Child = $nsv; Add-Child $sp $nb
+    }
+    if ($n -ge 2) {
+        $wb = New-Object System.Windows.Controls.Border; $wb.Background = Brush $Pal.WarnSoft; $wb.CornerRadius = Corner 8; $wb.Padding = Th 12 8 12 8; $wb.Margin = Th 0 0 0 12
+        $wb.Child = New-Text ("Tu l'as déjà reportée {0} fois. Fais-la dès que tu peux : ça prend quelques secondes et tes réglages sont gardés." -f $n) $Typo.Small $Pal.Warn 'SemiBold'; Add-Child $sp $wb
+    }
+    if (-not $u.Setup) {
+        $t = New-Text "Version portable : télécharge le nouveau zip et remplace l'ancien dossier sur la clé (garde le dossier « donnees » : il contient tes réglages)." $Typo.Small $Pal.Muted; $t.Margin = Th 0 0 0 12; Add-Child $sp $t
+    } else {
+        $t = New-Text "AEROX va télécharger la nouvelle version, vérifier qu'elle n'a pas été modifiée, se fermer, l'installer et se rouvrir tout seul." $Typo.Small $Pal.Muted; $t.Margin = Th 0 0 0 12; Add-Child $sp $t
+    }
+    $cd = $null
+    if ($auto) { $cd = New-Text '' $Typo.Body $Pal.AccentText 'SemiBold'; $cd.Margin = Th 0 0 0 12; Add-Child $sp $cd }
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
+    $later = New-Object System.Windows.Controls.Button; $later.Content = $(if ($n -ge 2) { 'Plus tard (dans 2 h)' } else { 'Plus tard' }); $later.Style = $window.FindResource('TextBtn'); $later.Margin = Th 0 0 8 0
+    $later.Add_Click({ $script:UpdChoice = 'later'; $script:UpdWin.Close() }); Add-Child $row $later
+    $go = New-Object System.Windows.Controls.Button; $go.Style = $window.FindResource('PrimaryBtn')
+    $go.Content = $(if ($u.Setup) { 'Mettre à jour maintenant' } else { 'Télécharger' })
+    $go.Add_Click({ $script:UpdChoice = 'now'; $script:UpdWin.Close() }); Add-Child $row $go
+    Add-Child $sp $row
+    $w.Content = $sp
+    $script:UpdWin = $w
+    if ($auto) {
+        $script:UpdLeft = 10; $script:UpdCd = $cd
+        $cd.Text = "La mise à jour démarre dans $($script:UpdLeft) secondes…"
+        $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromSeconds(1)
+        $tm.Add_Tick({ $script:UpdLeft--; if ($script:UpdLeft -le 0) { $this.Stop(); $script:UpdChoice = 'now'; $script:UpdWin.Close() } else { $script:UpdCd.Text = "La mise à jour démarre dans $($script:UpdLeft) secondes…" } })
+        $w.Add_Closed({ $script:UpdTimer.Stop() })
+        $script:UpdTimer = $tm; $tm.Start()
+    }
+    [void]$w.ShowDialog()
+    $script:UpdWin = $null
+    if ($script:UpdChoice -ne 'now') { Add-UpdateSnooze; return }
     if (-not $u.Setup) { [void](Open-Url $u.Url); return }
-    if ($script:Job) { [System.Windows.MessageBox]::Show("Une opération est en cours, attends qu'elle se termine.", $AppName, 'OK', 'Information') | Out-Null; return }
-    $notes = ("$($u.Notes)" -replace '\r', '').Trim()
-    if ($notes.Length -gt 700) { $notes = $notes.Substring(0, 700) + '…' }
-    $txt = "Installer AEROX PC Care $($u.Version) ?`n`n" + $(if ($notes) { "Nouveautés :`n$notes`n`n" } else { '' }) +
-           "Le logiciel va télécharger la nouvelle version, se fermer, l'installer et se rouvrir tout seul (quelques secondes). Tes réglages et journaux sont gardés."
-    if (-not (Confirm-Box $txt)) { return }
+    if ($script:Job) { $script:UpdPromptAt = (Get-Date).AddMinutes(1); return }
     [void](Start-AeroxTask 'Install-AppUpdate' "Mise à jour d'AEROX PC Care" 'selfupdate')
 }
 function Complete-SelfUpdate {
@@ -1665,7 +1747,7 @@ function Complete-SelfUpdate {
             $h = (Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop).Hash
             if ($h -ne $ready.Sha.ToUpper()) { throw "Le fichier de mise à jour a été modifié depuis son téléchargement : installation annulée par sécurité." }
         }
-        [System.Windows.MessageBox]::Show("La nouvelle version est prête.`n`nAEROX PC Care va se fermer, l'installer et se rouvrir tout seul dans quelques secondes.", $AppName, 'OK', 'Information') | Out-Null
+        $script:Settings.UpdSnoozeVer = ''; $script:Settings.UpdSnoozes = 0; Save-Settings
         Start-Process -FilePath $setup -ArgumentList '/S', '/UPDATE'
         Write-UiLog "Installation de la nouvelle version..."
         $script:SelfUpdating = $true
@@ -2353,6 +2435,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.5.1' = @("Mises à jour automatiques : quand une nouvelle version sort, AEROX l'installe tout seul au lancement après 10 secondes (le fichier est vérifié avant). Tu peux toujours dire « Plus tard » : elle te sera reproposée un peu plus tard. Réglage dans Aide > Mises à jour automatiques.", "AEROX vérifie aussi toutes les 6 heures s'il reste ouvert près de l'horloge, et te prévient par une notification.")
     '2.5.0' = @("Nouveau look : un thème plus propre et plus cohérent partout (couleurs, textes, boutons, barres de défilement sombres). Les pages sont rangées par thèmes (Internet, dépannage rapide, Windows…) avec les petites actions en tuiles : on trouve plus vite ce qu'on cherche.", "Diagnostic plus lisible : « Ce qui va bien » est replié (un clic pour le voir), et dans « Mon PC » les étapes à suivre dans le BIOS sont rangées derrière « Comment faire ».", "Corrigé : les tuiles de « Pourquoi ça lague » affichaient un code bizarre au lieu de leurs détails. Tailles plus lisibles (« 16 Go » au lieu de « 16,00 Go »).")
     '2.4.6' = @("Infos BIOS plus justes : la quantité de RAM s'affiche correctement (elle indiquait « 0 Ko »), et AEROX ne dit plus « XMP / EXPO désactivé » quand la vitesse a été réglée à la main. Sur les Ryzen 7000 / 9000, il conseille la vitesse idéale (6000 MT/s).", "Ventilateurs : AEROX précise que les ventilateurs branchés sur un hub ne sont pas vus un par un.")
     '2.4.5' = @("Nouveau dans « Mon PC » : les infos du BIOS sans avoir à y aller. Mémoire (XMP / EXPO activé ou pas, vitesse prévue par tes barrettes, dual channel bien monté), virtualisation, Resizable BAR, et pour chaque réglage à changer : où le trouver sur ta carte mère (ASUS, MSI, Gigabyte, ASRock…).", "Ventilateurs : la vitesse de chacun en direct (avec le module de températures), avec une alerte s'il y en a un à l'arrêt alors que ça chauffe, et où régler les profils silence / standard / performance.")
@@ -4917,7 +5000,7 @@ function Initialize-Tray {
     [void]$m.Items.Add('Quitter AEROX PC Care', $null, [EventHandler]{ Exit-Aerox })
     $ni.ContextMenuStrip = $m
     $ni.Add_MouseClick({ param($s, $e) if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Show-MainWindow '' } })
-    $ni.Add_BalloonTipClicked({ $k = $script:BalloonKey; Show-MainWindow 'monitor'; if ($k) { Show-GameDialog $k } })
+    $ni.Add_BalloonTipClicked({ $k = $script:BalloonKey; if ($k -eq 'update') { Show-MainWindow 'home'; Show-UpdateDialog -Manual; return }; Show-MainWindow 'monitor'; if ($k) { Show-GameDialog $k } })
     $script:Tray = $ni
 }
 function Update-TrayIcon { if ($script:Settings.Gaming.Tray -or $script:InTray) { Initialize-Tray; $script:Tray.Visible = $true } elseif ($script:Tray -and -not $script:BalloonKey) { $script:Tray.Visible = $false } }
@@ -5322,14 +5405,17 @@ $timer.Add_Tick({
         try { Receive-IssueChecks } catch { Write-Bug -Context 'Vérification après réparation' -ErrorRecord $_ }
         foreach ($z in @($script:Zombies | Where-Object { $_.Handle.IsCompleted })) { try { $z.PS.Dispose(); $z.RS.Close(); $z.RS.Dispose() } catch {}; [void]$script:Zombies.Remove($z) }
         if ($script:SysWaiting -and $sync.SysInfo) { $script:SysWaiting = $false; if ($script:Cur -eq 'system') { Refresh-Page } }
-        if ($sync.UpdateInfo -and -not $script:UpdateShown) {
-            $script:UpdateShown = $true
+        if ($sync.UpdateInfo -and $script:UpdateShownVer -ne $sync.UpdateInfo.Version) {
+            $script:UpdateShown = $true; $script:UpdateShownVer = $sync.UpdateInfo.Version
             Write-UiLog ("Nouvelle version d'AEROX PC Care disponible : {0}" -f $sync.UpdateInfo.Version)
             if ($script:Cur -eq 'home') { Refresh-Page }
+            if (-not $script:ManualUpdateCheck) { $script:UpdPromptAt = (Get-Date).AddSeconds(3) }
         }
+        if ($script:UpdPromptAt -and (Get-Date) -ge $script:UpdPromptAt) { Request-UpdatePrompt }
+        if ($GitHubRepo -and $script:LastUpdCheck -and ((Get-Date) - $script:LastUpdCheck).TotalHours -ge 6) { $script:LastUpdCheck = Get-Date; Start-Background 'Find-AppUpdate' }
         if ($script:ManualUpdateCheck -and $sync.UpdateDone) {
             $script:ManualUpdateCheck = $false
-            if ($sync.UpdateInfo -and $sync.UpdateInfo.Setup) { Start-SelfUpdate }
+            if ($sync.UpdateInfo -and $sync.UpdateInfo.Setup) { Show-UpdateDialog -Manual }
             elseif ($sync.UpdateInfo) {
                 if (Confirm-Box ("Nouvelle version disponible : {0}`n`nOuvrir la page de téléchargement ?" -f $sync.UpdateInfo.Version)) { [void](Open-Url $sync.UpdateInfo.Url) }
             } else { [System.Windows.MessageBox]::Show("Tu as déjà la dernière version ($AppVersion).", $AppName, 'OK', 'Information') | Out-Null }
@@ -5392,7 +5478,7 @@ try {
 Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
-if ($GitHubRepo) { Start-Background 'Find-AppUpdate; Find-BugRelay; Find-DiscordLink; Send-Stats' }
+if ($GitHubRepo) { $script:LastUpdCheck = Get-Date; Start-Background 'Find-AppUpdate; Find-BugRelay; Find-DiscordLink; Send-Stats' }
 Set-SplashStep 95 'Ouverture…'
 [void]$window.ShowDialog()
 $timer.Stop()

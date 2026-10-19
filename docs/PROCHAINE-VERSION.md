@@ -2,6 +2,17 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche prochaine-version : mises à jour d'AEROX insistantes (demande de Sam)
+
+- Constat de Sam : des testeurs restent sur d'anciennes versions (seul un bandeau sur l'Accueil annonçait la mise à jour, et AEROX ne vérifiait qu'au démarrage).
+- Show-UpdateDialog : fenêtre « AEROX PC Care X est disponible » avec les nouveautés. Réglage « Mises à jour automatiques » (activé par défaut) : compte à rebours de 10 s puis installation (téléchargement vérifié par l'empreinte SHA-256 publiée par GitHub, comme avant). « Plus tard » (ou la croix) toujours possible.
+- Insistance sans forcer : chaque report est compté par version (réglages UpdSnoozeVer / UpdSnoozes), reproposée 2 h plus tard et à chaque lancement ; à partir de 2 reports, message « Tu l'as déjà reportée N fois… » et « Plus tard (dans 2 h) ». Compteur remis à zéro après l'installation ou pour une nouvelle version.
+- Jamais pendant une opération, une partie détectée, l'optimisation complète ou une autre fenêtre ouverte (reproposée 1 minute plus tard).
+- Vérification toutes les 6 h tant qu'AEROX est ouvert ; caché près de l'horloge → notification Windows (clic = fenêtre de mise à jour).
+- Version portable : pas d'installation automatique (bouton « Télécharger »).
+- Bandeau de l'Accueil et « Rechercher une mise à jour » : même fenêtre, sans compte à rebours. Start-SelfUpdate remplacée ; plus de fenêtre « La nouvelle version est prête » en plus (déjà dit dans la fenêtre).
+- Test : fermeture = report compté sans installation, report de 2 h, 3e report, report d'1 minute pendant une opération, compteur par version.
+
 ## Publié en 2.5.0 : refonte 2.5.0 (nettoyage du code + visuel, demande de Sam)
 
 - Bug : New-StatTile définie deux fois (la 2e écrasait la 1re) → tuiles de « Pourquoi ça lague » avec « #8B93A7 » au lieu du détail et sans couleur d'état (depuis la 2.4.0). Une seule fonction pour les deux usages.
