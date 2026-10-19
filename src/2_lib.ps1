@@ -1955,20 +1955,28 @@ function Get-MemChannel([string]$Locator, [string]$Bank) {
 }
 # XMP / EXPO activé ? Déduit de la vitesse actuelle, de la vitesse prévue par les barrettes et de leur tension.
 # Windows ne le dit pas directement : chaque conclusion dit sur quoi elle s'appuie, et « impossible à dire » existe.
-function Get-XmpState([string]$Type, [int]$Configured, [int]$Rated, [int]$VoltMv, [bool]$Jedec, [bool]$Laptop) {
+function Get-XmpState([string]$Type, [int]$Configured, [int]$Rated, [int]$VoltMv, [bool]$Jedec, [bool]$Laptop, [bool]$Am5 = $false) {
     $jedecMax = switch -Regex ($Type) { '^DDR5|^LPDDR5' { 6400 } '^DDR4|^LPDDR4' { 3200 } '^DDR3' { 1600 } default { 0 } }
     $jedecV = switch -Regex ($Type) { '^DDR5' { 1100 } '^DDR4' { 1200 } '^DDR3' { 1500 } default { 0 } }
+    # Vitesse de départ des barrettes « gaming » quand aucun profil n'est activé (au-dessus : réglage à la main ou autre profil)
+    $base = switch -Regex ($Type) { '^DDR5' { 4800 } '^DDR4' { 2400 } '^DDR3' { 1333 } default { 0 } }
     $highV = ($jedecV -and $VoltMv -ge ($jedecV + 50))
     $vTxt = if ($VoltMv -ge 500) { " · {0:N2} V" -f ($VoltMv / 1000.0) } else { '' }
+    $zen = ($Am5 -and $Type -match '^DDR5')
+    $sweet = if ($zen -and $Rated -gt 6050) { " Sur les Ryzen 7000 / 8000 / 9000, la vitesse idéale est en général 6000 MT/s : le contrôleur mémoire suit alors la RAM au même rythme (ratio 1:1). Au-delà, la carte mère le passe souvent en ratio 1:2 et la mémoire peut finir moins rapide. Le plus simple : activer l'EXPO, puis régler la vitesse sur 6000 MT/s." } else { '' }
+    $gain = " L'activer donne en général plus de FPS dans les jeux limités par le processeur. C'est un réglage prévu par le fabricant des barrettes ; si le PC devient instable (écrans bleus), il suffit de revenir au réglage d'avant."
     if ($Type -match '^LP') { return @{ State = 'soldered'; Text = "Mémoire soudée au PC (LP$($Type.Substring(2))) : sa vitesse est fixée par le fabricant, il n'y a pas de profil XMP/EXPO à régler." } }
     if (-not $Configured) { return @{ State = 'unknown'; Text = "Windows ne donne pas la vitesse de la mémoire sur ce PC." } }
     if ($Rated -gt 0) {
         if ($Configured -ge ($Rated - 50)) {
-            if ($Rated -gt $jedecMax -or $highV) { return @{ State = 'on'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes ($Rated MT/s)$vTxt : le profil XMP/EXPO est activé." } }
-            return @{ State = 'ok'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes$vTxt." }
+            $hi = if ($zen -and $Configured -gt 6050) { " Sur un Ryzen 7000 / 8000 / 9000, au-delà de 6000 MT/s la carte mère passe souvent le contrôleur mémoire en ratio 1:2 : 6000 MT/s est souvent aussi rapide, voire plus." } else { '' }
+            if ($Rated -gt $jedecMax -or $highV) { return @{ State = 'on'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes ($Rated MT/s)$vTxt : le profil XMP/EXPO est activé.$hi" } }
+            return @{ State = 'ok'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes$vTxt.$hi" }
         }
-        if ($highV -or $Configured -gt $jedecMax) { return @{ State = 'below'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s$vTxt : un profil est actif mais réglé en dessous de leur vitesse (souvent volontaire pour la stabilité, ou limite du processeur avec 4 barrettes)." } }
-        return @{ State = 'off'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s : le profil XMP/EXPO n'est pas activé dans le BIOS. L'activer donne en général plus de FPS dans les jeux limités par le processeur. C'est un réglage prévu par le fabricant des barrettes ; si le PC devient instable (écrans bleus), il suffit de le désactiver." }
+        if ($zen -and $Rated -gt 6050 -and [math]::Abs($Configured - 6000) -le 50) { return @{ State = 'ok'; Text = "Ta RAM tourne à $Configured MT/s (barrettes prévues pour $Rated MT/s)$vTxt : c'est la vitesse idéale pour les Ryzen 7000 / 8000 / 9000 (contrôleur mémoire au même rythme que la RAM). Rien à changer." } }
+        if ($highV -or $Configured -gt $jedecMax) { return @{ State = 'below'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s$vTxt : un profil est actif mais réglé en dessous de leur vitesse (souvent volontaire pour la stabilité, ou limite du processeur avec 4 barrettes).$sweet" } }
+        if ($base -and $Configured -gt ($base + 50)) { return @{ State = 'below'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s$vTxt : soit la vitesse a été réglée à la main plus bas dans le BIOS, soit leur profil XMP/EXPO n'est pas activé. Si ce n'est pas voulu, active le profil.$(if ($sweet) { $sweet } else { $gain })" } }
+        return @{ State = 'off'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s : le profil XMP/EXPO n'est pas activé dans le BIOS.$gain$sweet" }
     }
     if ($highV -or ($jedecMax -and $Configured -gt $jedecMax)) { return @{ State = 'on'; Text = "Ta RAM tourne à $Configured MT/s$vTxt, au-dessus de la vitesse standard de la $Type : un profil XMP/EXPO (ou un réglage manuel) est activé." } }
     if ($Jedec -or $Laptop) { return @{ State = 'standard'; Text = "Ta RAM tourne à $Configured MT/s$vTxt : ce sont des barrettes standard (sans profil XMP/EXPO), elles tournent à leur vitesse normale." } }
@@ -2081,14 +2089,15 @@ function Get-BiosInfo($I) {
         $rated = if ($ratedL.Count -eq $list.Count -and $ratedL.Count) { $ratedL[0] } elseif ($ratedL.Count) { $ratedL[0] } else { 0 }
         $volt = @($list | ForEach-Object { $_.Volt } | Where-Object { $_ -ge 500 } | Sort-Object -Descending)[0]
         $allJedec = ($list.Count -and @($list | Where-Object { $_.Jedec }).Count -eq $list.Count)
-        $xmp = Get-XmpState $type ([int]$conf) ([int]$rated) ([int]$volt) $allJedec ([bool]$I.IsLaptop)
+        $am5 = (-not $I.IsLaptop -and "$($I.Cpu)" -match '(?i)Ryzen\s+\d+\s+(PRO\s+)?[789]\d{3}')
+        $xmp = Get-XmpState $type ([int]$conf) ([int]$rated) ([int]$volt) $allJedec ([bool]$I.IsLaptop) $am5
         # Canaux : dual channel si les barrettes sont sur au moins 2 canaux
         $ch = 'unknown'; $letters = @($list | ForEach-Object { $_.Channel })
         if ($list.Count -eq 1) { $ch = 'one' }
         elseif ($list.Count -ge 2 -and -not @($letters | Where-Object { -not $_ }).Count) { $ch = $(if (@($letters | Select-Object -Unique).Count -ge 2) { 'dual' } else { 'single' }) }
         $parts = @($list | ForEach-Object { $_.Part } | Where-Object { $_ } | Select-Object -Unique)
         $sizes = @($list | ForEach-Object { $_.Size } | Select-Object -Unique)
-        $b.Ram = @{ Type = $type; Modules = $list; Count = $list.Count; Slots = $slots; MaxBytes = ($maxKb * 1KB); Total = [double](($list | Measure-Object Size -Sum).Sum)
+        $b.Ram = @{ Type = $type; Modules = $list; Count = $list.Count; Slots = $slots; MaxBytes = ($maxKb * 1KB); Total = [double](($list | ForEach-Object { [double]$_.Size } | Measure-Object -Sum).Sum)
                     Conf = [int]$conf; Rated = [int]$rated; Volt = [int]$volt; Xmp = $xmp; Channels = $ch; Mixed = ($parts.Count -gt 1 -or $sizes.Count -gt 1) }
     } catch {}
     # ---- Virtualisation (VT-x / AMD-V)

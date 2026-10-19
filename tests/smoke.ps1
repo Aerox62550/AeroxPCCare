@@ -643,6 +643,12 @@ function Invoke-Smoke {
         foreach ($c in @(@('DDR5', 4800, 6000, 1100, $false, $false, 'off'), @('DDR5', 6000, 6000, 1350, $false, $false, 'on'), @('DDR4', 3200, 0, 1350, $false, $false, 'on'), @('DDR4', 2666, 0, 1200, $true, $false, 'standard'), @('DDR4', 2666, 0, 1200, $false, $false, 'unknown'), @('LPDDR5', 6400, 0, 0, $false, $true, 'soldered'), @('DDR5', 5600, 6000, 1250, $false, $false, 'below'), @('DDR4', 3200, 3200, 1200, $false, $false, 'ok'))) {
             $r = Get-XmpState $c[0] $c[1] $c[2] $c[3] $c[4] $c[5]; if ($r.State -ne $c[6]) { throw "XMP $($c[0..5] -join '/') : $($r.State) au lieu de $($c[6])" }
         }
+        # Réglage à la main (rapport de Sam : kit 6400 réglé à 5600 sur Ryzen 7800X3D) et vitesse idéale des Ryzen 7000 / 9000
+        foreach ($c in @(@('DDR5', 5600, 6400, 0, $false, $false, $true, 'below', '6000 MT/s'), @('DDR5', 5600, 6400, 0, $false, $false, $false, 'below', 'à la main'), @('DDR5', 6000, 6400, 1350, $false, $false, $true, 'ok', 'idéale'), @('DDR5', 4800, 6400, 1100, $false, $false, $true, 'off', '6000 MT/s'), @('DDR5', 6400, 6400, 1350, $false, $false, $true, 'on', 'ratio 1:2'), @('DDR5', 6000, 6400, 1350, $false, $false, $false, 'below', 'profil'), @('DDR4', 3000, 3600, 1350, $false, $false, $true, 'below', 'profil'), @('DDR4', 2133, 3600, 1200, $false, $false, $false, 'off', 'pas activé'))) {
+            $r = Get-XmpState $c[0] $c[1] $c[2] $c[3] $c[4] $c[5] $c[6]
+            if ($r.State -ne $c[7] -or -not $r.Text.Contains($c[8])) { throw "XMP $($c[0..6] -join '/') : $($r.State) au lieu de $($c[7]) (texte : $($r.Text))" }
+        }
+        if ((Get-XmpState 'DDR4' 3000 3600 1350 $false $false $true).Text -match 'Ryzen') { throw "conseil Ryzen DDR5 donné pour de la DDR4" }
         foreach ($b in 'ASUS', 'MSI', 'Gigabyte', 'ASRock', 'Dell', '') { foreach ($w in 'xmp', 'virt', 'rebar', 'fans') { if (-not (Get-BiosHowTo $b $w $true $false 'DDR5')) { throw "pas d'explication $b / $w" } } }
     }
     Smoke 'Infos BIOS : ce PC' {
@@ -650,6 +656,7 @@ function Invoke-Smoke {
         $bi = Get-BiosInfo $si
         $r = $bi.Ram
         Write-Host ("        RAM : {0} barrette(s) {1}, {2} MT/s (prévue {3}), {4} mV, XMP {5}, canaux {6}, emplacements {7}" -f $r.Count, $r.Type, $r.Conf, $r.Rated, $r.Volt, $r.Xmp.State, $r.Channels, $r.Slots)
+        if ($r.Count -and $r.Total -lt 512MB) { throw "quantité de RAM fausse : $($r.Total) octets pour $($r.Count) barrette(s)" }
         Write-Host ("        barrettes : " + ((@($r.Modules) | ForEach-Object { "[$($_.Slot) / $($_.Bank) → $($_.Channel)] $($_.Maker) $($_.Part)" }) -join ' · '))
         Write-Host ("        virtualisation : {0} · Resizable BAR : {1} · logiciels ventilateurs : {2}" -f $bi.Virt, $bi.Rebar.State, ((@($bi.FanSoft)) -join ', '))
     }
