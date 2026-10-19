@@ -2,6 +2,18 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.4.5 : « Infos BIOS » et ventilateurs (demande de Sam)
+
+- Page Mon PC, section « Infos BIOS » (lecture seule, rien n'est modifié) :
+  - Mémoire : quantité, type, barrettes (fabricant + référence), vitesse actuelle (ConfiguredClockSpeed, en MT/s) et tension (ConfiguredVoltage).
+  - XMP / EXPO (Get-XmpState) : Windows ne le dit pas directement → déduit de 3 éléments : vitesse prévue lue dans la référence des barrettes (Get-RamRatedSpeed : G.Skill, Kingston FURY/HyperX, Crucial Ballistix/Pro, Corsair, TeamGroup/ADATA/Patriot « 6000C30 »…), vitesse au-dessus du standard JEDEC (DDR4 > 3200, DDR5 > 6400), tension au-dessus du standard (DDR4 > 1,25 V, DDR5 > 1,15 V). États : activé / vitesse prévue / standard (barrettes d'origine, Test-JedecPart) / désactivé / sous la vitesse prévue / mémoire soudée / impossible à dire (jamais deviné).
+  - Dual channel : canal lu dans le nom des emplacements (Get-MemChannel : « ChannelA », « DIMM_A2 », « P0 CHANNEL A », « A1 ») ; toutes les barrettes sur le même canal → simple canal (déplacer une barrette, A2 + B2) ; une seule barrette sur un PC fixe → conseil d'en ajouter une identique ; nom d'emplacement illisible → « non lisible ».
+  - Emplacements utilisés / libres et capacité maximale (PC fixes), barrettes différentes.
+  - Virtualisation (VT-x / AMD-V) : utilisée par Windows (HypervisorPresent), activée ou désactivée dans le BIOS (VirtualizationFirmwareEnabled).
+  - Resizable BAR (cartes NVIDIA, nvidia-smi -q -d MEMORY : BAR1 > 256 Mo = activé) ; RTX 3000+ sans ReBAR → à activer ; autres cartes → non pris en charge / non lisible (AMD SAM dans AMD Software).
+  - Pour chaque réglage à changer : où le trouver selon la marque (Get-BiosHowTo : ASUS, MSI, Gigabyte, ASRock, Dell, HP, Lenovo, Acer ; PC de marque / portables : pas de XMP en général).
+- Section « Ventilateurs » : vitesse de chaque ventilateur en direct (module de températures LibreHardwareMonitor, carte mère activée dans le lecteur de capteurs : lecture seule ; PawnIO pour la puce de la carte mère), % de commande, ventilateurs de la carte graphique à l'arrêt = mode 0 dB normal. Alertes seulement si sûres : aucun ventilateur de la carte mère ne tourne avec le processeur ≥ 85 °C ; ventilateurs de la carte graphique arrêtés à ≥ 80 °C ; info (pas alerte) si un ventilateur (hors pompe) tourne vite au repos. Profils silence / standard / performance : où les régler dans le BIOS selon la marque, ou le logiciel du fabricant détecté (Armoury Crate, MSI Center, iCUE, NZXT CAM, FanControl, Lenovo Vantage, OMEN Gaming Hub…). AEROX ne règle jamais les ventilateurs (risque de surchauffe).
+
 ## Publié en 2.4.4 : fausse alerte « système de fichiers à réparer »
 
 - Vu dans les statistiques : « probleme:ntfs » sur 4 diagnostics sur 4. Cause : l'événement Ntfs 98 a deux sens selon son niveau — information à chaque démarrage (« le volume est en bon état, aucune action n'est nécessaire ») ou erreur (« le volume doit être vérifié par chkdsk »). AEROX ne regardait que le numéro. Corrigé : seuls les événements de disque de niveau critique / erreur / avertissement comptent (Select-DiskProblemEvents), pour toutes les alertes disque (diskbad, diskretry, ntfs). Explique aussi le rapport n° 24 (alerte puis vérification sans erreur).

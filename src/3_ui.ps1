@@ -1574,9 +1574,48 @@ function New-InfoRow([string]$Label, [string]$Value, [string]$Pill = '', [string
     return $box
 }
 
+# Carte « Ventilateurs » de la page Mon PC : redessinée toutes les 3 secondes tant que la page est ouverte
+function Update-FanCard($Sens = $null, $Tool = $null) {
+    $u = $script:FanUi
+    if (-not $u -or -not $u.Panel) { return }
+    $s = if ($null -ne $Sens) { $Sens } else { $sync.Sens }
+    $ts = if ($null -ne $Tool) { $Tool } else { $script:ToolSt }
+    $p = $u.Panel; $p.Children.Clear()
+    $add = { param($el) [void]$p.Children.Add($el) }
+    if (-not $ts -or -not $ts.Lhm) {
+        $t = New-Text "Pour voir la vitesse de chaque ventilateur, installe le module de températures (gratuit, le même que pour l'overlay). Il lit aussi les températures du processeur et de la carte graphique." 12.5 '#A9B0C2'; $t.LineHeight = 19; & $add $t
+        $b = New-Button 'Installer le module de températures' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'inst-lhm' } } $false; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 4; & $add $b
+    } elseif (-not ($null -ne $Sens -or $sync.SensMode -eq 'lhm' -or ($s -and $s.ContainsKey('fans')))) {
+        & $add (New-Text "Lecture des ventilateurs…" 13 '#A9B0C2')
+    } else {
+        if (-not $s) { $s = @{} }
+        $f = Get-FanFindings @($s['fans']) $s['cpu.temp'] $s['cpu.load'] $s['gpu.temp']
+        foreach ($a in $f.Alerts) {
+            $bx = New-Object System.Windows.Controls.Border; $bx.CornerRadius = Corner 8; $bx.Padding = Th 12 8 12 8; $bx.Margin = Th 0 0 0 8
+            $bx.Background = Brush $(if ($a.Kind -eq 'bad') { '#3A1B1B' } else { '#211B3D' })
+            $bx.Child = (New-Text ($(if ($a.Kind -eq 'bad') { '⚠ ' } else { 'ℹ ' }) + $a.Text) 12.5 $(if ($a.Kind -eq 'bad') { '#FFB4B4' } else { '#C9BEFF' })); & $add $bx
+        }
+        foreach ($r in $f.Rows) {
+            $pill = ''; $pk = ''; $help = ''
+            if ($r.Note -eq 'zero') { $pill = 'Mode silence'; $pk = 'ok'; $help = "À l'arrêt quand la carte graphique ne chauffe pas : c'est normal (mode « 0 dB »), ils démarrent tout seuls quand elle travaille." }
+            elseif ($r.Note -eq 'bad') { $pill = 'À vérifier'; $pk = 'bad' }
+            & $add (New-InfoRow $r.Label $r.Text $pill $pk $help)
+        }
+        if (-not $f.Rows.Count) {
+            $msg = if (-not $f.Mb -and -not $ts.PawnIO -and -not $u.Oem) { "Les ventilateurs de la carte mère se lisent avec le pilote PawnIO (gratuit, signé, utilisé par les logiciels de monitoring connus) : installe-le depuis l'onglet Gaming > En direct." }
+                   else { "Ce PC ne donne pas la vitesse de ses ventilateurs à Windows (fréquent sur les portables et les PC de marque : c'est le PC lui-même qui les pilote)." }
+            $t = New-Text $msg 12.5 '#A9B0C2'; $t.LineHeight = 19; & $add $t
+        }
+        if ($f.IdleHeaders -gt 0 -and $f.Rows.Count) { $t = New-Text ("{0} prise(s) de ventilateur de la carte mère à 0 tr/min : rien n'y est branché, c'est normal." -f $f.IdleHeaders) 12 '#7A8399'; $t.Margin = Th 0 2 0 0; & $add $t }
+    }
+    $how = New-Text ("Régler le bruit des ventilateurs (silence / standard / performance) : " + (Get-BiosHowTo $u.Brand 'fans' $u.Amd $u.Oem) +
+        $(if (@($u.Soft).Count) { "`nSur ce PC, tu peux aussi le faire avec : " + (@($u.Soft) -join ', ') + "." } elseif (-not $u.Oem) { "`nPour des courbes sur mesure sous Windows : FanControl (gratuit et reconnu)." } else { '' }) +
+        "`nAEROX affiche les ventilateurs mais ne les règle pas lui-même : un mauvais réglage peut faire surchauffer le PC.") 12 '#7A8399'
+    $how.Margin = Th 0 10 0 0; $how.LineHeight = 18; & $add $how
+}
 function Build-SystemPage {
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Mon PC" "Carte mère, version du BIOS, sécurité du démarrage (TPM, Secure Boot) et santé de la batterie sur les portables. Juste des infos : rien n'est modifié ici. Pratique avant d'installer Windows 11, un jeu avec anti-triche (Valorant, Battlefield, Call of Duty...) ou un nouveau processeur."
+    Build-Header $sp "Mon PC" "Carte mère, infos du BIOS (mémoire et XMP / EXPO, dual channel, virtualisation, Resizable BAR), ventilateurs, sécurité du démarrage (TPM, Secure Boot) et batterie des portables. Tout est lu depuis Windows, sans aller dans le BIOS : rien n'est modifié ici."
     $i = $sync.SysInfo
     if (-not $i) {
         if (-not $script:SysWaiting) { $script:SysWaiting = $true; Start-Background 'Get-SystemInfo' }
@@ -1608,6 +1647,69 @@ function Build-SystemPage {
     $b = New-Button "Redémarrer dans le BIOS" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'bios-reboot' } } $false; $b.Margin = Th 0 0 8 0; Add-Child $bw $b
     Add-Child $cs $bw
     $c.Child = $cs; Add-Child $sp $c
+
+    # ---- Infos BIOS : ce que le BIOS a réglé, lu depuis Windows (rien n'est modifié)
+    $bi = $i.BiosInfo
+    Add-Child $sp (New-Section 'Infos BIOS')
+    $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+    $t = New-Text "Ce que le BIOS a réglé, lu directement depuis Windows : pas besoin d'y aller pour savoir. Pour chaque réglage à changer, AEROX te dit où le trouver sur ta carte mère (les noms peuvent varier un peu selon la version du BIOS)." 12.5 '#A9B0C2'
+    $t.Margin = Th 0 0 0 6; $t.LineHeight = 19; Add-Child $cs $t
+    $amd = [bool]$i.CpuAmd
+    if (-not $bi -or -not $bi.Ram -or -not $bi.Ram.Count) { Add-Child $cs (New-InfoRow 'Mémoire vive (RAM)' 'Non lisible sur ce PC') }
+    else {
+        $r = $bi.Ram
+        $kits = @($r.Modules | Group-Object { "$($_.Maker)|$($_.Part)|$($_.Size)" } | ForEach-Object {
+            $m = $_.Group[0]
+            $ref = (@($m.Maker, $m.Part) | Where-Object { $_ -and $_ -notmatch '(?i)^(unknown|undefined|not specified|0+)$' }) -join ' '
+            "{0} × {1}{2}" -f $_.Count, (Format-Size $m.Size), $(if ($ref) { " ($ref)" } else { '' }) })
+        Add-Child $cs (New-InfoRow 'Mémoire vive (RAM)' ("{0}{1}  ·  {2}" -f (Format-Size $r.Total), $(if ($r.Type) { " $($r.Type)" } else { '' }), ($kits -join ' + ')))
+        $x = $r.Xmp
+        $freq = if ($r.Conf) { "$($r.Conf) MT/s" + $(if ($r.Rated -and [math]::Abs($r.Rated - $r.Conf) -gt 50) { "  (prévue : $($r.Rated) MT/s)" } else { '' }) } else { 'inconnue' }
+        $pl = switch ($x.State) { 'on' { @('XMP / EXPO activé', 'ok') } 'ok' { @('Vitesse prévue', 'ok') } 'standard' { @('Vitesse normale', 'ok') } 'off' { @('XMP / EXPO désactivé', 'warn') } 'below' { @('Sous la vitesse prévue', 'info') } 'soldered' { @('Fixée', 'info') } default { @('Impossible à dire', 'info') } }
+        $help = $x.Text
+        if ($x.State -in 'off', 'unknown', 'below') { $help += "`n" + (Get-BiosHowTo $i.Brand 'xmp' $amd $bi.Oem $r.Type) }
+        Add-Child $cs (New-InfoRow 'Fréquence (XMP / EXPO)' $freq $pl[0] $pl[1] $help)
+        $chs = @($r.Modules | ForEach-Object { $_.Channel } | Where-Object { $_ } | Select-Object -Unique | Sort-Object)
+        switch ($r.Channels) {
+            'dual'   { Add-Child $cs (New-InfoRow 'Dual channel' ("Oui  ·  canaux " + ($chs -join ', ')) 'OK' 'ok' "La mémoire travaille sur $($chs.Count) canaux en même temps : c'est le bon montage.") }
+            'single' { Add-Child $cs (New-InfoRow 'Dual channel' ("Non  ·  toutes les barrettes sur le canal " + ($chs -join ', ')) 'Simple canal' 'warn' ("Tes $($r.Count) barrettes sont toutes sur le même canal : la mémoire n'utilise que la moitié de sa bande passante (moins de FPS, PC moins réactif). Ce n'est pas un réglage du BIOS : il faut déplacer une barrette. Avec 2 barrettes, la plupart des cartes mères veulent les emplacements A2 et B2 (le 2e et le 4e en partant du processeur) : vérifie dans le manuel de ta carte mère, PC éteint et débranché.")) }
+            'one'    { if (-not $bi.Oem -and $r.Slots -ge 2) { Add-Child $cs (New-InfoRow 'Dual channel' 'Non  ·  une seule barrette' 'Simple canal' 'info' "Avec une seule barrette, la mémoire travaille sur un seul canal. Ajouter une 2e barrette identique (même modèle, même taille) double la bande passante : un vrai gain en jeu pour pas cher.") } }
+            default  { if ($r.Count -ge 2) { Add-Child $cs (New-InfoRow 'Dual channel' 'Non lisible' '' '' "La carte mère ne donne pas le nom de ses emplacements à Windows : impossible de savoir ici si les barrettes sont sur deux canaux.") } }
+        }
+        if (-not $i.IsLaptop -and $r.Slots -gt 0 -and $r.Slots -ge $r.Count) {
+            $free = $r.Slots - $r.Count
+            Add-Child $cs (New-InfoRow 'Emplacements' ("{0} sur {1} utilisés{2}{3}" -f $r.Count, $r.Slots, $(if ($free) { "  ·  $free libre(s)" } else { '' }), $(if ($r.MaxBytes -ge 4GB) { "  ·  jusqu'à " + (Format-Size $r.MaxBytes) } else { '' })))
+        }
+        if ($r.Mixed -and $r.Count -ge 2) { Add-Child $cs (New-InfoRow 'Barrettes' 'Modèles ou tailles différents' 'À savoir' 'info' "Des barrettes différentes fonctionnent ensemble, mais le profil XMP/EXPO peut être moins stable. Pour un PC sans souci, l'idéal est un kit de barrettes identiques.") }
+    }
+    if ($bi) {
+        $vName = if ($amd) { 'AMD-V (SVM)' } else { 'Intel VT-x' }
+        switch ($bi.Virt) {
+            'inuse'  { Add-Child $cs (New-InfoRow 'Virtualisation' "$vName  ·  activée, utilisée par Windows" 'Activée' 'ok' "Windows l'utilise déjà (Hyper-V, WSL, sécurité basée sur la virtualisation). Les émulateurs (BlueStacks…) et les machines virtuelles peuvent s'en servir.") }
+            'on'     { Add-Child $cs (New-InfoRow 'Virtualisation' "$vName  ·  activée" 'Activée' 'ok' "Utile pour les émulateurs Android (BlueStacks…), WSL et les machines virtuelles.") }
+            'off'    { Add-Child $cs (New-InfoRow 'Virtualisation' "$vName  ·  désactivée dans le BIOS" 'Désactivée' 'info' ("Pas un problème pour jouer ou travailler. Il faut l'activer seulement pour les émulateurs Android (BlueStacks, LDPlayer…), WSL ou les machines virtuelles.`n" + (Get-BiosHowTo $i.Brand 'virt' $amd $bi.Oem))) }
+            default  { Add-Child $cs (New-InfoRow 'Virtualisation' 'Non lisible') }
+        }
+        $rb = $bi.Rebar
+        if ($rb -and $rb.State -ne 'unknown') {
+            switch ($rb.State) {
+                'on'          { Add-Child $cs (New-InfoRow 'Resizable BAR' ("Activé  ·  {0}" -f $rb.Gpu) 'Activé' 'ok' "Le processeur accède à toute la mémoire de la carte graphique d'un coup : quelques % de FPS en plus dans certains jeux.") }
+                'off'         { Add-Child $cs (New-InfoRow 'Resizable BAR' ("Désactivé  ·  {0}" -f $rb.Gpu) 'Désactivé' 'warn' ("Ta carte graphique le prend en charge mais il est désactivé : l'activer donne quelques % de FPS en plus dans certains jeux, sans risque. Il faut que le PC démarre en UEFI avec le mode « CSM » désactivé (voir « Sécurité du démarrage »).`n" + (Get-BiosHowTo $i.Brand 'rebar' $amd $bi.Oem))) }
+                'unsupported' { Add-Child $cs (New-InfoRow 'Resizable BAR' ("Non pris en charge  ·  {0}" -f $rb.Gpu) '' '' "Cette carte graphique ne le prend pas en charge (cartes NVIDIA RTX 3000 et plus récentes seulement) : rien à faire.") }
+            }
+        } else { Add-Child $cs (New-InfoRow 'Resizable BAR' 'Non lisible depuis Windows pour cette carte graphique' '' '' "Cartes AMD : regarde « Smart Access Memory » dans AMD Software. Cartes Intel Arc : il est indispensable, vérifie « Re-Size BAR » dans le BIOS.") }
+    }
+    Add-Child $cs (New-InfoRow 'Démarrage, TPM, Secure Boot' 'Voir « Sécurité du démarrage » plus bas')
+    $c.Child = $cs; Add-Child $sp $c
+
+    # ---- Ventilateurs (vitesse en direct avec le module de températures ; AEROX ne les règle pas)
+    Add-Child $sp (New-Section 'Ventilateurs')
+    $c = New-CardBorder; $fsp = New-Object System.Windows.Controls.StackPanel
+    if (-not $script:ToolSt -or -not $script:ToolStAt -or ((Get-Date) - $script:ToolStAt).TotalSeconds -gt 60) { $script:ToolSt = Get-ToolStatus; $script:ToolStAt = Get-Date }
+    $script:FanUi = @{ Panel = $fsp; Brand = $i.Brand; Amd = $amd; Oem = $(if ($bi) { $bi.Oem } else { [bool]$i.IsLaptop }); Soft = $(if ($bi) { @($bi.FanSoft) } else { @() }); Lhm = [bool]$script:ToolSt.Lhm }
+    if ($script:ToolSt.Lhm) { Start-Sensors }
+    Update-FanCard
+    $c.Child = $fsp; Add-Child $sp $c
 
     # ---- Sécurité du démarrage
     Add-Child $sp (New-Section 'Sécurité du démarrage')
@@ -1692,7 +1794,7 @@ function Build-SystemPage {
         Add-Child $cs (New-InfoRow $d.Name ("{0} x {1}  ·  {2} Hz" -f $d.Width, $d.Height, $d.Hz) $(if ($low) { "Peut aller à $($d.MaxHz) Hz" } else { 'OK' }) $(if ($low) { 'warn' } else { 'ok' }) $(if ($low) { "Ton écran est capable de $($d.MaxHz) Hz mais Windows l'utilise à $($d.Hz) Hz : l'image est moins fluide. Le réglage revient tout seul au bout de 15 secondes si l'image ne s'affiche pas bien." } else { '' }))
         if ($low) { $b = New-Button "Passer à $($d.MaxHz) Hz" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'display-fix'; Device = $d.Device } } $false; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 190 2 0 8; Add-Child $cs $b }
     }
-    Add-Child $cs (New-InfoRow 'Mémoire' ("{0}{1}{2}" -f (Format-Size $i.Ram), $(if ($i.RamModules) { "  ·  $($i.RamModules) barrette(s)" } else { '' }), $(if ($i.RamSpeed) { "  ·  $($i.RamSpeed) MHz" } else { '' })))
+    Add-Child $cs (New-InfoRow 'Mémoire' ("{0}{1}{2}" -f (Format-Size $i.Ram), $(if ($i.RamModules) { "  ·  $($i.RamModules) barrette(s)" } else { '' }), $(if ($i.RamSpeed) { "  ·  $($i.RamSpeed) MT/s" } else { '' })))
     $c.Child = $cs; Add-Child $sp $c
 
     # ---- Batterie (portables)
@@ -2096,6 +2198,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.4.5' = @("Nouveau dans « Mon PC » : les infos du BIOS sans avoir à y aller. Mémoire (XMP / EXPO activé ou pas, vitesse prévue par tes barrettes, dual channel bien monté), virtualisation, Resizable BAR, et pour chaque réglage à changer : où le trouver sur ta carte mère (ASUS, MSI, Gigabyte, ASRock…).", "Ventilateurs : la vitesse de chacun en direct (avec le module de températures), avec une alerte s'il y en a un à l'arrêt alors que ça chauffe, et où régler les profils silence / standard / performance.")
     '2.4.4' = @("Correction : l'alerte « Le système de fichiers d'un disque est à réparer » apparaissait à tort sur presque tous les PC (Windows note chaque démarrage que le disque va bien, AEROX le prenait pour une erreur). Seuls les vrais problèmes sont signalés maintenant.")
     '2.4.3' = @("Nouveau : « Partager AEROX à un ami » (onglet Aide) copie un petit message tout prêt avec le lien, à coller sur Discord, WhatsApp, Snap… Tu aimes AEROX ? Fais-le connaître, et signale le moindre souci : chaque retour compte !", "Sécurité renforcée : AEROX vérifie l'empreinte de ses propres fichiers avant de les lancer avec les droits administrateur (utile surtout pour la version portable).", "Test de la webcam : l'application Caméra de Windows s'ouvre de nouveau pour vérifier l'image.", "Mise à jour des logiciels : elle ne s'arrête plus en plein milieu quand l'outil de mise à jour de Windows se met à jour lui-même.", "Erreurs de lecture d'une clé USB ou d'un disque externe : elles ne sont plus présentées comme une panne du disque de Windows, et AEROX te dit quel disque est concerné.")
     '2.4.2' = @("Écran qui devient noir quelques secondes puis revient : le diagnostic le repère beaucoup mieux (toutes les traces que Windows garde des décrochages de la carte graphique), te dit si ça a commencé avec ton dernier pilote, et ce qu'il faut faire.", "Si Windows 11 bloque AEROX au démarrage (Contrôle intelligent des applications), le message explique maintenant clairement pourquoi et quoi faire.")
@@ -3839,6 +3942,17 @@ while (-not $sync.SensStop) {
                 $x = Pick $s 'Power' @('GPU Package', 'GPU Power', 'GPU Core'); if ($x) { $v['gpu.power'] = $x }
                 $x = Pick $s 'Clock' @('GPU Core'); if ($x) { $v['gpu.clock'] = $x }
             }
+            # Ventilateurs : carte mère (puce de surveillance) et cartes graphiques dédiées, avec leur % de commande s'il existe
+            $fans = New-Object System.Collections.ArrayList
+            foreach ($hw in $hws.Values) {
+                $src = if ($hw.Type -eq 'Motherboard') { 'mb' } elseif ($hw.Type -in 'GpuNvidia', 'GpuAmd' -and $hw.Name -notmatch 'Radeon\(TM\) Graphics|Radeon Graphics$') { 'gpu' } else { '' }
+                if (-not $src) { continue }
+                foreach ($fs in $hw.Sens) {
+                    if ($fs.SensorType -ne 'Fan') { continue }
+                    [void]$fans.Add(@{ Src = $src; Name = $fs.Name; Rpm = [double]$fs.Value; Pct = (Pick $hw.Sens 'Control' @($fs.Name)) })
+                }
+            }
+            if ($fans.Count) { $v['fans'] = $fans.ToArray() }
         } catch { $sync.SensError = $_.Exception.Message }
     }
     if (-not $v.ContainsKey('cpu.load')) {
@@ -3896,7 +4010,7 @@ function Start-FpsCounter {
 function Stop-FpsCounter { if ($script:Fps) { try { $script:Fps.Stop() } catch {} } }
 function Stop-Monitoring { Stop-FpsCounter; Stop-Sensors }
 
-function Test-MonitorNeeded { return (($script:Cur -eq 'monitor' -and -not $script:InTray) -or ($script:Ov -and $script:Ov.IsVisible) -or $script:GameSess -or $script:GameProbe) }
+function Test-MonitorNeeded { return (($script:Cur -eq 'monitor' -and -not $script:InTray) -or ($script:Cur -eq 'system' -and -not $script:InTray -and $script:FanUi -and $script:FanUi.Lhm) -or ($script:Ov -and $script:Ov.IsVisible) -or $script:GameSess -or $script:GameProbe) }
 
 # Collecte : capteurs + FPS du jeu au premier plan
 function Update-LiveData {
@@ -4270,6 +4384,7 @@ function Invoke-MonitorTick {
         Update-OverheatAlert
         if ($script:GameSess) { try { Add-GameSample } catch { Write-Bug -Context 'Gaming : mesure de la partie' -ErrorRecord $_ } }
         if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Update-MonitorUi }
+        if ($script:Cur -eq 'system' -and -not $script:InTray -and $script:FanUi) { try { Update-FanCard } catch { Write-Bug -Context 'Mon PC : ventilateurs' -ErrorRecord $_ } }
         Update-OverlayValues
     } else {
         $script:MonIdle++

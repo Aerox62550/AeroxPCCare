@@ -636,6 +636,39 @@ function Invoke-Smoke {
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
+    Smoke 'Infos BIOS : vitesse prévue des barrettes, canaux, XMP / EXPO' {
+        $cases = @{ 'CMK32GX5M2B6000C36' = 6000; 'F4-3600C16-8GVKC' = 3600; 'F5-6000J3038F16G' = 6000; 'KF560C36BBEK2-32' = 6000; 'KF432C16BB/8' = 3200; 'BL8G32C16U4B' = 3200; 'CP2K16G56C46U5' = 5600; 'TF3D416G3200HC16F' = 3200; 'M471A1K43DB1-CWE' = 0; 'HMA81GS6CJR8N-XN' = 0; '' = 0; 'AX5U6000C3016G-B' = 6000; 'PSD48G266681' = 0 }
+        foreach ($k in $cases.Keys) { $r = Get-RamRatedSpeed $k; if ($r -ne $cases[$k]) { throw "vitesse de « $k » : $r au lieu de $($cases[$k])" } }
+        foreach ($c in @(@('DIMM_A2', 'BANK 1', 'A'), @('ChannelB-DIMM0', 'BANK 2', 'B'), @('DIMM 1', 'P0 CHANNEL A', 'A'), @('A1', '', 'A'), @('DIMM0', 'BANK 0', ''), @('XMM1', '', ''))) { $r = Get-MemChannel $c[0] $c[1]; if ($r -ne $c[2]) { throw "canal de $($c[0]) / $($c[1]) : [$r] au lieu de [$($c[2])]" } }
+        foreach ($c in @(@('DDR5', 4800, 6000, 1100, $false, $false, 'off'), @('DDR5', 6000, 6000, 1350, $false, $false, 'on'), @('DDR4', 3200, 0, 1350, $false, $false, 'on'), @('DDR4', 2666, 0, 1200, $true, $false, 'standard'), @('DDR4', 2666, 0, 1200, $false, $false, 'unknown'), @('LPDDR5', 6400, 0, 0, $false, $true, 'soldered'), @('DDR5', 5600, 6000, 1250, $false, $false, 'below'), @('DDR4', 3200, 3200, 1200, $false, $false, 'ok'))) {
+            $r = Get-XmpState $c[0] $c[1] $c[2] $c[3] $c[4] $c[5]; if ($r.State -ne $c[6]) { throw "XMP $($c[0..5] -join '/') : $($r.State) au lieu de $($c[6])" }
+        }
+        foreach ($b in 'ASUS', 'MSI', 'Gigabyte', 'ASRock', 'Dell', '') { foreach ($w in 'xmp', 'virt', 'rebar', 'fans') { if (-not (Get-BiosHowTo $b $w $true $false 'DDR5')) { throw "pas d'explication $b / $w" } } }
+    }
+    Smoke 'Infos BIOS : ce PC' {
+        $si = $sync.SysInfo; if (-not $si) { Get-SystemInfo | Out-Null; $si = $sync.SysInfo }
+        $bi = Get-BiosInfo $si
+        $r = $bi.Ram
+        Write-Host ("        RAM : {0} barrette(s) {1}, {2} MT/s (prévue {3}), {4} mV, XMP {5}, canaux {6}, emplacements {7}" -f $r.Count, $r.Type, $r.Conf, $r.Rated, $r.Volt, $r.Xmp.State, $r.Channels, $r.Slots)
+        Write-Host ("        barrettes : " + ((@($r.Modules) | ForEach-Object { "[$($_.Slot) / $($_.Bank) → $($_.Channel)] $($_.Maker) $($_.Part)" }) -join ' · '))
+        Write-Host ("        virtualisation : {0} · Resizable BAR : {1} · logiciels ventilateurs : {2}" -f $bi.Virt, $bi.Rebar.State, ((@($bi.FanSoft)) -join ', '))
+    }
+    Smoke 'Ventilateurs : lecture et alertes (cas fabriqués)' {
+        $f = Get-FanFindings @(@{ Src = 'mb'; Name = 'Fan #1'; Rpm = 0 }, @{ Src = 'mb'; Name = 'Fan #2'; Rpm = 0 }) 90 50 40
+        if ($f.Alerts.Count -ne 1 -or $f.Alerts[0].Kind -ne 'bad') { throw "processeur chaud sans ventilateur pas signalé" }
+        $f = Get-FanFindings @(@{ Src = 'gpu'; Name = 'GPU Fan 1'; Rpm = 0; Pct = 0 }, @{ Src = 'mb'; Name = 'CPU Fan'; Rpm = 1100; Pct = 40 }, @{ Src = 'mb'; Name = 'Fan #3'; Rpm = 0 }) 45 5 48
+        if ($f.Alerts.Count -or $f.Rows.Count -ne 2 -or $f.IdleHeaders -ne 1 -or $f.Rows[1].Note -ne 'zero') { throw "PC normal : alerte ou lignes fausses" }
+        if ((Get-FanFindings @(@{ Src = 'gpu'; Name = 'GPU Fan'; Rpm = 0 }) 50 10 85).Alerts.Count -ne 1) { throw "carte graphique chaude ventilateurs arrêtés pas signalée" }
+        if ((Get-FanFindings @(@{ Src = 'mb'; Name = 'AIO Pump'; Rpm = 3000 }) 40 5 40).Alerts.Count) { throw "pompe de watercooling signalée à tort" }
+        $old = $script:FanUi
+        try {
+            $script:FanUi = @{ Panel = (New-Object System.Windows.Controls.StackPanel); Brand = 'ASUS'; Amd = $true; Oem = $false; Soft = @('Armoury Crate'); Lhm = $true }
+            Update-FanCard @{ fans = @(@{ Src = 'mb'; Name = 'CPU Fan'; Rpm = 1200; Pct = 45 }); 'cpu.temp' = 50; 'cpu.load' = 10; 'gpu.temp' = 40 } @{ Lhm = $true; PawnIO = $true }
+            if ($script:FanUi.Panel.Children.Count -lt 2) { throw "carte des ventilateurs vide" }
+            Update-FanCard @{} @{ Lhm = $false; PawnIO = $false }
+            if ($script:FanUi.Panel.Children.Count -lt 2) { throw "carte sans module vide" }
+        } finally { $script:FanUi = $old }
+    }
     Smoke 'Disques : un message « volume en bon état » n est pas une erreur' {
         $ev = @([pscustomobject]@{ Id = 98; Level = 4 }, [pscustomobject]@{ Id = 98; Level = 2 }, [pscustomobject]@{ Id = 55; Level = 2 }, [pscustomobject]@{ Id = 153; Level = 3 }, [pscustomobject]@{ Id = 7; Level = 0 }, [pscustomobject]@{ Id = 98; Level = 4 })
         $k = @(Select-DiskProblemEvents $ev)
