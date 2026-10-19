@@ -30,7 +30,7 @@ function New-SessionShortcutPath([string]$Ext) {
 function Open-UrlAsSessionUser([string]$Url) {
     $tn = 'AEROX PC Care - ouvrir un lien'
     try {
-        $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        $user = "$((Get-CimStatic Win32_ComputerSystem).UserName)"
         if (-not $user) { return $false }
         $lnk = New-SessionShortcutPath '.url'
         $abs = ([uri]$Url).AbsoluteUri
@@ -51,7 +51,7 @@ function Open-UrlAsSessionUser([string]$Url) {
 function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
     $tn = 'AEROX PC Care - lancer pour la session'
     try {
-        $user = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        $user = "$((Get-CimStatic Win32_ComputerSystem).UserName)"
         if (-not $user -or -not $Exe) { return $false }
         $explorer = Join-Path $env:SystemRoot 'explorer.exe'
         if ([IO.Path]::GetFileName($Exe) -ieq 'explorer.exe') {
@@ -303,7 +303,7 @@ function Test-OtherAccount {
 function Test-OtherAccountNow {
     try {
         $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $console = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+        $console = "$((Get-CimStatic Win32_ComputerSystem).UserName)"
         return ($console -and $me -and $console -ne $me)
     } catch { return $false }
 }
@@ -314,7 +314,7 @@ function Get-SessionUser {
     $r = @{ Other = $false; Sid = ''; Profile = $env:USERPROFILE; Hkcu = 'HKCU:' }
     try {
         if (Test-OtherAccount) {
-            $name = "$((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).UserName)"
+            $name = "$((Get-CimStatic Win32_ComputerSystem).UserName)"
             $sid = ([Security.Principal.NTAccount]$name).Translate([Security.Principal.SecurityIdentifier]).Value
             $hk = "Registry::HKEY_USERS\$sid"
             $prof = "$((Get-CimInstance Win32_UserProfile -Filter ("SID='{0}'" -f $sid) -ErrorAction Stop).LocalPath)"
@@ -766,12 +766,12 @@ function Find-BiosPage {
 function Get-SystemInfo {
     $i = @{ Ready = $true }
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem; $bb = Get-CimInstance Win32_BaseBoard; $bios = Get-CimInstance Win32_BIOS
+        $cs = Get-CimStatic Win32_ComputerSystem -Quiet; $bb = Get-CimStatic Win32_BaseBoard -Quiet; $bios = Get-CimStatic Win32_BIOS -Quiet
         $os = Get-CimInstance Win32_OperatingSystem; $csp = Get-CimInstance Win32_ComputerSystemProduct
         $i.PcMaker = "$($cs.Manufacturer)".Trim(); $i.PcModel = "$($cs.Model)".Trim()
         if ($i.PcMaker -match '(?i)lenovo' -and $csp.Version) { $i.PcModel = "$($csp.Version)".Trim() }
         $i.BoardMaker = "$($bb.Manufacturer)".Trim(); $i.BoardModel = "$($bb.Product)".Trim()
-        $chassis = @((Get-CimInstance Win32_SystemEnclosure).ChassisTypes)
+        $chassis = @((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes)
         $i.IsLaptop = [bool](@($chassis | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count)
         # PC assemblé : le nom du « PC » est vide ou générique → on se fie à la carte mère
         $generic = '(?i)^(system manufacturer|system product name|to be filled|default string|o\.e\.m|not applicable|)$'
@@ -784,11 +784,11 @@ function Get-SystemInfo {
         if ($bios.ReleaseDate) { $i.BiosDate = ConvertTo-DateSafe $bios.ReleaseDate; $i.BiosAgeDays = [int]((Get-Date) - $i.BiosDate).TotalDays }
         $brand = $script:BrandSites | Where-Object { $i.Maker -match "(?i)$($_.Re)" } | Select-Object -First 1
         if ($brand) { $i.Brand = $brand.Name; $i.BrandSite = $brand.Site; $i.BrandTool = $brand.Tool }
-        $i.Cpu = ("$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name)".Trim() -replace '\s+', ' ')
+        $i.Cpu = ("$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)".Trim() -replace '\s+', ' ')
         $i.CpuAmd = ($i.Cpu -match '(?i)amd|ryzen')
-        $i.Gpu = @(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name } | Where-Object { $_ -notmatch '(?i)basic display|remote|virtual|parsec|meta' })
+        $i.Gpu = @(Get-CimStatic Win32_VideoController -Quiet | ForEach-Object { $_.Name } | Where-Object { $_ -notmatch '(?i)basic display|remote|virtual|parsec|meta' })
         $i.Ram = [double]$cs.TotalPhysicalMemory
-        $mods = @(Get-CimInstance Win32_PhysicalMemory)
+        $mods = @(Get-CimStatic Win32_PhysicalMemory -Quiet)
         $i.RamModules = $mods.Count
         $spd = @($mods | ForEach-Object { if ($_.ConfiguredClockSpeed) { $_.ConfiguredClockSpeed } else { $_.Speed } } | Where-Object { $_ }) | Sort-Object | Select-Object -First 1
         $i.RamSpeed = $spd
@@ -1221,7 +1221,7 @@ function Repair-Webcam {
 function Restart-Shell {
     Step "Relance du bureau et de la barre des tâches (Explorateur Windows)"
     $owner = ''
-    try { $owner = "$((Get-CimInstance Win32_ComputerSystem).UserName)" } catch {}
+    try { $owner = "$((Get-CimStatic Win32_ComputerSystem -Quiet).UserName)" } catch {}
     Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     # Windows relance tout seul l'Explorateur de la personne connectée ; sinon on le relance pour elle
     for ($i = 0; $i -lt 10 -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
@@ -1358,7 +1358,7 @@ function Get-BrowserReportList {
     $items = New-Object System.Collections.ArrayList
     $users = @(Get-UserProfiles)
     $multi = $users.Count -gt 1
-    $domain = $false; try { $domain = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).PartOfDomain } catch {}
+    $domain = $false; try { $domain = [bool](Get-CimStatic Win32_ComputerSystem).PartOfDomain } catch {}
     $firefox = $false
     foreach ($def in $script:BrowserDefs) {
         $extNames = @{}
@@ -1682,7 +1682,7 @@ function Get-WindowsSpaceItems {
     $size = [double]$disk.Size; $free = [double]$disk.FreeSpace
     $small = ($size -le 300GB) -or ($free / $size -lt 0.15)
     $laptop = $false
-    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    try { $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     # 1. Stockage réservé aux mises à jour (~7 Go)
     try {
         $st = "$((Get-WindowsReservedStorageState -ErrorAction Stop).ReservedStorageState)"
@@ -1695,7 +1695,7 @@ function Get-WindowsSpaceItems {
     # 2. Fichier de veille prolongée : réduit au minimum (le démarrage rapide reste)
     try {
         $hf = New-Object IO.FileInfo (Join-Path $sd 'hiberfil.sys')
-        $ram = [double](Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+        $ram = [double](Get-CimStatic Win32_ComputerSystem -Quiet).TotalPhysicalMemory
         if ($hf.Exists -and $ram -gt 0 -and $hf.Length -gt 0.3 * $ram) {
             $gain = [double]$hf.Length - 0.2 * $ram
             if ($gain -ge 1GB) {
@@ -2071,7 +2071,7 @@ function Get-BiosInfo($I) {
     if (-not $I.Custom -and $I.Brand -in 'Dell', 'HP', 'Lenovo', 'Acer', 'Microsoft', 'Samsung', 'Medion', 'Huawei', 'Dynabook', 'Razer') { $b.Oem = $true }
     # ---- Mémoire
     try {
-        $mods = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Where-Object { [double]$_.Capacity -gt 0 })
+        $mods = @(Get-CimStatic Win32_PhysicalMemory | Where-Object { [double]$_.Capacity -gt 0 })
         $t = @($mods | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
         $type = switch ($t) { 24 { 'DDR3' } 26 { 'DDR4' } 34 { 'DDR5' } 29 { 'LPDDR3' } 30 { 'LPDDR4' } 35 { 'LPDDR5' } 36 { 'LPDDR5' } default { '' } }
         $list = foreach ($m in $mods) {
@@ -2102,8 +2102,8 @@ function Get-BiosInfo($I) {
     } catch {}
     # ---- Virtualisation (VT-x / AMD-V)
     try {
-        $hyp = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent
-        $fw = @(Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1)[0].VirtualizationFirmwareEnabled
+        $hyp = [bool](Get-CimStatic Win32_ComputerSystem).HypervisorPresent
+        $fw = @(Get-CimStatic Win32_Processor | Select-Object -First 1)[0].VirtualizationFirmwareEnabled
         $b.Virt = if ($hyp) { 'inuse' } elseif ($fw -eq $true) { 'on' } elseif ($fw -eq $false) { 'off' } else { 'unknown' }
     } catch {}
     $b.Rebar = Get-RebarState
@@ -2150,7 +2150,7 @@ function Get-FanFindings($Fans, $CpuTemp, $CpuLoad, $GpuTemp) {
 function Get-RamLayout {
     $r = @{ Type = ''; Modules = 0; Slots = 0; ModuleSize = 0.0 }
     try {
-        $mods = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop)
+        $mods = @(Get-CimStatic Win32_PhysicalMemory)
         $r.Modules = $mods.Count
         if ($mods.Count) { $r.ModuleSize = [double]($mods | Measure-Object Capacity -Maximum).Maximum }
         $t = @($mods | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
@@ -2486,7 +2486,7 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
         if ($null -ne $mx -and $mx -lt 100) { [void]$f.Add(@{ Id = 'cpumax'; Sev = 'warn'; Title = "Le processeur est bridé à $mx % de sa puissance"; Text = "Réglage du mode d'alimentation (souvent modifié par un logiciel « d'optimisation »)."; Advice = "Le remettre à 100 % rend toute sa puissance au processeur."; Action = 'cpumax' }) }
     } catch {}
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem
+        $cs = Get-CimStatic Win32_ComputerSystem -Quiet
         if (-not $cs.AutomaticManagedPagefile -and @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue).Count -eq 0 -and [double]$cs.TotalPhysicalMemory -lt 17GB) {
             [void]$f.Add(@{ Id = 'memoire-virtuelle'; Sev = 'warn'; Title = "La mémoire virtuelle de Windows est désactivée"; Text = "Le fichier d'échange a été désactivé (souvent par une astuce « d'optimisation »)."; Advice = "Quand la RAM est pleine, les jeux et logiciels plantent ou se ferment au lieu de ralentir un peu. Remets-la en automatique (réglage d'origine, redémarrage nécessaire)."; Action = 'pagefile' })
         }
@@ -2548,7 +2548,7 @@ function Get-LagReport([int]$Seconds = 60) {
         [void]$f.Add(@{ Id = 'vpn'; Sev = 'warn'; Title = "Ta connexion passe par un VPN ($($ad.Desc))"; Text = "Un VPN fait faire un détour à tout ce que tu envoies et reçois : le ping monte."; Advice = "Coupe le VPN pour jouer, ou choisis un serveur en France / proche de chez toi."; Action = '' })
     }
     # Économie d'énergie de la carte réseau (cause classique de coupures en jeu sur un PC fixe)
-    $laptop = $false; try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    $laptop = $false; try { $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     if ($ad -and -not $vpn) {
         $sl = Get-NetAdapterSleepState $ad.Name
         if ($sl -eq 'Enabled' -and -not $laptop) {
@@ -2634,7 +2634,7 @@ function Send-Stats([switch]$Force) {
 # Diagnostic : causes de fond des lenteurs (réglages), sans mesure longue
 function Test-Performance {
     $laptop = $false
-    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    try { $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     $found = $false
     $pw = Get-PowerStatus
     if (-not $laptop -and ($pw.Guid -eq 'a1841308-3541-4fab-bc81-f71556f20b4a' -or $pw.Name -match "(?i)économi|saver")) {
@@ -2651,7 +2651,7 @@ function Test-Performance {
         $found = $true
     }
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem
+        $cs = Get-CimStatic Win32_ComputerSystem -Quiet
         $pf = @(Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue)
         if (-not $cs.AutomaticManagedPagefile -and $pf.Count -eq 0 -and [double]$cs.TotalPhysicalMemory -lt 17GB) {
             Add-Issue -Id 'pagefile' -Sev 'warn' -Title "La mémoire virtuelle de Windows est désactivée" -Detail ("{0} de RAM" -f (Format-Size ([double]$cs.TotalPhysicalMemory))) `
@@ -2747,7 +2747,7 @@ function Test-Storage {
 }
 
 function Test-Memory {
-    $os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimInstance Win32_ComputerSystem
+    $os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimStatic Win32_ComputerSystem -Quiet
     $total = [double]$cs.TotalPhysicalMemory
     $pct = [math]::Round((1 - ([double]$os.FreePhysicalMemory * 1KB) / $total) * 100)
     $issue = $false
@@ -2898,7 +2898,7 @@ function Get-BsodAnalysis([datetime]$Since) {
     if ($g.Count) { $res.Top = ($g[0].Group | Select-Object -First 1).Culprit; $res.TopCount = $g[0].Count }
     try { $res.Whea = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $Since } -ErrorAction SilentlyContinue | Where-Object { $_.Level -le 2 }).Count } catch {}
     try {
-        $m = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop)
+        $m = @(Get-CimStatic Win32_PhysicalMemory)
         $t = @($m | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
         $spd = @($m | ForEach-Object { [int]$_.ConfiguredClockSpeed } | Where-Object { $_ }) | Sort-Object | Select-Object -First 1
         if (($t -eq 26 -and $spd -gt 3200) -or ($t -eq 34 -and $spd -gt 6400)) { $res.Xmp = "$(if ($t -eq 26) { 'DDR4' } else { 'DDR5' }) à $spd MT/s" }
@@ -2999,7 +2999,7 @@ function Test-Stability {
     foreach ($r in $resets) { Log ("   • Carte graphique : décrochage le {0} ({1})" -f $r.Time.ToString('dd/MM HH:mm'), ($r.Srcs -join ', ')) }
     if ($resets.Count -ge 2) {
         $days = [math]::Max([double]1, [math]::Ceiling(((Get-Date) - $sinceTdr).TotalDays))
-        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox' })
+        $gpus = @(Get-CimStatic Win32_VideoController -Quiet | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox' })
         $gpu = @($gpus | Sort-Object { if ("$($_.Name)" -match '(?i)intel') { 1 } else { 0 } } | Select-Object -First 1)
         $gName = if ($gpu.Count) { "$($gpu[0].Name)" } else { 'Carte graphique' }
         $vendor = if ($gName -match '(?i)nvidia|geforce|rtx|gtx') { 'NVIDIA' } elseif ($gName -match '(?i)amd|radeon') { 'AMD' } elseif ($gName -match '(?i)intel') { 'Intel' } else { '' }
@@ -3197,7 +3197,7 @@ function Test-ConnectionStability {
     $a = Get-ActiveAdapter
     if (-not $a) { return }
     $laptop = $false
-    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    try { $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     # 1. Économie d'énergie de la carte réseau (Windows peut la couper) : proposé seulement sur un PC fixe
     try {
         $sleep = Get-NetAdapterSleepState $a.Name
@@ -3340,7 +3340,7 @@ function Get-Displays {
 function Get-GameContext([string]$Device = '') {
     $c = @{ Gpu = ''; Driver = ''; Hz = 0; MaxHz = 0; Device = '' }
     try {
-        $g = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox|parallels|qxl|red hat|citrix|dameware|mirage' })
+        $g = @(Get-CimStatic Win32_VideoController | Where-Object { $_.Name -notmatch '(?i)remote|virtual|parsec|basic display|de base|hyper-v|vmware|virtualbox|parallels|qxl|red hat|citrix|dameware|mirage' })
         $best = $g | Sort-Object @{ E = { if ($_.Name -match '(?i)nvidia|radeon rx|radeon pro|arc ') { 0 } else { 1 } } }, @{ E = { - [double]$_.AdapterRAM } } | Select-Object -First 1
         if ($best) { $c.Gpu = "$($best.Name)".Trim(); $c.Driver = "$($best.DriverVersion)" }
     } catch {}
@@ -3435,9 +3435,9 @@ function Get-GpuDriverInstallDates {
 function Get-GpuDrivers {
     $laptop = $false
     $inst = Get-GpuDriverInstallDates
-    try { $laptop = [bool](@((Get-CimInstance Win32_SystemEnclosure).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
+    try { $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count) } catch {}
     $list = New-Object System.Collections.ArrayList
-    foreach ($g in @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)) {
+    foreach ($g in @(Get-CimStatic Win32_VideoController -Quiet)) {
         if ($g.Name -match '(?i)remote|virtual|parsec|meta virtual|citrix|dameware|mirage|hyper-v|vmware|virtualbox|parallels|qxl|red hat') { continue }
         $vendor = if ("$($g.PNPDeviceID)" -match 'VEN_10DE' -or $g.Name -match 'NVIDIA') { 'NVIDIA' } elseif ("$($g.PNPDeviceID)" -match 'VEN_1002' -or $g.Name -match 'AMD|Radeon') { 'AMD' } elseif ("$($g.PNPDeviceID)" -match 'VEN_8086' -or $g.Name -match 'Intel') { 'Intel' } else { '' }
         $o = @{ Name = $g.Name; Vendor = $vendor; Raw = "$($g.DriverVersion)"; Version = "$($g.DriverVersion)"; Date = (ConvertTo-DateSafe $g.DriverDate); AgeDays = $null; Basic = ($g.Name -match '(?i)basic display|de base'); Latest = $null; Status = 'unknown'
@@ -4063,6 +4063,17 @@ function Test-IssueGone([string]$Cat, [string]$Id) {
     $sync.Verify.Enqueue(("{0}|{1}|{2}" -f $Id, $res, $detail))
 }
 
+# Infos matérielles qui ne changent pas pendant une analyse (modèle, processeur, carte graphique, barrettes…) :
+# lues une seule fois par diagnostic au lieu d'une fois par vérification. Hors diagnostic : lues à chaque appel.
+# -Quiet : rien (au lieu d'une erreur) si Windows ne répond pas, comme Get-CimInstance sans -ErrorAction Stop.
+function Get-CimStatic([string]$Class, [switch]$Quiet) {
+    $c = $script:CimCache
+    if ($c -is [hashtable] -and $c.ContainsKey($Class)) { return $c[$Class] }
+    try { $r = @(Get-CimInstance -ClassName $Class -ErrorAction Stop) }
+    catch { if ($Quiet) { return }; throw }
+    if ($c -is [hashtable]) { $c[$Class] = $r }
+    return $r
+}
 function Invoke-Diagnostic {
     Step "Diagnostic complet"
     $script:Issues = New-Object System.Collections.ArrayList
@@ -4080,8 +4091,9 @@ function Invoke-Diagnostic {
     foreach ($k in $checks.Keys) { $sync.Scan[$k] = 'wait' }
     $sync.ScanOrder = @($checks.Keys)
     $sync.ScanVer++
+    $script:CimCache = @{}
     foreach ($k in $checks.Keys) {
-        if ($sync.Cancel) { return }
+        if ($sync.Cancel) { $script:CimCache = $null; return }
         $script:CurrentCat = $k
         $sync.Scan[$k] = 'run'; $sync.ScanVer++
         $before = $script:Issues.Count
@@ -4094,6 +4106,7 @@ function Invoke-Diagnostic {
         if ($new.Count) { foreach ($i in $new) { Log ("   {0} {1} : {2}" -f $(if ($i.Sev -eq 'crit') { '❌' } else { '⚠' }), $k, $i.Title) } }
         elseif (-not $failed) { Log ("   ✔ {0} : OK" -f $k) }
     }
+    $script:CimCache = $null
     $crit = @($script:Issues | Where-Object { $_.Sev -eq 'crit' }).Count
     $sync.Diag = @{ Issues = @($script:Issues); Ok = @($script:OkList); Ignored = @($script:IgnoredList); Date = (Get-Date) }
     # Statistiques anonymes : seulement le type de chaque problème trouvé (« probleme:bsod »), rien d'autre

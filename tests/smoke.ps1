@@ -662,6 +662,19 @@ function Invoke-Smoke {
         if ((Get-XmpState 'DDR4' 3000 3600 1350 $false $false $true).Text -match 'Ryzen') { throw "conseil Ryzen DDR5 donné pour de la DDR4" }
         foreach ($b in 'ASUS', 'MSI', 'Gigabyte', 'ASRock', 'Dell', '') { foreach ($w in 'xmp', 'virt', 'rebar', 'fans') { if (-not (Get-BiosHowTo $b $w $true $false 'DDR5')) { throw "pas d'explication $b / $w" } } }
     }
+    Smoke 'Infos matérielles lues une seule fois par diagnostic (même résultat)' {
+        $old = $script:CimCache
+        try {
+            $script:CimCache = $null
+            $a = Get-CimStatic Win32_ComputerSystem; $n0 = @(Get-CimStatic Win32_PhysicalMemory).Count
+            $script:CimCache = @{}
+            $b = Get-CimStatic Win32_ComputerSystem; $c = Get-CimStatic Win32_ComputerSystem; $n1 = @(Get-CimStatic Win32_PhysicalMemory).Count
+            if ("$($a.Model)|$($a.TotalPhysicalMemory)" -ne "$($c.Model)|$($c.TotalPhysicalMemory)" -or $n0 -ne $n1) { throw "résultat différent avec la mémoire" }
+            if (-not [object]::ReferenceEquals($b, $c)) { throw "relu au lieu d'être gardé" }
+            if ($null -ne (Get-CimStatic Win32_ClasseQuiNExistePas -Quiet)) { throw "-Quiet doit ne rien renvoyer" }
+            $ko = $false; try { Get-CimStatic Win32_ClasseQuiNExistePas | Out-Null } catch { $ko = $true }; if (-not $ko) { throw "sans -Quiet, l'erreur doit remonter" }
+        } finally { $script:CimCache = $old }
+    }
     Smoke 'Infos BIOS : ce PC' {
         $si = $sync.SysInfo; if (-not $si) { Get-SystemInfo | Out-Null; $si = $sync.SysInfo }
         $bi = Get-BiosInfo $si
