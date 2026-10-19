@@ -660,6 +660,38 @@ function Invoke-Smoke {
             $script:Settings.UpdSnoozeVer = $oldS.V; $script:Settings.UpdSnoozes = $oldS.N; $script:Settings.AutoUpdate = $oldS.A; Save-Settings
         }
     }
+    Smoke 'BIOS : vérification du fichier téléchargé (cas fabriqués)' {
+        $b = Get-BoardIdentity @{ BoardMaker = 'Micro-Star International Co., Ltd.'; BoardModel = 'MAG B650 TOMAHAWK WIFI (MS-7D75)'; BiosVersion = '1.H0'; Brand = 'MSI'; Custom = $true }
+        if ($b.Vendor -ne 'MSI' -or $b.MsiId -ne '7D75') { throw "identité MSI fausse" }
+        $tmp = Join-Path $env:TEMP 'aerox-bios-test'; Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force -Path "$tmp\z\7D75v1J" | Out-Null
+        $bytes = New-Object byte[] (8MB)
+        [IO.File]::WriteAllBytes("$tmp\z\7D75v1J\E7D75AMS.1J0", $bytes); Set-Content "$tmp\z\7D75v1J\lisez-moi.txt" 'x'
+        Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::CreateFromDirectory("$tmp\z", "$tmp\7D75v1J.zip")
+        $r = Get-BiosFileReport "$tmp\7D75v1J.zip" $b
+        if ($r.Verdict -ne 'ok' -or $r.Name -ne 'E7D75AMS.1J0' -or -not (Test-Path -LiteralPath $r.File)) { throw "zip MSI de la bonne carte : $($r.Verdict) $($r.Name)" }
+        [IO.File]::WriteAllBytes("$tmp\E7D78AMS.1J0", $bytes); if ((Get-BiosFileReport "$tmp\E7D78AMS.1J0" $b).Verdict -ne 'bad') { throw "BIOS d'une autre carte MSI accepté" }
+        [IO.File]::WriteAllBytes("$tmp\B650AORUSELITEAX.F20", $bytes); if ((Get-BiosFileReport "$tmp\B650AORUSELITEAX.F20" $b).Verdict -ne 'bad') { throw "BIOS d'une autre marque accepté" }
+        $a = Get-BoardIdentity @{ BoardMaker = 'ASUSTeK COMPUTER INC.'; BoardModel = 'PRIME B650-PLUS'; BiosVersion = '2801'; Brand = 'ASUS'; Custom = $true }
+        [IO.File]::WriteAllBytes("$tmp\PRIME-B650-PLUS-WIFI-ASUS-3024.CAP", $bytes); if ((Get-BiosFileReport "$tmp\PRIME-B650-PLUS-WIFI-ASUS-3024.CAP" $a).Verdict -ne 'unknown') { throw "modèle voisin (WIFI) pas signalé" }
+        [IO.File]::WriteAllBytes("$tmp\PRIME-B650-PLUS-ASUS-3024.CAP", $bytes); $r = Get-BiosFileReport "$tmp\PRIME-B650-PLUS-ASUS-3024.CAP" $a; if ($r.Verdict -ne 'ok' -or $r.Cmp -ne 1) { throw "BIOS ASUS plus récent : $($r.Verdict) $($r.Cmp)" }
+        Set-Content "$tmp\E7D75AMS.1K0" 'petit'; if ((Get-BiosFileReport "$tmp\E7D75AMS.1K0" $b).Verdict -ne 'bad') { throw "fichier trop petit accepté" }
+        if ((Compare-BiosVersion 'Gigabyte' 'F3' 'F20') -ne 1 -or (Compare-BiosVersion 'ASRock' '2.02' '1.28') -ne -1 -or $null -ne (Compare-BiosVersion 'MSI' '1.H0' '1J0')) { throw "comparaison des versions" }
+        foreach ($v in 'MSI', 'ASUS', 'Gigabyte', 'ASRock', '') { if (-not @((Get-BiosFlashSteps $v 'X.ROM')[0]).Count) { throw "pas d'étapes pour $v" } }
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Smoke 'BIOS : la clé USB ne peut jamais être un disque interne' {
+        $keys = @(Get-UsbKeys); Write-Host ("        clés USB vues : {0}" -f $keys.Count)
+        $sys = Get-Disk | Where-Object { $_.IsSystem -or $_.IsBoot } | Select-Object -First 1
+        $n0 = @(Get-Partition -DiskNumber $sys.Number).Count
+        $refused = $false
+        try { [void](Initialize-BiosUsb -DiskNumber $sys.Number -Source $PSCommandPath -Vendor 'MSI' -Format $true) } catch { $refused = $true; Write-Host "        refusé : $($_.Exception.Message)" }
+        if (-not $refused) { throw "le disque de Windows a été accepté !" }
+        if (@(Get-Partition -DiskNumber $sys.Number).Count -ne $n0) { throw "le disque de Windows a été modifié !" }
+    }
+    Smoke 'Fenêtre : mise à jour du BIOS' {
+        Show-BiosUpdateDialog @{ BoardMaker = 'Micro-Star International Co., Ltd.'; BoardModel = 'MAG B650 TOMAHAWK WIFI (MS-7D75)'; BiosVersion = '1.H0'; Brand = 'MSI'; Maker = 'Micro-Star International Co., Ltd.'; Model = 'MAG B650 TOMAHAWK WIFI (MS-7D75)'; Custom = $true; IsLaptop = $false }
+        Show-BiosUpdateDialog @{ BoardMaker = 'Dell Inc.'; BoardModel = '0ABC12'; BiosVersion = '1.20.0'; Brand = 'Dell'; Maker = 'Dell Inc.'; Model = 'XPS 15 9530'; Custom = $false; IsLaptop = $true }
+    }
     Smoke 'Tailles lisibles (Format-Size)' {
         $ci = [Threading.Thread]::CurrentThread.CurrentCulture; [Threading.Thread]::CurrentThread.CurrentCulture = 'fr-FR'
         try {

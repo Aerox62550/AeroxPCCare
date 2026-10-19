@@ -530,7 +530,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS'
+    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -768,6 +768,173 @@ function Find-BiosPage {
     if ($i.BrandSite) { $q = "site:$($i.BrandSite) $q" } else { $q = ("$($i.Maker) $q support").Trim() }
     $sync.BiosUrl = @{ Url = ("https://www.bing.com/search?q=" + [uri]::EscapeDataString($q)); Kind = 'web' }
     Log "   • Le site du fabricant n'a pas donné de page vérifiable pour ce modèle : recherche limitée à son site officiel."
+}
+
+# =====================================================================
+#  Mise à jour du BIOS (cartes mères MSI, ASUS, Gigabyte, ASRock) : AEROX vérifie le fichier téléchargé,
+#  prépare la clé USB et explique l'installation. Le flash lui-même est TOUJOURS fait par l'outil officiel
+#  du BIOS (M-Flash, EZ Flash, Q-Flash, Instant Flash) : AEROX n'écrit jamais dans la puce du BIOS.
+# =====================================================================
+function ConvertTo-BoardKey([string]$Text) { return (("$Text".ToUpperInvariant()) -replace '[^A-Z0-9]', '') }
+# Identité de la carte mère pour vérifier un fichier BIOS : marque, modèle, numéro MSI (MS-7D75), version installée
+function Get-BoardIdentity($I) {
+    $vendor = switch -Regex ("$($I.BoardMaker) $($I.Brand)") { '(?i)micro-star|\bmsi\b' { 'MSI' } '(?i)asus' { 'ASUS' } '(?i)gigabyte|aorus' { 'Gigabyte' } '(?i)asrock' { 'ASRock' } default { '' } }
+    $model = "$($I.BoardModel)".Trim()
+    $msi = if ($model -match '(?i)\(MS-([0-9A-F]{4})\)') { $Matches[1].ToUpperInvariant() } else { '' }
+    $clean = ($model -replace '(?i)\s*\(MS-[0-9A-F]{4}\)', '').Trim()
+    return @{ Vendor = $vendor; Model = $clean; Key = (ConvertTo-BoardKey $clean); MsiId = $msi; Bios = "$($I.BiosVersion)".Trim(); Custom = [bool]$I.Custom; Laptop = [bool]$I.IsLaptop }
+}
+# Le fichier est-il un BIOS de cette marque, et pour quelle carte ? (lu dans son nom : format officiel de chaque marque)
+#   MSI : E7D75AMS.1H0   ·   ASUS : ROG-STRIX-B650E-F-GAMING-WIFI-ASUS-3024.CAP   ·   Gigabyte : B650AORUSELITEAX.F20   ·   ASRock : B650M Pro RS(2.02)ROM
+function Get-BiosFileInfo([string]$Name) {
+    $n = [IO.Path]::GetFileName($Name)
+    if ($n -cmatch '^E([0-9A-F]{4})[AI]MS\.([0-9A-Z]{3})\z') { return @{ Vendor = 'MSI'; Id = $Matches[1]; Version = $Matches[2]; Key = '' } }
+    if ($n -match '(?i)^(.+)-ASUS-(\d{3,5})\.CAP\z') { return @{ Vendor = 'ASUS'; Id = ''; Version = $Matches[2]; Key = (ConvertTo-BoardKey $Matches[1]) } }
+    if ($n -match '(?i)^(.+)\((\d+\.\d+[A-Z]?)\)\.?ROM\z') { return @{ Vendor = 'ASRock'; Id = ''; Version = $Matches[2]; Key = (ConvertTo-BoardKey $Matches[1]) } }
+    if ($n -match '(?i)^([A-Z0-9-]+)\.(F\d{1,3}[A-Z]?)\z') { return @{ Vendor = 'Gigabyte'; Id = ''; Version = $Matches[2].ToUpperInvariant(); Key = (ConvertTo-BoardKey $Matches[1]) } }
+    if ($n -match '(?i)\.CAP\z') { return @{ Vendor = 'ASUS'; Id = ''; Version = ''; Key = '' } }
+    return $null
+}
+# Comparaison des versions : seulement quand le format de la marque le permet sans doute possible (sinon $null = « différente »)
+function Compare-BiosVersion([string]$Vendor, [string]$Installed, [string]$File) {
+    $a = "$Installed".Trim(); $b = "$File".Trim()
+    if (-not $a -or -not $b) { return $null }
+    switch ($Vendor) {
+        'MSI' { if (($a -replace '\.', '') -eq $b) { return 0 }; return $null }
+        'ASUS' { if ($a -match '^\d+\z' -and $b -match '^\d+\z') { return [math]::Sign([int]$b - [int]$a) }; return $null }
+        'ASRock' { $x = 0.0; $y = 0.0; if ($a -match '^(\d+\.\d+)' -and [double]::TryParse($Matches[1], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$x) -and $b -match '^(\d+\.\d+)' -and [double]::TryParse($Matches[1], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$y)) { if ($x -eq $y) { return $(if ($a -eq $b) { 0 } else { $null }) }; return [math]::Sign($y - $x) }; return $null }
+        'Gigabyte' {
+            if ($a -match '(?i)^F(\d+)([A-Z]?)\z') { $na = [int]$Matches[1]; $sa = $Matches[2].ToUpperInvariant() } else { return $null }
+            if ($b -match '(?i)^F(\d+)([A-Z]?)\z') { $nb = [int]$Matches[1]; $sb = $Matches[2].ToUpperInvariant() } else { return $null }
+            if ($na -ne $nb) { return [math]::Sign($nb - $na) }
+            return [math]::Sign([string]::CompareOrdinal($sb, $sa))
+        }
+    }
+    return $null
+}
+# Analyse du fichier choisi (zip téléchargé ou fichier BIOS) : extrait le zip, trouve le fichier BIOS, vérifie modèle et version
+# Verdict : ok (bonne carte) · bad (autre carte : on refuse) · unknown (impossible à vérifier : confirmation obligatoire)
+function Get-BiosFileReport([string]$Path, $Board) {
+    $r = @{ Path = $Path; File = ''; Name = ''; Size = 0; Verdict = 'unknown'; Lines = @(); Version = ''; Cmp = $null; Vendor = '' }
+    $lines = New-Object System.Collections.ArrayList
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { $r.Verdict = 'bad'; [void]$lines.Add(@('bad', "Fichier introuvable.")); $r.Lines = $lines.ToArray(); return $r }
+    $cands = @()
+    if ($Path -match '(?i)\.zip\z') {
+        $dir = Join-Path (Get-SecureDir 'bios') ([IO.Path]::GetFileNameWithoutExtension($Path) -replace '[^\w.-]', '_')
+        if (Test-Path -LiteralPath $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($Path)
+        try {
+            foreach ($e in $zip.Entries) {
+                if (-not $e.Name -or $e.Length -lt 4MB -or $e.Length -gt 128MB) { continue }   # un BIOS fait entre 4 et 128 Mo
+                if (-not (Get-BiosFileInfo $e.Name) -and $e.Name -notmatch '(?i)\.(rom|bin|cap)\z') { continue }
+                $out = Join-Path $dir $e.Name
+                if (Test-Path -LiteralPath $out) { continue }
+                [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $out)
+                $cands += Get-Item -LiteralPath $out
+            }
+        } finally { $zip.Dispose() }
+        if (-not $cands.Count) { $r.Verdict = 'bad'; [void]$lines.Add(@('bad', "Aucun fichier BIOS dans ce zip : vérifie que tu as bien téléchargé le BIOS (et pas un pilote ou un logiciel).")); $r.Lines = $lines.ToArray(); return $r }
+    } else { $cands = @(Get-Item -LiteralPath $Path) }
+    $known = @($cands | Where-Object { Get-BiosFileInfo $_.Name })
+    $f = $(if ($known.Count) { $known[0] } else { $cands | Sort-Object Length -Descending | Select-Object -First 1 })
+    if (@($known).Count -gt 1) { [void]$lines.Add(@('warn', "Plusieurs fichiers BIOS dans le zip : AEROX a pris « $($f.Name) ».")) }
+    $r.File = $f.FullName; $r.Name = $f.Name; $r.Size = [double]$f.Length
+    if ($f.Length -lt 4MB -or $f.Length -gt 128MB) { $r.Verdict = 'bad'; [void]$lines.Add(@('bad', ("Taille inhabituelle pour un BIOS ({0}) : ce n'est sûrement pas le bon fichier." -f (Format-Size $f.Length)))); $r.Lines = $lines.ToArray(); return $r }
+    $fi = Get-BiosFileInfo $f.Name
+    $ok = $false; $bad = $false
+    if (-not $fi) { [void]$lines.Add(@('warn', "Nom de fichier non reconnu : AEROX ne peut pas vérifier pour quelle carte mère il est fait.")) }
+    else {
+        $r.Vendor = $fi.Vendor; $r.Version = $fi.Version
+        if ($Board.Vendor -and $fi.Vendor -ne $Board.Vendor) { $bad = $true; [void]$lines.Add(@('bad', "C'est un BIOS $($fi.Vendor), et ta carte mère est une $($Board.Vendor).")) }
+        elseif ($fi.Vendor -eq 'MSI') {
+            if ($Board.MsiId -and $fi.Id -eq $Board.MsiId) { $ok = $true; [void]$lines.Add(@('ok', "Fait pour ta carte mère (MS-$($fi.Id)).")) }
+            elseif ($Board.MsiId) { $bad = $true; [void]$lines.Add(@('bad', "Fait pour une autre carte mère (MS-$($fi.Id)) : la tienne est la MS-$($Board.MsiId).")) }
+            else { [void]$lines.Add(@('warn', "Fichier pour la carte MS-$($fi.Id) : Windows ne donne pas le numéro de ta carte mère, vérifie-le sur sa boîte ou sous la carte graphique.")) }
+        } elseif ($fi.Key -and $Board.Key) {
+            if ($fi.Key -eq $Board.Key) { $ok = $true; [void]$lines.Add(@('ok', "Fait pour ta carte mère ($($Board.Model)).")) }
+            else { [void]$lines.Add(@('warn', "Le nom du fichier ne correspond pas exactement à ta carte mère ($($Board.Model)). Vérifie sur le site que c'est bien la même (attention aux versions « WIFI », « PLUS », « -A »…).")) }
+        } else { [void]$lines.Add(@('warn', "Impossible de vérifier le modèle à partir du nom de ce fichier.")) }
+        if ($fi.Version) {
+            $c = Compare-BiosVersion $fi.Vendor $Board.Bios $fi.Version; $r.Cmp = $c
+            $vt = "Version du fichier : $($fi.Version) · installée : $($Board.Bios)"
+            if ($c -eq 1) { [void]$lines.Add(@('ok', "$vt → plus récente.")) }
+            elseif ($c -eq 0) { [void]$lines.Add(@('warn', "$vt → c'est déjà la version installée : pas besoin de la mettre.")) }
+            elseif ($c -eq -1) { [void]$lines.Add(@('warn', "$vt → plus ANCIENNE que celle installée. Ne la mets que si tu sais pourquoi.")) }
+            else { [void]$lines.Add(@('info', "$vt.")) }
+        }
+    }
+    $r.Verdict = $(if ($bad) { 'bad' } elseif ($ok) { 'ok' } else { 'unknown' })
+    $r.Lines = $lines.ToArray()
+    return $r
+}
+# Nom à donner au fichier pour le bouton de secours « Flashback » (BIOS mis à jour sans démarrer le PC)
+function Get-FlashbackName([string]$Vendor) { switch ($Vendor) { 'MSI' { 'MSI.ROM' } 'Gigabyte' { 'GIGABYTE.bin' } 'ASRock' { 'creative.rom' } default { '' } } }
+# Clés USB branchées (jamais un disque interne, jamais le disque de Windows)
+function Get-UsbKeys {
+    $keys = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { "$($_.BusType)" -eq 'USB' -and -not $_.IsBoot -and -not $_.IsSystem })) {
+        $vols = @(Get-Partition -DiskNumber $d.Number -ErrorAction SilentlyContinue | Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_ })
+        $letters = @($vols | Where-Object { $_.DriveLetter } | ForEach-Object { "$($_.DriveLetter):" })
+        $fs = @($vols | ForEach-Object { "$($_.FileSystem)" } | Where-Object { $_ } | Select-Object -Unique)
+        [void]$keys.Add(@{ Number = [int]$d.Number; Name = ("$($d.FriendlyName)".Trim()); Size = [double]$d.Size; Letters = $letters; Fs = ($fs -join ', '); Fat32 = ($vols.Count -eq 1 -and "$($vols[0].FileSystem)" -eq 'FAT32' -and $vols[0].DriveLetter) })
+    }
+    return $keys.ToArray()
+}
+# Prépare la clé : (formatage FAT32 si demandé) + copie du fichier BIOS + copie au nom « Flashback » + vérification par empreinte
+function Initialize-BiosUsb([int]$DiskNumber, [string]$Source, [string]$Vendor, [bool]$Format) {
+    $d = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    # Garde-fous : uniquement une clé USB, jamais le disque de Windows ni un disque de plus de 256 Go (disque externe)
+    if ("$($d.BusType)" -ne 'USB') { throw "Ce disque n'est pas une clé USB : rien n'a été touché." }
+    if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
+    if ([double]$d.Size -gt 256GB) { throw "Ce disque USB fait plus de 256 Go : par sécurité AEROX ne prépare que des clés USB. Rien n'a été touché." }
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw "Fichier BIOS introuvable." }
+    if ($Format) {
+        Step "Formatage de la clé USB en FAT32"
+        Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop
+        $d = Get-Disk -Number $DiskNumber
+        if ("$($d.PartitionStyle)" -eq 'RAW') { Initialize-Disk -Number $DiskNumber -PartitionStyle MBR -ErrorAction Stop }
+        # FAT32 : 32 Go au plus avec Windows (les outils du BIOS lisent le FAT32)
+        $size = [math]::Min([double]32GB, [double]$d.Size - 2MB)
+        $p = New-Partition -DiskNumber $DiskNumber -Size ([uint64]$size) -AssignDriveLetter -IsActive -ErrorAction Stop
+        $null = Format-Volume -Partition $p -FileSystem FAT32 -NewFileSystemLabel 'BIOS' -Force -Confirm:$false -ErrorAction Stop
+    }
+    $vol = @(Get-Partition -DiskNumber $DiskNumber | Get-Volume | Where-Object { $_.DriveLetter -and "$($_.FileSystem)" -eq 'FAT32' }) | Select-Object -First 1
+    if (-not $vol) { throw "La clé n'est pas en FAT32 : coche « Effacer et formater la clé »." }
+    $root = "$($vol.DriveLetter):\"
+    $name = [IO.Path]::GetFileName($Source)
+    $copies = @($name); $fb = Get-FlashbackName $Vendor; if ($fb -and $fb -ne $name) { $copies += $fb }
+    $sha = (Get-FileHash -LiteralPath $Source -Algorithm SHA256).Hash
+    foreach ($c in $copies) {
+        $dst = Join-Path $root $c
+        Copy-Item -LiteralPath $Source -Destination $dst -Force -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash -ne $sha) { throw "La copie de $c sur la clé est abîmée : essaie une autre clé USB." }
+        Log "   ✔ $c copié sur la clé ($root) et vérifié"
+    }
+    return @{ Drive = $root; Files = $copies }
+}
+function Get-BitLockerOn {
+    try { return ("$((Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop).ProtectionStatus)" -eq 'On') } catch { return $false }
+}
+# BitLocker en pause pour 3 redémarrages (le temps du flash) : sinon Windows demande la clé de récupération après la mise à jour du BIOS
+function Suspend-BitLockerForBios {
+    Step "BitLocker mis en pause pour la mise à jour du BIOS"
+    Suspend-BitLocker -MountPoint $env:SystemDrive -RebootCount 3 -ErrorAction Stop | Out-Null
+    Add-Change -Title "BitLocker en pause pour la mise à jour du BIOS" -Detail "Il se réactive tout seul après 3 redémarrages." -Undo 'Resume-BitLockerOs'
+    Log "   ✔ BitLocker se réactivera tout seul après 3 redémarrages."
+}
+function Resume-BitLockerOs { Resume-BitLocker -MountPoint $env:SystemDrive -ErrorAction Stop | Out-Null; Log "   ✔ BitLocker réactivé." }
+# Étapes d'installation depuis le BIOS, selon la marque
+function Get-BiosFlashSteps([string]$Vendor, [string]$File) {
+    $fb = Get-FlashbackName $Vendor
+    switch ($Vendor) {
+        'MSI' { return @(@("Laisse la clé branchée (de préférence sur un port USB à l'arrière du PC).", "Clique sur « Redémarrer dans le BIOS » ci-dessous.", "Dans le BIOS, clique sur « M-FLASH » (sur l'écran d'accueil ; sinon touche F7 pour le mode avancé, puis M-FLASH) et accepte : le PC redémarre dans l'outil de mise à jour.", "Choisis la clé USB, puis le fichier $File, et confirme.", "Attends sans rien toucher (2 à 5 minutes) : le PC redémarre tout seul, parfois plusieurs fois, l'écran peut rester noir un moment."), "Secours (si le PC ne démarre plus) : PC éteint mais branché, mets la clé sur le port marqué « Flash BIOS » à l'arrière et appuie sur le bouton « Flash BIOS » : la lumière clignote pendant la mise à jour (fichier $fb déjà prêt sur la clé).") }
+        'ASUS' { return @(@("Laisse la clé branchée (de préférence sur un port USB à l'arrière du PC).", "Clique sur « Redémarrer dans le BIOS » ci-dessous.", "Dans le BIOS, appuie sur F7 (mode avancé), onglet « Tool », puis « ASUS EZ Flash 3 Utility ».", "Choisis la clé USB, puis le fichier $File, et réponds « Oui ».", "Attends sans rien toucher (2 à 5 minutes) : le PC redémarre tout seul, parfois plusieurs fois."), "Secours « BIOS FlashBack » : il demande un nom de fichier propre à chaque carte, donné par l'outil « BIOSRenamer » inclus dans le zip ASUS. Avec EZ Flash, ce n'est pas nécessaire.") }
+        'Gigabyte' { return @(@("Laisse la clé branchée (de préférence sur un port USB à l'arrière du PC).", "Clique sur « Redémarrer dans le BIOS » ci-dessous.", "Dans le BIOS, appuie sur F8 (ou clique sur « Q-Flash ») puis « Update BIOS ».", "Choisis la clé USB, puis le fichier $File, et confirme.", "Attends sans rien toucher (2 à 5 minutes) : le PC redémarre tout seul, parfois plusieurs fois."), "Secours « Q-Flash Plus » (si le PC ne démarre plus) : PC éteint mais branché, clé sur le port marqué « Q-Flash Plus » à l'arrière, appuie sur le bouton : la lumière clignote pendant la mise à jour (fichier $fb déjà prêt sur la clé).") }
+        'ASRock' { return @(@("Laisse la clé branchée (de préférence sur un port USB à l'arrière du PC).", "Clique sur « Redémarrer dans le BIOS » ci-dessous.", "Dans le BIOS, appuie sur F6 (mode avancé), onglet « Tool », puis « Instant Flash ».", "Choisis le fichier $File et confirme.", "Attends sans rien toucher (2 à 5 minutes) : le PC redémarre tout seul."), "Secours « BIOS Flashback » (si ta carte a ce bouton) : PC éteint mais branché, clé sur le port « Flashback », appuie sur le bouton (fichier $fb déjà prêt sur la clé).") }
+    }
+    return @(@("Laisse la clé branchée.", "Clique sur « Redémarrer dans le BIOS » ci-dessous.", "Cherche l'outil de mise à jour du BIOS (souvent dans « Tool » ou « Advanced ») et choisis le fichier $File sur la clé.", "Attends sans rien toucher jusqu'au redémarrage."), '')
 }
 function Get-SystemInfo {
     $i = @{ Ready = $true }

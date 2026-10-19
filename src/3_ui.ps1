@@ -1486,6 +1486,7 @@ function Invoke-UiCommand($T) {
                     'bilan-reset' { Reset-Bilan }
                     'battery-report' { [void](Start-AeroxTask 'Open-BatteryReport' 'Rapport de la batterie') }
                     'bios-reboot' { Restart-ToBios }
+                    'bios-update' { Show-BiosUpdateDialog }
                     'pc-health' { [void](Open-Url 'https://aka.ms/GetPCHealthCheckApp') }
                     'selfupdate' { Show-UpdateDialog -Manual }
                     'ov-alert' { $script:Settings.Overlay.AlertOn = -not [bool]$script:Settings.Overlay.AlertOn; Save-Settings; Refresh-Page }
@@ -1785,6 +1786,162 @@ function Restart-ToBios {
     }
 }
 
+# ---------------------------------------------------------------- Mise à jour du BIOS : fichier vérifié, clé USB préparée, étapes expliquées
+# AEROX ne flashe jamais le BIOS lui-même : c'est l'outil officiel du BIOS (M-Flash, EZ Flash, Q-Flash…) qui l'installe depuis la clé.
+function New-BiosStep([string]$Num, [string]$Title) {
+    $c = New-CardBorder; $c.Padding = Th 18 14 18 14; $c.Margin = Th 0 0 0 10
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $h = New-Object System.Windows.Controls.StackPanel; $h.Orientation = 'Horizontal'; $h.Margin = Th 0 0 0 8
+    $n = New-Object System.Windows.Controls.Border; $n.Width = 24; $n.Height = 24; $n.CornerRadius = Corner 12; $n.Background = Brush $Pal.AccentSoft; $n.Margin = Th 0 0 10 0
+    $nt = New-Text $Num $Typo.Small $Pal.AccentText 'Bold'; $nt.HorizontalAlignment = 'Center'; $nt.VerticalAlignment = 'Center'; $n.Child = $nt
+    Add-Child $h $n; $tt = New-Text $Title $Typo.Title $Pal.White 'SemiBold'; $tt.VerticalAlignment = 'Center'; Add-Child $h $tt
+    Add-Child $sp $h; $c.Child = $sp
+    return @{ Card = $c; Body = $sp }
+}
+function New-PlainButton([string]$Text, [string]$Style, [scriptblock]$OnClick) {
+    $b = New-Object System.Windows.Controls.Button; $b.Content = $Text; $b.Style = $window.FindResource($Style); $b.HorizontalAlignment = 'Left'; $b.Add_Click($OnClick)
+    return $b
+}
+function Update-BiosFileView {
+    $u = $script:Bu; $p = $u.FilePanel; $p.Children.Clear()
+    $r = $u.Report
+    if (-not $r) { return }
+    $nm = New-Text ("Fichier BIOS : " + $(if ($r.Name) { "$($r.Name)  ($(Format-Size $r.Size))" } else { [IO.Path]::GetFileName($r.Path) })) $Typo.Body $Pal.Text2 'SemiBold'; $nm.Margin = Th 0 10 0 4; Add-Child $p $nm
+    foreach ($l in $r.Lines) {
+        $col = switch ($l[0]) { 'ok' { $Pal.Ok } 'bad' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.Text3 } }
+        $ic = switch ($l[0]) { 'ok' { '✔ ' } 'bad' { '✕ ' } 'warn' { '⚠ ' } default { '• ' } }
+        $t = New-Text ($ic + $l[1]) $Typo.Small $col; $t.Margin = Th 0 2 0 2; Add-Child $p $t
+    }
+    $u.Sure = $null
+    if ($r.Verdict -eq 'unknown') {
+        $cb = New-Object System.Windows.Controls.CheckBox; $cb.Margin = Th 0 8 0 0; $cb.Foreground = Brush $Pal.Text2
+        $cb.Content = "J'ai vérifié sur le site du fabricant : c'est bien le BIOS de MA carte mère"
+        $cb.Add_Click({ Update-BiosUsbState }); Add-Child $p $cb; $u.Sure = $cb
+    } elseif ($r.Verdict -eq 'bad') {
+        $t = New-Text "AEROX ne préparera pas la clé avec ce fichier : un BIOS d'une autre carte mère peut l'empêcher de redémarrer." $Typo.Small $Pal.Bad 'SemiBold'; $t.Margin = Th 0 6 0 0; Add-Child $p $t
+    }
+    Update-BiosSteps
+    Update-BiosUsbState
+}
+function Update-BiosKeys {
+    $u = $script:Bu; $u.Keys = @(Get-UsbKeys); $u.Combo.Items.Clear()
+    foreach ($k in $u.Keys) { [void]$u.Combo.Items.Add(("{0}  ·  {1}{2}{3}" -f $(if ($k.Name) { $k.Name } else { 'Clé USB' }), (Format-Size $k.Size), $(if ($k.Letters.Count) { "  ·  " + ($k.Letters -join ' ') } else { '' }), $(if ($k.Fs) { "  ·  $($k.Fs)" } else { '' }))) }
+    if ($u.Keys.Count) { $u.Combo.SelectedIndex = 0; $u.KeyMsg.Text = '' } else { $u.KeyMsg.Text = "Aucune clé USB branchée : branche une clé (1 Go minimum, son contenu sera effacé), puis clique sur « Actualiser »." }
+    Update-BiosUsbState
+}
+function Update-BiosUsbState {
+    $u = $script:Bu; if (-not $u) { return }
+    $r = $u.Report
+    $fileOk = $r -and $r.File -and ($r.Verdict -eq 'ok' -or ($r.Verdict -eq 'unknown' -and $u.Sure -and $u.Sure.IsChecked))
+    $u.Prep.IsEnabled = [bool]($fileOk -and $u.Keys.Count -and $u.Combo.SelectedIndex -ge 0 -and -not $script:Job)
+}
+function Start-BiosUsbPrep {
+    $u = $script:Bu; $k = $u.Keys[$u.Combo.SelectedIndex]; $r = $u.Report
+    $fmt = [bool]$u.Format.IsChecked
+    if (-not $fmt -and -not $k.Fat32) { [System.Windows.MessageBox]::Show("Cette clé n'est pas en FAT32 (le seul format lu par le BIOS) : coche « Effacer et formater la clé ».", $AppName, 'OK', 'Information') | Out-Null; return }
+    $what = ("{0} ({1}{2})" -f $(if ($k.Name) { $k.Name } else { 'Clé USB' }), (Format-Size $k.Size), $(if ($k.Letters.Count) { ", " + ($k.Letters -join ' ') } else { '' }))
+    $msg = if ($fmt) { "TOUT le contenu de la clé USB « $what » va être effacé, puis elle sera formatée en FAT32 et le BIOS sera copié dessus.`n`nVérifie qu'il n'y a rien dessus dont tu as besoin.`n`nContinuer ?" } else { "Le fichier BIOS va être copié sur la clé « $what » (rien n'est effacé).`n`nContinuer ?" }
+    if (-not (Confirm-Box $msg)) { return }
+    $sync.BiosUsb = $null
+    $act = "try { `$sync.BiosUsb = Initialize-BiosUsb -DiskNumber $([int]$k.Number) -Source $(ConvertTo-PsLiteral $r.File) -Vendor $(ConvertTo-PsLiteral $r.Vendor) -Format `$$fmt } catch { Log ('   ⚠ ' + `$_.Exception.Message); `$sync.BiosUsb = @{ Error = `$_.Exception.Message } }"
+    if (Start-AeroxTask $act 'Préparation de la clé USB du BIOS') { $u.UsbMsg.Text = "Préparation de la clé…"; $u.UsbMsg.Foreground = Brush $Pal.AccentText; $u.Waiting = $true; Update-BiosUsbState }
+}
+function Show-BiosUpdateDialog($Info = $null) {
+    $i = $(if ($Info) { $Info } else { $sync.SysInfo })
+    if (-not $i) { return }
+    $bd = Get-BoardIdentity $i
+    $w = New-Dialog "$AppName : mettre à jour le BIOS" 720
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Mettre à jour le BIOS" $Typo.H2 $Pal.White 'Bold')
+    $t = New-Text ("{0} {1}  ·  BIOS installé : {2}{3}" -f $(if ($i.Brand) { $i.Brand } else { $i.Maker }), $i.Model, $i.BiosVersion, $(if ($i.BiosDate) { " (du $(Format-Date $i.BiosDate))" } else { '' })) $Typo.Body $Pal.Text3; $t.Margin = Th 0 4 0 14; Add-Child $sp $t
+    $script:Bu = @{ Board = $bd; Report = $null; Keys = @(); Waiting = $false; Info = $i }
+    if (-not $bd.Custom -or $bd.Laptop) {
+        # PC de marque / portable : le fabricant fournit son propre programme (ou Windows Update)
+        $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text "Sur un PC de marque ou un portable, le BIOS se met à jour avec le programme officiel du fabricant (Dell, HP, Lenovo, Acer…), ou tout seul par Windows Update : pas de clé USB à préparer." $Typo.Body $Pal.Text2)
+        $t = New-Text "Branche le portable sur secteur avant, et ne l'éteins jamais pendant l'opération." $Typo.Small $Pal.Warn 'SemiBold'; $t.Margin = Th 0 8 0 10; Add-Child $cs $t
+        Add-Child $cs (New-PlainButton "Chercher mon BIOS sur le site officiel" 'PrimaryBtn' { [void](Start-AeroxTask 'Find-BiosPage' 'Page du BIOS' 'biospage') })
+        $c.Child = $cs; Add-Child $sp $c
+    } else {
+        $s = New-BiosStep '1' "Télécharge le BIOS sur le site officiel"
+        $t = New-Text ("Sur la page de ta carte mère ({0}), rubrique « Support » > « BIOS » : télécharge la version la plus récente (le .zip, sans le dézipper)." -f $bd.Model) $Typo.Small $Pal.Text3; $t.Margin = Th 0 0 0 10; Add-Child $s.Body $t
+        Add-Child $s.Body (New-PlainButton "Ouvrir la page de ma carte mère" 'ActionBtn' { [void](Start-AeroxTask 'Find-BiosPage' 'Page du BIOS' 'biospage') })
+        Add-Child $sp $s.Card
+        $s = New-BiosStep '2' "Choisis le fichier téléchargé"
+        $t = New-Text "AEROX vérifie qu'il est bien fait pour ta carte mère et compare les versions." $Typo.Small $Pal.Text3; $t.Margin = Th 0 0 0 10; Add-Child $s.Body $t
+        Add-Child $s.Body (New-PlainButton "Choisir le fichier…" 'PrimaryBtn' {
+            $d = New-Object Microsoft.Win32.OpenFileDialog; $d.Title = 'Fichier BIOS téléchargé'; $d.Filter = 'BIOS téléchargé (*.zip, *.cap, *.rom, *.bin…)|*.*'
+            $dl = Join-Path $env:USERPROFILE 'Downloads'; if (Test-Path -LiteralPath $dl) { $d.InitialDirectory = $dl }
+            if ($d.ShowDialog($script:Bu.Win)) {
+                try { $script:Bu.Report = Get-BiosFileReport $d.FileName $script:Bu.Board }
+                catch { $script:Bu.Report = @{ Path = $d.FileName; Verdict = 'bad'; Lines = @(, @('bad', "Fichier illisible : $($_.Exception.Message)")) } }
+                Update-BiosFileView
+            } })
+        $script:Bu.FilePanel = New-Object System.Windows.Controls.StackPanel; Add-Child $s.Body $script:Bu.FilePanel
+        Add-Child $sp $s.Card
+        $s = New-BiosStep '3' "Prépare la clé USB"
+        $dp = New-Object System.Windows.Controls.DockPanel
+        $rf = New-PlainButton "Actualiser" 'TextBtn' { Update-BiosKeys }; [System.Windows.Controls.DockPanel]::SetDock($rf, 'Right'); Add-Child $dp $rf
+        $cb = New-Object System.Windows.Controls.ComboBox; $cb.Height = 32; $cb.VerticalContentAlignment = 'Center'; $cb.Add_SelectionChanged({ Update-BiosUsbState }); Add-Child $dp $cb
+        Add-Child $s.Body $dp
+        $script:Bu.Combo = $cb
+        $km = New-Text '' $Typo.Small $Pal.Warn; $km.Margin = Th 0 6 0 0; Add-Child $s.Body $km; $script:Bu.KeyMsg = $km
+        $fm = New-Object System.Windows.Controls.CheckBox; $fm.IsChecked = $true; $fm.Margin = Th 0 10 0 0; $fm.Foreground = Brush $Pal.Text2
+        $fm.Content = "Effacer et formater la clé en FAT32 (recommandé : le BIOS ne lit que le FAT32)"; Add-Child $s.Body $fm; $script:Bu.Format = $fm
+        $pb = New-PlainButton "Préparer la clé" 'PrimaryBtn' { Start-BiosUsbPrep }; $pb.Margin = Th 0 12 0 0; $pb.IsEnabled = $false; Add-Child $s.Body $pb; $script:Bu.Prep = $pb
+        $um = New-Text '' $Typo.Small $Pal.Text3; $um.Margin = Th 0 8 0 0; Add-Child $s.Body $um; $script:Bu.UsbMsg = $um
+        Add-Child $sp $s.Card
+        $s = New-BiosStep '4' "Installe le BIOS (depuis le BIOS)"
+        $script:Bu.Steps = New-Object System.Windows.Controls.StackPanel; Add-Child $s.Body $script:Bu.Steps
+        $warn = New-Object System.Windows.Controls.Border; $warn.Background = Brush $Pal.WarnSoft; $warn.CornerRadius = Corner 8; $warn.Padding = Th 12 8 12 8; $warn.Margin = Th 0 10 0 10
+        $warn.Child = New-Text "Ne coupe JAMAIS le courant et n'appuie sur rien pendant l'installation. Après la mise à jour, les réglages du BIOS reviennent par défaut : réactive le profil XMP / EXPO si tu l'utilisais (voir « Infos BIOS »)." $Typo.Small $Pal.Warn 'SemiBold'
+        Add-Child $s.Body $warn
+        $bl = New-Text '' $Typo.Small $Pal.Text3; $bl.Margin = Th 0 0 0 8; Add-Child $s.Body $bl; $script:Bu.BitText = $bl
+        $row = New-Object System.Windows.Controls.WrapPanel
+        $bb = New-PlainButton "Mettre BitLocker en pause" 'ActionBtn' { if (Confirm-Box "Mettre BitLocker en pause le temps de la mise à jour du BIOS ?`n`nIl se réactive tout seul après 3 redémarrages. Sans ça, Windows demandera la clé de récupération BitLocker au redémarrage.") { [void](Start-AeroxTask 'Suspend-BitLockerForBios' 'Pause de BitLocker') } }
+        $bb.Margin = Th 0 0 8 0; $bb.Visibility = 'Collapsed'; Add-Child $row $bb; $script:Bu.BitBtn = $bb
+        Add-Child $row (New-PlainButton "Redémarrer dans le BIOS" 'PrimaryBtn' { Restart-ToBios })
+        Add-Child $s.Body $row
+        Add-Child $sp $s.Card
+        Update-BiosSteps
+    }
+    $cl = New-PlainButton "Fermer" 'ActionBtn' { $script:Bu.Win.Close() }; $cl.HorizontalAlignment = 'Right'; $cl.Margin = Th 0 6 0 0; Add-Child $sp $cl
+    $sv.Content = $sp; $w.Content = $sv; $script:Bu.Win = $w
+    if ($bd.Custom -and -not $bd.Laptop) {
+        Update-BiosKeys; Update-BiosBitLocker
+        # Suivi de la préparation de la clé et de BitLocker (tâches en arrière-plan)
+        $tm = New-Object System.Windows.Threading.DispatcherTimer; $tm.Interval = [TimeSpan]::FromMilliseconds(500)
+        $tm.Add_Tick({
+            $u = $script:Bu; if (-not $u) { return }
+            if ($u.Waiting -and -not $script:Job -and $sync.BiosUsb) {
+                $u.Waiting = $false; $res = $sync.BiosUsb
+                if ($res.Error) { $u.UsbMsg.Text = "✕ " + $res.Error; $u.UsbMsg.Foreground = Brush $Pal.Bad }
+                else { $u.UsbMsg.Text = ("✔ Clé prête ({0}) : {1} copié(s) et vérifié(s). Laisse-la branchée et passe à l'étape 4." -f $res.Drive, ($res.Files -join ' + ')); $u.UsbMsg.Foreground = Brush $Pal.Ok }
+                Update-BiosKeys
+            }
+            if (-not $script:Job -and $u.BitPending) { $u.BitPending = $false; Update-BiosBitLocker }
+            if ($script:Job) { $u.BitPending = $true }
+            Update-BiosUsbState
+        })
+        $w.Add_Closed({ $script:BuTimer.Stop(); $script:Bu = $null })
+        $script:BuTimer = $tm; $tm.Start()
+    }
+    [void]$w.ShowDialog()
+}
+function Update-BiosSteps {
+    $u = $script:Bu; $p = $u.Steps; $p.Children.Clear()
+    $file = if ($u.Report -and $u.Report.Name) { $u.Report.Name } else { 'du BIOS' }
+    $st = Get-BiosFlashSteps $u.Board.Vendor $file
+    $k = 1; foreach ($x in $st[0]) { $l = New-Text ("{0}.  {1}" -f $k, $x) $Typo.Body $Pal.Text2; $l.Margin = Th 0 2 0 2; Add-Child $p $l; $k++ }
+    if ($st[1]) { $t = New-Text $st[1] $Typo.Small $Pal.Muted; $t.Margin = Th 0 8 0 0; Add-Child $p $t }
+}
+function Update-BiosBitLocker {
+    $u = $script:Bu; if (-not $u -or -not $u.BitText) { return }
+    if (Get-BitLockerOn) { $u.BitText.Text = "BitLocker est activé sur ce PC : mets-le en pause avant de redémarrer, sinon Windows demandera la clé de récupération après la mise à jour."; $u.BitText.Foreground = Brush $Pal.Warn; $u.BitBtn.Visibility = 'Visible' }
+    else { $u.BitText.Text = "BitLocker : pas actif (ou déjà en pause), rien à faire."; $u.BitText.Foreground = Brush $Pal.Text3; $u.BitBtn.Visibility = 'Collapsed' }
+}
+
 function New-InfoRow([string]$Label, [string]$Value, [string]$Pill = '', [string]$PillKind = '', [string]$Help = '') {
     $box = New-Object System.Windows.Controls.StackPanel; $box.Margin = Th 0 6 0 6
     $dp = New-Object System.Windows.Controls.DockPanel
@@ -1882,6 +2039,7 @@ function Build-SystemPage {
     $n.Margin = Th 0 8 0 10; $n.LineHeight = 19; Add-Child $cs $n
     $bw = New-Object System.Windows.Controls.WrapPanel
     $b = New-Button "Chercher mon BIOS sur le site officiel" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'bios-site' } } $false; $b.Margin = Th 0 0 8 0; Add-Child $bw $b
+    $b = New-Button "Préparer la mise à jour du BIOS" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'bios-update' } } $false; $b.Margin = Th 0 0 8 0; Add-Child $bw $b
     $b = New-Button "Redémarrer dans le BIOS" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'bios-reboot' } } $false; $b.Margin = Th 0 0 8 0; Add-Child $bw $b
     Add-Child $cs $bw
     $c.Child = $cs; Add-Child $sp $c
@@ -2435,6 +2593,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.5.2' = @("Nouveau dans « Mon PC » : « Préparer la mise à jour du BIOS ». Tu choisis le fichier téléchargé, AEROX vérifie qu'il est bien fait pour ta carte mère (MSI, ASUS, Gigabyte, ASRock) et compare les versions, prépare la clé USB (formatage FAT32, copie vérifiée, fichier de secours « Flashback »), met BitLocker en pause si besoin, et t'explique pas à pas l'installation depuis le BIOS.")
     '2.5.1' = @("Mises à jour automatiques : quand une nouvelle version sort, AEROX l'installe tout seul au lancement après 10 secondes (le fichier est vérifié avant). Tu peux toujours dire « Plus tard » : elle te sera reproposée un peu plus tard. Réglage dans Aide > Mises à jour automatiques.", "AEROX vérifie aussi toutes les 6 heures s'il reste ouvert près de l'horloge, et te prévient par une notification.")
     '2.5.0' = @("Nouveau look : un thème plus propre et plus cohérent partout (couleurs, textes, boutons, barres de défilement sombres). Les pages sont rangées par thèmes (Internet, dépannage rapide, Windows…) avec les petites actions en tuiles : on trouve plus vite ce qu'on cherche.", "Diagnostic plus lisible : « Ce qui va bien » est replié (un clic pour le voir), et dans « Mon PC » les étapes à suivre dans le BIOS sont rangées derrière « Comment faire ».", "Corrigé : les tuiles de « Pourquoi ça lague » affichaient un code bizarre au lieu de leurs détails. Tailles plus lisibles (« 16 Go » au lieu de « 16,00 Go »).")
     '2.4.6' = @("Infos BIOS plus justes : la quantité de RAM s'affiche correctement (elle indiquait « 0 Ko »), et AEROX ne dit plus « XMP / EXPO désactivé » quand la vitesse a été réglée à la main. Sur les Ryzen 7000 / 9000, il conseille la vitesse idéale (6000 MT/s).", "Ventilateurs : AEROX précise que les ventilateurs branchés sur un hub ne sont pas vus un par un.")
