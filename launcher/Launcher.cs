@@ -248,6 +248,8 @@ static class Sensors {
             object pc = Activator.CreateInstance(tComputer);
             tComputer.GetProperty("IsCpuEnabled").SetValue(pc, true, null);
             tComputer.GetProperty("IsGpuEnabled").SetValue(pc, true, null);
+            // Carte mère : vitesse des ventilateurs (lecture seule ; AEROX ne règle jamais les ventilateurs)
+            try { tComputer.GetProperty("IsMotherboardEnabled").SetValue(pc, true, null); } catch { }
             tComputer.GetMethod("Open", Type.EmptyTypes).Invoke(pc, null);
             PropertyInfo pHardware = tComputer.GetProperty("Hardware");
             PropertyInfo hName = tHw.GetProperty("Name"), hType = tHw.GetProperty("HardwareType"), hSensors = tHw.GetProperty("Sensors"), hSub = tHw.GetProperty("SubHardware");

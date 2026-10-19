@@ -818,6 +818,8 @@ function Get-SystemInfo {
         $d = Get-Disk -Number $dn -ErrorAction Stop
         $i.DiskStyle = "$($d.PartitionStyle)"; $i.DiskSize = [double]$d.Size
     } catch {}
+    # Infos BIOS lues depuis Windows : mémoire (XMP / EXPO, dual channel), virtualisation, Resizable BAR, logiciels de ventilateurs
+    try { $i.BiosInfo = Get-BiosInfo $i } catch { $i.BiosInfo = $null }
     $sync.SysInfo = $i
 }
 
@@ -1918,6 +1920,223 @@ function Get-ProcFriendly([string]$Name, [int]$ProcId) {
     try { $p = Get-Process -Id $ProcId -ErrorAction Stop; $d = "$($p.Description)".Trim(); if (-not $d) { $d = "$($p.Product)".Trim() }; if ($d -and $d.Length -le 60) { $lbl = $d } } catch {}
     return @{ Label = $lbl; Kind = 'app' }
 }
+# ---------------------------------------------------------------- Infos BIOS (lues depuis Windows, rien n'est modifié)
+# Vitesse prévue d'une barrette d'après sa référence (kits « gaming » : la vitesse XMP/EXPO est écrite dedans).
+# 0 = inconnue (référence d'origine ou format pas reconnu) : on ne devine jamais.
+function Get-RamRatedSpeed([string]$Part) {
+    $p = "$Part".Trim().ToUpperInvariant()
+    if (-not $p) { return 0 }
+    $ok = { param($v) if ($v -ge 1600 -and $v -le 10000) { $v } else { 0 } }
+    # G.Skill : F4-3600C16-8GVKC, F5-6000J3038F16G
+    if ($p -match '^F[345]-(\d{4})') { return (& $ok ([int]$matches[1])) }
+    # Kingston FURY / HyperX : KF560C36BBEK2-32 (DDR5-6000), KF432C16BB/8 (DDR4-3200), HX436C17PB4/16
+    if ($p -match '^(KF|HX)[345](\d{2})C\d{2}') { return (& $ok ([int]$matches[2] * 100)) }
+    # Crucial Ballistix / Pro : BL8G32C16U4B, CP16G60C36U5B, CP2K16G56C46U5
+    if ($p -match '^(BL|CP)(\dK)?\d+G(\d{2})C\d{2}') { return (& $ok ([int]$matches[3] * 100)) }
+    # Corsair : CMK32GX5M2B6000C36, CMW16GX4M2C3200C16, CMH32GX5M2E6000C36
+    if ($p -match '^CM[A-Z]\d+GX[345]M\d[A-Z](\d{4})C\d{2}') { return (& $ok ([int]$matches[1])) }
+    # TeamGroup / Patriot / ADATA XPG et autres : « 3200C16 », « 6000C30 », « 3600HC18 », « DDR4-3200 »
+    if ($p -match '(?<!\d)(2133|2400|2666|2933|3000|3200|3333|3466|3600|3733|3800|4000|4133|4266|4400|4600|4800|5200|5600|6000|6200|6400|6600|6800|7000|7200|7600|8000|8200|8400)(C|HC|CL)\d{2}') { return [int]$matches[1] }
+    if ($p -match 'DDR[345]-?(\d{4})') { return (& $ok ([int]$matches[1])) }
+    return 0
+}
+# Barrettes « d'origine » sans profil XMP (PC de marque, portables, Kingston ValueRAM, Crucial standard…)
+function Test-JedecPart([string]$Part) {
+    return ("$Part".Trim().ToUpperInvariant() -match '^(M4\d\d|M3\d\d|M32|HMA|HMAA|HMCG|HMCT|HMT|MTA|MTC|MT\d|CT\d|KVR|KCP|ACR|AO1P|9905|99U5|TS\d|HP\d|SK\s?HYNIX|RMSA|H5)')
+}
+# Canal mémoire (A, B…) d'après le nom de l'emplacement donné par la carte mère
+function Get-MemChannel([string]$Locator, [string]$Bank) {
+    $t = "$Locator $Bank"
+    if ($t -match '(?i)channel\s*([A-H])\b') { return $matches[1].ToUpperInvariant() }
+    if ($t -match '(?i)channel([A-H])') { return $matches[1].ToUpperInvariant() }
+    if ("$Locator" -match '(?i)(?:^|[_\s-])DIMM[_\s-]?([A-H])\d') { return $matches[1].ToUpperInvariant() }
+    if ("$Locator".Trim() -match '(?i)^([A-H])\d(?:$|[_\s-])') { return $matches[1].ToUpperInvariant() }
+    return ''
+}
+# XMP / EXPO activé ? Déduit de la vitesse actuelle, de la vitesse prévue par les barrettes et de leur tension.
+# Windows ne le dit pas directement : chaque conclusion dit sur quoi elle s'appuie, et « impossible à dire » existe.
+function Get-XmpState([string]$Type, [int]$Configured, [int]$Rated, [int]$VoltMv, [bool]$Jedec, [bool]$Laptop) {
+    $jedecMax = switch -Regex ($Type) { '^DDR5|^LPDDR5' { 6400 } '^DDR4|^LPDDR4' { 3200 } '^DDR3' { 1600 } default { 0 } }
+    $jedecV = switch -Regex ($Type) { '^DDR5' { 1100 } '^DDR4' { 1200 } '^DDR3' { 1500 } default { 0 } }
+    $highV = ($jedecV -and $VoltMv -ge ($jedecV + 50))
+    $vTxt = if ($VoltMv -ge 500) { " · {0:N2} V" -f ($VoltMv / 1000.0) } else { '' }
+    if ($Type -match '^LP') { return @{ State = 'soldered'; Text = "Mémoire soudée au PC (LP$($Type.Substring(2))) : sa vitesse est fixée par le fabricant, il n'y a pas de profil XMP/EXPO à régler." } }
+    if (-not $Configured) { return @{ State = 'unknown'; Text = "Windows ne donne pas la vitesse de la mémoire sur ce PC." } }
+    if ($Rated -gt 0) {
+        if ($Configured -ge ($Rated - 50)) {
+            if ($Rated -gt $jedecMax -or $highV) { return @{ State = 'on'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes ($Rated MT/s)$vTxt : le profil XMP/EXPO est activé." } }
+            return @{ State = 'ok'; Text = "Ta RAM tourne à $Configured MT/s, la vitesse prévue par tes barrettes$vTxt." }
+        }
+        if ($highV -or $Configured -gt $jedecMax) { return @{ State = 'below'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s$vTxt : un profil est actif mais réglé en dessous de leur vitesse (souvent volontaire pour la stabilité, ou limite du processeur avec 4 barrettes)." } }
+        return @{ State = 'off'; Text = "Ta RAM tourne à $Configured MT/s alors que tes barrettes sont prévues pour $Rated MT/s : le profil XMP/EXPO n'est pas activé dans le BIOS. L'activer donne en général plus de FPS dans les jeux limités par le processeur. C'est un réglage prévu par le fabricant des barrettes ; si le PC devient instable (écrans bleus), il suffit de le désactiver." }
+    }
+    if ($highV -or ($jedecMax -and $Configured -gt $jedecMax)) { return @{ State = 'on'; Text = "Ta RAM tourne à $Configured MT/s$vTxt, au-dessus de la vitesse standard de la $Type : un profil XMP/EXPO (ou un réglage manuel) est activé." } }
+    if ($Jedec -or $Laptop) { return @{ State = 'standard'; Text = "Ta RAM tourne à $Configured MT/s$vTxt : ce sont des barrettes standard (sans profil XMP/EXPO), elles tournent à leur vitesse normale." } }
+    return @{ State = 'unknown'; Text = "Ta RAM tourne à $Configured MT/s$vTxt. Windows ne dit pas pour quelle vitesse tes barrettes sont prévues : regarde leur étiquette ou leur fiche produit (ex. « DDR5-6000 », « 3600 MHz »). Si c'est plus que $Configured, active le profil XMP/EXPO dans le BIOS." }
+}
+# Où trouver un réglage dans le BIOS selon la marque de la carte mère (les menus changent un peu selon la version)
+function Get-BiosHowTo([string]$Brand, [string]$What, [bool]$Amd, [bool]$Oem, [string]$RamType = '') {
+    $prof = if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } elseif ($Amd) { 'D.O.C.P / A-XMP / XMP' } else { 'XMP' }
+    $virt = if ($Amd) { '« SVM Mode »' } else { '« Intel Virtualization Technology » (VT-x)' }
+    switch ($What) {
+        'xmp' {
+            if ($Oem) { return "Sur la plupart des PC de marque et des portables, ce réglage n'existe pas : la mémoire tourne à la vitesse choisie par le fabricant. Certains PC gamer (Alienware, Legion…) l'ont sous « XMP » ou « Memory Overclocking »." }
+            switch ($Brand) {
+                'ASUS'     { return "ASUS : en mode EZ, réglage « $(if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } elseif ($Amd) { 'D.O.C.P.' } else { 'X.M.P.' }) » (à côté des infos de la mémoire) → profil 1. En mode avancé (F7) : Ai Tweaker > Ai Overclock Tuner." }
+                'MSI'      { return "MSI : sur l'écran d'accueil, bouton « $(if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } else { 'XMP' }) » en haut à gauche (à côté de Game Boost) → profil 1. Sinon : OC > Extreme Memory Profile (XMP)." }
+                'Gigabyte' { return "Gigabyte / AORUS : en mode Easy, « $(if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } else { 'XMP' }) » → Profile 1. En mode avancé (F2) : Tweaker > Extreme Memory Profile (X.M.P.)." }
+                'ASRock'   { return "ASRock : OC Tweaker > DRAM Configuration > « Load $(if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } else { 'XMP' }) Setting » → Profile 1 (ou le bouton « $(if ($Amd -and $RamType -match 'DDR5') { 'EXPO' } else { 'XMP' }) » en mode Easy)." }
+                default    { return "Dans le BIOS, cherche « $prof » (souvent dans les menus Overclocking, Tweaker ou Memory) et choisis le profil 1." }
+            }
+        }
+        'virt' {
+            switch ($Brand) {
+                'ASUS'     { return "ASUS : mode avancé (F7) > Advanced > CPU Configuration > $virt → Enabled." }
+                'MSI'      { return "MSI : OC > Advanced CPU Configuration > $virt → Enabled." }
+                'Gigabyte' { return "Gigabyte / AORUS : Tweaker > Advanced CPU Settings > $virt → Enabled." }
+                'ASRock'   { return "ASRock : Advanced > CPU Configuration > $virt → Enabled." }
+                'HP'       { return "HP : Configuration du système (ou Advanced) > « Virtualization Technology » → Activé." }
+                'Dell'     { return "Dell : Virtualization Support (ou Advanced) > « Virtualization » / « Enable Intel Virtualization Technology » → coché." }
+                'Lenovo'   { return "Lenovo : Configuration (ou Security > Virtualization) > « Intel Virtual Technology » / « AMD V(TM) Technology » → Enabled." }
+                'Acer'     { return "Acer : Main (ou Advanced) > « Intel Virtualization Technology » / « AMD-V » → Enabled." }
+                default    { return "Dans le BIOS, cherche $virt (souvent dans Advanced, CPU Configuration ou Security) → Enabled." }
+            }
+        }
+        'rebar' {
+            switch ($Brand) {
+                'ASUS'     { return "ASUS : mode avancé (F7) > Advanced > PCI Subsystem Settings > « Above 4G Decoding » puis « Re-Size BAR Support » → Enabled." }
+                'MSI'      { return "MSI : Settings > Advanced > PCIe/PCI Sub-system Settings > « Re-Size BAR Support » → Enabled (active aussi « Above 4G memory »)." }
+                'Gigabyte' { return "Gigabyte / AORUS : Settings > IO Ports > « Above 4G Decoding » puis « Re-Size BAR Support » → Enabled (ou Auto)." }
+                'ASRock'   { return "ASRock : Advanced > PCI Configuration > « Above 4G Decoding » et « Re-Size BAR Support » → Enabled." }
+                default    { return "Dans le BIOS, cherche « Above 4G Decoding » et « Re-Size BAR » (souvent dans Advanced > PCI) → Enabled." }
+            }
+        }
+        'fans' {
+            if ($Oem) { return "Sur un portable ou un PC de marque, le BIOS ne propose en général pas de courbes de ventilateurs : ce sont le logiciel du fabricant (Armoury Crate, MSI Center, Lenovo Vantage, OMEN Gaming Hub, Alienware Command Center, NitroSense…) et le mode d'alimentation de Windows (onglet Performances) qui règlent le bruit." }
+            switch ($Brand) {
+                'ASUS'     { return "ASUS : en mode EZ, « QFan Control » (touche F6) → profils Silent / Standard / Turbo / Full Speed pour chaque ventilateur. En mode avancé : Monitor > Q-Fan Configuration." }
+                'MSI'      { return "MSI : écran « Hardware Monitor » → courbe de chaque ventilateur (mode Smart Fan) ; « All set to Default » remet le réglage d'usine." }
+                'Gigabyte' { return "Gigabyte / AORUS : « Smart Fan 6 » (touche F6) → profils Silent / Normal / Manual / Full Speed pour chaque ventilateur." }
+                'ASRock'   { return "ASRock : « FAN-Tastic Tuning » (mode Easy, ou Advanced > H/W Monitor) → profils Silent / Standard / Performance / Full Speed." }
+                default    { return "Dans le BIOS, cherche « Smart Fan », « Q-Fan » ou « Fan Control » (souvent dans Monitor ou H/W Monitor) : profils Silencieux / Standard / Performance." }
+            }
+        }
+    }
+    return ''
+}
+# Resizable BAR (cartes NVIDIA : lu par nvidia-smi, le seul moyen fiable depuis Windows)
+function Get-RebarState {
+    $r = @{ State = 'unknown'; Gpu = ''; Bar1 = 0; Vram = 0 }
+    try {
+        $smi = Get-NvidiaSmi
+        if (-not $smi) { return $r }
+        $r.Gpu = "$((& $smi --query-gpu=name --format=csv,noheader 2>$null) | Select-Object -First 1)".Trim()
+        $o = @(& $smi -q -d MEMORY 2>$null)
+        $sec = ''
+        foreach ($l in $o) {
+            if ($l -match '^\s*FB Memory Usage') { $sec = 'fb' } elseif ($l -match '^\s*BAR1 Memory Usage') { $sec = 'bar' } elseif ($l -match '^\s*\S.*Memory Usage') { $sec = '' }
+            if ($l -match '^\s*Total\s*:\s*(\d+)\s*MiB') { if ($sec -eq 'fb' -and -not $r.Vram) { $r.Vram = [int]$matches[1] } elseif ($sec -eq 'bar' -and -not $r.Bar1) { $r.Bar1 = [int]$matches[1] } }
+        }
+        if ($r.Bar1 -gt 256) { $r.State = 'on' }
+        elseif ($r.Bar1 -gt 0) { $r.State = $(if ($r.Gpu -match '(?i)RTX\s*(30|40|50)\d\d|RTX\s*A\d{3,4}|RTX\s*PRO') { 'off' } else { 'unsupported' }) }
+    } catch {}
+    return $r
+}
+# Logiciels de réglage des ventilateurs installés (fabricant, ou FanControl)
+function Get-FanSoftware {
+    $names = New-Object System.Collections.ArrayList
+    $re = '(?i)^(Armoury Crate|MSI Center|MSI Dragon Center|Dragon Center|iCUE|CORSAIR iCUE|NZXT CAM|FanControl|Fan Control|Lenovo Legion Toolkit|OMEN Gaming Hub|Alienware Command Center|NitroSense|PredatorSense|G-Helper|GIGABYTE Control Center|AORUS ENGINE|Argus Monitor|SpeedFan)'
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*") {
+        try { foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) { $n = "$($e.DisplayName)".Trim(); if ($n -match $re -and $names -notcontains $matches[1]) { [void]$names.Add($matches[1]) } } } catch {}
+    }
+    try {
+        foreach ($p in @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)LenovoCompanion|OMENCommandCenter|AlienwareCommandCenter|ArmouryCrate|MSICenter' })) {
+            $n = switch -Regex ($p.Name) { 'LenovoCompanion' { 'Lenovo Vantage' } 'OMEN' { 'OMEN Gaming Hub' } 'Alienware' { 'Alienware Command Center' } 'Armoury' { 'Armoury Crate' } 'MSICenter' { 'MSI Center' } }
+            if ($n -and $names -notcontains $n) { [void]$names.Add($n) }
+        }
+    } catch {}
+    return $names.ToArray()
+}
+function Get-BiosInfo($I) {
+    $b = @{ Ram = $null; Virt = 'unknown'; Rebar = $null; FanSoft = @(); Oem = $false }
+    $b.Oem = [bool]$I.IsLaptop
+    if (-not $I.Custom -and $I.Brand -in 'Dell', 'HP', 'Lenovo', 'Acer', 'Microsoft', 'Samsung', 'Medion', 'Huawei', 'Dynabook', 'Razer') { $b.Oem = $true }
+    # ---- Mémoire
+    try {
+        $mods = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop | Where-Object { [double]$_.Capacity -gt 0 })
+        $t = @($mods | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
+        $type = switch ($t) { 24 { 'DDR3' } 26 { 'DDR4' } 34 { 'DDR5' } 29 { 'LPDDR3' } 30 { 'LPDDR4' } 35 { 'LPDDR5' } 36 { 'LPDDR5' } default { '' } }
+        $list = foreach ($m in $mods) {
+            $part = "$($m.PartNumber)".Trim()
+            @{ Slot = "$($m.DeviceLocator)".Trim(); Bank = "$($m.BankLabel)".Trim(); Size = [double]$m.Capacity; Maker = "$($m.Manufacturer)".Trim(); Part = $part
+               Rated = (Get-RamRatedSpeed $part); Speed = [int]$m.Speed; Conf = [int]$m.ConfiguredClockSpeed; Volt = [int]$m.ConfiguredVoltage; Jedec = (Test-JedecPart $part)
+               Channel = (Get-MemChannel "$($m.DeviceLocator)" "$($m.BankLabel)"); Form = [int]$m.FormFactor }
+        }
+        $list = @($list)
+        $arr = @(Get-CimInstance Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue | Where-Object { $_.Use -eq 3 })
+        $slots = [int](($arr | Measure-Object MemoryDevices -Sum).Sum)
+        $maxKb = [double](($arr | ForEach-Object { if ($_.MaxCapacityEx) { [double]$_.MaxCapacityEx } else { [double]$_.MaxCapacity } } | Measure-Object -Sum).Sum)
+        $conf = @($list | ForEach-Object { if ($_.Conf) { $_.Conf } else { $_.Speed } } | Where-Object { $_ } | Sort-Object)[0]
+        $ratedL = @($list | ForEach-Object { $_.Rated } | Where-Object { $_ -gt 0 } | Sort-Object)
+        $rated = if ($ratedL.Count -eq $list.Count -and $ratedL.Count) { $ratedL[0] } elseif ($ratedL.Count) { $ratedL[0] } else { 0 }
+        $volt = @($list | ForEach-Object { $_.Volt } | Where-Object { $_ -ge 500 } | Sort-Object -Descending)[0]
+        $allJedec = ($list.Count -and @($list | Where-Object { $_.Jedec }).Count -eq $list.Count)
+        $xmp = Get-XmpState $type ([int]$conf) ([int]$rated) ([int]$volt) $allJedec ([bool]$I.IsLaptop)
+        # Canaux : dual channel si les barrettes sont sur au moins 2 canaux
+        $ch = 'unknown'; $letters = @($list | ForEach-Object { $_.Channel })
+        if ($list.Count -eq 1) { $ch = 'one' }
+        elseif ($list.Count -ge 2 -and -not @($letters | Where-Object { -not $_ }).Count) { $ch = $(if (@($letters | Select-Object -Unique).Count -ge 2) { 'dual' } else { 'single' }) }
+        $parts = @($list | ForEach-Object { $_.Part } | Where-Object { $_ } | Select-Object -Unique)
+        $sizes = @($list | ForEach-Object { $_.Size } | Select-Object -Unique)
+        $b.Ram = @{ Type = $type; Modules = $list; Count = $list.Count; Slots = $slots; MaxBytes = ($maxKb * 1KB); Total = [double](($list | Measure-Object Size -Sum).Sum)
+                    Conf = [int]$conf; Rated = [int]$rated; Volt = [int]$volt; Xmp = $xmp; Channels = $ch; Mixed = ($parts.Count -gt 1 -or $sizes.Count -gt 1) }
+    } catch {}
+    # ---- Virtualisation (VT-x / AMD-V)
+    try {
+        $hyp = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent
+        $fw = @(Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1)[0].VirtualizationFirmwareEnabled
+        $b.Virt = if ($hyp) { 'inuse' } elseif ($fw -eq $true) { 'on' } elseif ($fw -eq $false) { 'off' } else { 'unknown' }
+    } catch {}
+    $b.Rebar = Get-RebarState
+    $b.FanSoft = @(Get-FanSoftware)
+    return $b
+}
+# Ventilateurs (module de températures) : lignes à afficher et alertes, sans jamais inventer de problème
+function ConvertTo-FanLabel([string]$Name, [string]$Src) {
+    if ($Src -eq 'gpu') { return $(if ($Name -match '(\d+)\s*$' -and $Name -notmatch '^GPU Fan$') { "Carte graphique, ventilateur $($matches[1])" } else { 'Carte graphique' }) }
+    $nm = "$Name"
+    if ($nm -match '(?i)pump|aio|w_?pump') { return "Pompe de watercooling ($nm)" }
+    if ($nm -match '(?i)^cpu(_|\s)?(fan|opt)|cpu fan') { return $(if ($nm -match '(?i)opt') { "Processeur 2 ($nm)" } else { "Processeur ($nm)" }) }
+    if ($nm -match '(?i)chassis|system|sys_?fan|case') { return "Boîtier ($nm)" }
+    if ($nm -match '^Fan #(\d+)$') { return "Ventilateur n° $($matches[1]) (carte mère)" }
+    return "$nm (carte mère)"
+}
+function Get-FanFindings($Fans, $CpuTemp, $CpuLoad, $GpuTemp) {
+    $rows = New-Object System.Collections.ArrayList; $alerts = New-Object System.Collections.ArrayList
+    $fl = @($Fans | Where-Object { $_ })
+    $mb = @($fl | Where-Object { $_.Src -eq 'mb' }); $gp = @($fl | Where-Object { $_.Src -eq 'gpu' })
+    $mbOn = @($mb | Where-Object { [double]$_.Rpm -gt 0 })
+    foreach ($f in @($mbOn + $gp)) {
+        $txt = if ([double]$f.Rpm -gt 0) { "{0:N0} tr/min" -f [double]$f.Rpm } else { "à l'arrêt" }
+        if ($null -ne $f.Pct) { $txt += ("  ·  {0} %" -f [math]::Round([double]$f.Pct)) }
+        $note = ''
+        if ($f.Src -eq 'gpu' -and [double]$f.Rpm -eq 0) { $note = $(if ($GpuTemp -and [double]$GpuTemp -ge 80) { 'bad' } else { 'zero' }) }
+        [void]$rows.Add(@{ Label = (ConvertTo-FanLabel "$($f.Name)" $f.Src); Text = $txt; Note = $note })
+    }
+    $idle = @($mb | Where-Object { [double]$_.Rpm -le 0 }).Count
+    if ($mb.Count -and -not $mbOn.Count -and $CpuTemp -and [double]$CpuTemp -ge 85) {
+        [void]$alerts.Add(@{ Kind = 'bad'; Text = ("Aucun ventilateur de la carte mère ne tourne alors que le processeur est à {0} °C : vérifie que le ventilateur du processeur (ou la pompe du watercooling) est bien branché, sur la prise « CPU_FAN » de la carte mère." -f [math]::Round([double]$CpuTemp)) })
+    }
+    if (@($gp | Where-Object { [double]$_.Rpm -eq 0 }).Count -and $GpuTemp -and [double]$GpuTemp -ge 80) {
+        [void]$alerts.Add(@{ Kind = 'bad'; Text = ("Les ventilateurs de la carte graphique sont à l'arrêt alors qu'elle est à {0} °C : ventilateur bloqué ou en panne, ou réglage forcé dans un logiciel (MSI Afterburner…)." -f [math]::Round([double]$GpuTemp)) })
+    }
+    $fast = @($mbOn | Where-Object { [double]$_.Rpm -ge 2500 -and "$($_.Name)" -notmatch '(?i)pump|aio' })
+    if ($fast.Count -and $null -ne $CpuLoad -and [double]$CpuLoad -lt 15 -and $CpuTemp -and [double]$CpuTemp -lt 55) {
+        [void]$alerts.Add(@{ Kind = 'info'; Text = "Un ventilateur de la carte mère tourne vite alors que le PC ne fait presque rien. Si ton PC est bruyant au repos, son profil est sûrement réglé sur Performance / Turbo ou plein régime : passe-le en Standard ou Silencieux (voir ci-dessous). Si c'est la pompe d'un watercooling, c'est normal (souvent 2 000 à 3 000 tr/min)." })
+    }
+    return @{ Rows = $rows.ToArray(); Alerts = $alerts.ToArray(); IdleHeaders = $idle; Mb = $mb.Count; Gpu = $gp.Count }
+}
+
 # Mémoire : type (DDR3/4/5), barrettes et emplacements libres, pour un conseil d'ajout précis
 function Get-RamLayout {
     $r = @{ Type = ''; Modules = 0; Slots = 0; ModuleSize = 0.0 }
