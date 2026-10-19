@@ -5,43 +5,113 @@ Set-SplashStep 58 'Chargement des outils…'
 Set-SplashStep 66 'Création de l''interface…'
 
 # =====================================================================
+#  Thème : toutes les couleurs et tailles de texte de l'interface, au même endroit
+# =====================================================================
+$Pal = @{
+    # Fonds et surfaces (du plus sombre au plus clair)
+    BgDeep = '#0A0C11'; Bg = '#0E1016'; Side = '#141720'; Sunken = '#13161E'; Card = '#171A23'; CardHover = '#1A1D28'
+    Line = '#232838'; LineStrong = '#2E3446'; Track = '#252A3A'; Chip = '#222736'
+    Btn = '#2A2F3D'; BtnGhost = '#1A1E2A'; NavHover = '#1C2030'; NavOn = '#262B3D'
+    # Textes (du plus visible au plus discret)
+    White = '#FFFFFF'; Text = '#E6E9F2'; Text2 = '#C3CAD9'; Text3 = '#A9B0C2'; Muted = '#8B93A7'; Faint = '#7A8399'
+    # Couleur AEROX (violet)
+    Accent = '#7C5CFF'; AccentText = '#B9A8FF'; AccentSoft = '#2A2350'; AccentLine = '#3B3566'; AccentGlow = '#231E40'
+    # États : OK / à corriger / critique / info
+    Ok = '#4ADE80'; OkSoft = '#173326'; OkText = '#9FE8B5'; OkInk = '#0B1A11'
+    Warn = '#FFB547'; WarnSoft = '#3A2D17'
+    Bad = '#FF6B6B'; BadHot = '#FF3B3B'; BadSoft = '#3A1E24'; BadLine = '#4A2229'; BadText = '#FFB4B4'
+    Info = '#7DD3FC'; InfoSoft = '#12303F'; Gold = '#FFC83D'
+}
+# Échelle de texte : 8 tailles seulement
+$Typo = @{ Caption = 11; Small = 12; Body = 13; Strong = 14; Title = 15; H2 = 18; Stat = 22; Page = 26 }
+
+# =====================================================================
 #  Interface (WPF)
 # =====================================================================
-[xml]$xaml = @'
+$XamlText = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AEROX PC Care" Width="1120" Height="780" MinWidth="960" MinHeight="660"
-        WindowStartupLocation="CenterScreen" Background="#0E1016" FontFamily="Segoe UI" Foreground="#E6E9F2">
+        WindowStartupLocation="CenterScreen" Background="%%Bg%%" FontFamily="Segoe UI" Foreground="%%Text%%">
   <Window.Resources>
+    <!-- Boutons : survol = voile clair (pas de transparence qui ternit), focus clavier = contour violet -->
     <Style x:Key="ActionBtn" TargetType="Button">
       <Setter Property="Foreground" Value="White"/>
-      <Setter Property="Background" Value="#2A2F3D"/>
-      <Setter Property="Padding" Value="18,9"/>
+      <Setter Property="Background" Value="%%Btn%%"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="16,8"/>
+      <Setter Property="MinHeight" Value="34"/>
       <Setter Property="FontSize" Value="13"/>
       <Setter Property="FontWeight" Value="SemiBold"/>
       <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
-            <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
-              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
-            </Border>
+            <Grid x:Name="root">
+              <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"/>
+              <Border x:Name="hl" Background="White" CornerRadius="8" Opacity="0"/>
+              <Border x:Name="fr" BorderBrush="%%AccentText%%" BorderThickness="2" CornerRadius="8" Visibility="Collapsed"/>
+              <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+            </Grid>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Opacity" Value="0.85"/></Trigger>
-              <Trigger Property="IsPressed" Value="True"><Setter TargetName="bd" Property="Opacity" Value="0.7"/></Trigger>
-              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="bd" Property="Opacity" Value="0.35"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="hl" Property="Opacity" Value="0.07"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="hl" Property="Opacity" Value="0.13"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="fr" Property="Visibility" Value="Visible"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="root" Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
     </Style>
-    <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="#7C5CFF"/></Style>
-    <Style x:Key="FixBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="#4ADE80"/><Setter Property="Foreground" Value="#0B1A11"/></Style>
+    <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="%%Accent%%"/></Style>
+    <Style x:Key="FixBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="%%Ok%%"/><Setter Property="Foreground" Value="%%OkInk%%"/></Style>
     <Style x:Key="GhostBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}">
-      <Setter Property="Background" Value="#1A1E2A"/><Setter Property="Padding" Value="12,5"/><Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="Normal"/>
+      <Setter Property="Background" Value="%%BtnGhost%%"/><Setter Property="Padding" Value="12,5"/><Setter Property="MinHeight" Value="28"/><Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="Normal"/>
     </Style>
     <Style x:Key="TextBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}">
-      <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#A9B0C2"/><Setter Property="Padding" Value="10,9"/><Setter Property="FontWeight" Value="Normal"/>
+      <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="%%Text3%%"/><Setter Property="Padding" Value="10,8"/><Setter Property="FontWeight" Value="Normal"/>
+      <Style.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="White"/></Trigger></Style.Triggers>
+    </Style>
+    <!-- Barres de défilement fines et sombres (au lieu des barres grises de Windows) -->
+    <Style x:Key="ScrollThumb" TargetType="Thumb">
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Thumb"><Border x:Name="t" Background="%%LineStrong%%" CornerRadius="4"/>
+            <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="t" Property="Background" Value="%%Faint%%"/></Trigger>
+              <Trigger Property="IsDragging" Value="True"><Setter TargetName="t" Property="Background" Value="%%Muted%%"/></Trigger></ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ScrollBar">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Width" Value="10"/>
+      <Setter Property="MinWidth" Value="10"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ScrollBar">
+            <Border Background="Transparent" Padding="2">
+              <Track x:Name="PART_Track" IsDirectionReversed="True"><Track.Thumb><Thumb Style="{StaticResource ScrollThumb}"/></Track.Thumb></Track>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Orientation" Value="Horizontal">
+          <Setter Property="Width" Value="Auto"/><Setter Property="MinWidth" Value="0"/><Setter Property="Height" Value="10"/><Setter Property="MinHeight" Value="10"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ScrollBar">
+                <Border Background="Transparent" Padding="2">
+                  <Track x:Name="PART_Track" IsDirectionReversed="False"><Track.Thumb><Thumb Style="{StaticResource ScrollThumb}"/></Track.Thumb></Track>
+                </Border>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Trigger>
+      </Style.Triggers>
     </Style>
     <Style x:Key="PlainBtn" TargetType="Button">
       <Setter Property="Cursor" Value="Hand"/>
@@ -54,7 +124,7 @@ Set-SplashStep 66 'Création de l''interface…'
       </Setter>
     </Style>
     <Style x:Key="NavBtn" TargetType="RadioButton">
-      <Setter Property="Foreground" Value="#A9B0C2"/>
+      <Setter Property="Foreground" Value="%%Text3%%"/>
       <Setter Property="FontSize" Value="14"/>
       <Setter Property="Margin" Value="0,2"/>
       <Setter Property="Cursor" Value="Hand"/>
@@ -65,9 +135,9 @@ Set-SplashStep 66 'Création de l''interface…'
               <ContentPresenter VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="#1C2030"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="%%NavHover%%"/></Trigger>
               <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="bd" Property="Background" Value="#262B3D"/>
+                <Setter TargetName="bd" Property="Background" Value="%%NavOn%%"/>
                 <Setter Property="Foreground" Value="White"/>
               </Trigger>
             </ControlTemplate.Triggers>
@@ -83,25 +153,25 @@ Set-SplashStep 66 'Création de l''interface…'
       <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
 
-    <Border Grid.Column="0" Background="#141720" BorderBrush="#1F2330" BorderThickness="0,0,1,0">
+    <Border Grid.Column="0" Background="%%Side%%" BorderBrush="%%Line%%" BorderThickness="0,0,1,0">
       <DockPanel Margin="16,22,16,18">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,0,28">
-          <Border Width="40" Height="40" CornerRadius="10" Background="#7C5CFF">
+          <Border Width="40" Height="40" CornerRadius="10" Background="%%Accent%%">
             <TextBlock Text="A" FontSize="21" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
             <TextBlock Text="AEROX" FontSize="18" FontWeight="Bold" Foreground="White"/>
-            <TextBlock Text="PC Care" FontSize="12" Foreground="#8B93A7"/>
+            <TextBlock Text="PC Care" FontSize="12" Foreground="%%Muted%%"/>
           </StackPanel>
         </StackPanel>
-        <TextBlock x:Name="VersionText" DockPanel.Dock="Bottom" FontSize="11" Foreground="#6E768B" Margin="8,0,0,0"/>
+        <TextBlock x:Name="VersionText" DockPanel.Dock="Bottom" FontSize="11" Foreground="%%Faint%%" Margin="8,0,0,0"/>
         <StackPanel>
           <RadioButton x:Name="NavHome" Style="{StaticResource NavBtn}" GroupName="nav">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE80F;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Accueil"/></StackPanel>
           </RadioButton>
           <RadioButton x:Name="NavDiag" Style="{StaticResource NavBtn}" GroupName="nav">
             <DockPanel Width="180">
-              <Border x:Name="DiagBadge" DockPanel.Dock="Right" Background="#FF6B6B" CornerRadius="9" Padding="6,0" MinWidth="18" Visibility="Collapsed" VerticalAlignment="Center">
+              <Border x:Name="DiagBadge" DockPanel.Dock="Right" Background="%%Bad%%" CornerRadius="9" Padding="6,0" MinWidth="18" Visibility="Collapsed" VerticalAlignment="Center">
                 <TextBlock x:Name="DiagBadgeText" FontSize="11" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center"/>
               </Border>
               <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Diagnostic"/></StackPanel>
@@ -123,7 +193,7 @@ Set-SplashStep 66 'Création de l''interface…'
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Gaming"/></StackPanel>
           </RadioButton>
           <RadioButton x:Name="NavSystem" Style="{StaticResource NavBtn}" GroupName="nav">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7F4;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Mon PC (BIOS)"/></StackPanel>
+            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7F4;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Mon PC"/></StackPanel>
           </RadioButton>
           <RadioButton x:Name="NavHelp" Style="{StaticResource NavBtn}" GroupName="nav">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE897;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Aide"/></StackPanel>
@@ -143,18 +213,18 @@ Set-SplashStep 66 'Création de l''interface…'
         <StackPanel x:Name="PageHost" Margin="32,28,32,20"/>
       </ScrollViewer>
 
-      <Border Grid.Row="1" x:Name="BusyPanel" Background="#171A23" Padding="32,12" Visibility="Collapsed">
+      <Border Grid.Row="1" x:Name="BusyPanel" Background="%%Card%%" Padding="32,12" Visibility="Collapsed">
         <StackPanel>
           <DockPanel>
             <Button x:Name="CancelBtn" DockPanel.Dock="Right" Content="Annuler" Style="{StaticResource TextBtn}" Margin="14,0,0,0" VerticalAlignment="Center"/>
-            <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right" Foreground="#8B93A7" FontSize="12" VerticalAlignment="Center"/>
+            <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right" Foreground="%%Muted%%" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock x:Name="StatusText" Foreground="White" FontWeight="SemiBold" FontSize="13"/>
           </DockPanel>
-          <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Maximum="100" Foreground="#7C5CFF" Background="#252A3A" BorderThickness="0"/>
+          <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Maximum="100" Foreground="%%Accent%%" Background="%%Track%%" BorderThickness="0"/>
         </StackPanel>
       </Border>
 
-      <Border Grid.Row="2" Background="#0A0C11" BorderBrush="#1F2330" BorderThickness="0,1,0,0">
+      <Border Grid.Row="2" Background="%%BgDeep%%" BorderBrush="%%Line%%" BorderThickness="0,1,0,0">
         <DockPanel>
           <DockPanel DockPanel.Dock="Top" Margin="24,7,20,7">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
@@ -164,14 +234,14 @@ Set-SplashStep 66 'Création de l''interface…'
             </StackPanel>
             <Button x:Name="LogToggle" Style="{StaticResource PlainBtn}" HorizontalContentAlignment="Left" Margin="0,0,16,0">
               <DockPanel>
-                <TextBlock x:Name="LogChevron" FontFamily="Segoe MDL2 Assets" Text="&#xE70E;" FontSize="11" Foreground="#8B93A7" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <TextBlock Text="JOURNAL" FontSize="11" FontWeight="Bold" Foreground="#6E768B" VerticalAlignment="Center"/>
-                <Ellipse x:Name="LogDot" Width="7" Height="7" Fill="#7C5CFF" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
-                <TextBlock x:Name="LogLast" Margin="12,0,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="12" Foreground="#8B93A7" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                <TextBlock x:Name="LogChevron" FontFamily="Segoe MDL2 Assets" Text="&#xE70E;" FontSize="11" Foreground="%%Muted%%" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="JOURNAL" FontSize="11" FontWeight="Bold" Foreground="%%Faint%%" VerticalAlignment="Center"/>
+                <Ellipse x:Name="LogDot" Width="7" Height="7" Fill="%%Accent%%" Margin="10,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <TextBlock x:Name="LogLast" Margin="12,0,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="12" Foreground="%%Muted%%" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
               </DockPanel>
             </Button>
           </DockPanel>
-          <TextBox x:Name="LogBox" Height="170" Visibility="Collapsed" IsReadOnly="True" Background="Transparent" Foreground="#C3CAD9" BorderThickness="0"
+          <TextBox x:Name="LogBox" Height="170" Visibility="Collapsed" IsReadOnly="True" Background="Transparent" Foreground="%%Text2%%" BorderThickness="0"
                    FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="28,0,24,10"/>
         </DockPanel>
       </Border>
@@ -179,7 +249,9 @@ Set-SplashStep 66 'Création de l''interface…'
   </Grid>
 </Window>
 '@
-
+# Couleurs du thème injectées dans la fenêtre (%%Nom%% → $Pal.Nom)
+foreach ($k in $Pal.Keys) { $XamlText = $XamlText.Replace("%%$k%%", $Pal[$k]) }
+[xml]$xaml = $XamlText
 $window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
 Set-SplashStep 78 'Création de l''interface…'
 foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','CancelBtn','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
@@ -289,12 +361,18 @@ function Save-Settings {
 }
 
 # ---------------------------------------------------------------- Fabrique d'éléments
-function Brush([string]$Hex) { $script:BC.ConvertFromString($Hex) }
+$script:BrushCache = @{}
+# Pinceaux créés une seule fois par couleur et gelés (partagés sans risque, plus rapide qu'une conversion à chaque élément)
+function Brush([string]$Hex) {
+    $b = $script:BrushCache[$Hex]
+    if (-not $b) { $b = $script:BC.ConvertFromString($Hex); if ($b.CanFreeze) { $b.Freeze() }; $script:BrushCache[$Hex] = $b }
+    return $b
+}
 function Th([double]$l, [double]$t, [double]$r, [double]$b) { New-Object System.Windows.Thickness($l, $t, $r, $b) }
 function Corner([double]$r) { New-Object System.Windows.CornerRadius($r) }
 
 function New-Text {
-    param([string]$Text, [double]$Size = 13, [string]$Color = '#A9B0C2', [string]$Weight = 'Normal')
+    param([string]$Text, [double]$Size = 13, [string]$Color = $Pal.Text3, [string]$Weight = 'Normal')
     $t = New-Object System.Windows.Controls.TextBlock
     $t.Text = $Text; $t.FontSize = $Size; $t.Foreground = Brush $Color
     $t.FontWeight = [System.Windows.FontWeights]::$Weight
@@ -304,16 +382,16 @@ function New-Text {
 # Ligne « Libellé : texte » (+ code en police fixe)
 function New-Rich([string]$Label, [string]$Text, [string]$Code) {
     $t = New-Object System.Windows.Controls.TextBlock
-    $t.TextWrapping = 'Wrap'; $t.FontSize = 13; $t.Foreground = Brush '#8B93A7'; $t.Margin = Th 0 3 0 0
-    if ($Label) { $r = New-Object System.Windows.Documents.Run("$Label : "); $r.FontWeight = 'SemiBold'; $r.Foreground = Brush '#C3CAD9'; $t.Inlines.Add($r) }
+    $t.TextWrapping = 'Wrap'; $t.FontSize = $Typo.Body; $t.Foreground = Brush $Pal.Muted; $t.Margin = Th 0 3 0 0
+    if ($Label) { $r = New-Object System.Windows.Documents.Run("$Label : "); $r.FontWeight = 'SemiBold'; $r.Foreground = Brush $Pal.Text2; $t.Inlines.Add($r) }
     if ($Text)  { $t.Inlines.Add((New-Object System.Windows.Documents.Run($Text))) }
-    if ($Code)  { $c = New-Object System.Windows.Documents.Run(" $Code "); $c.FontFamily = 'Cascadia Mono, Consolas'; $c.FontSize = 12; $c.Background = Brush '#10131A'; $c.Foreground = Brush '#C3CAD9'; $t.Inlines.Add($c) }
+    if ($Code)  { $c = New-Object System.Windows.Documents.Run(" $Code "); $c.FontFamily = 'Cascadia Mono, Consolas'; $c.FontSize = $Typo.Small; $c.Background = Brush $Pal.Sunken; $c.Foreground = Brush $Pal.Text2; $t.Inlines.Add($c) }
     return $t
 }
 function New-Pill([string]$Text, [string]$Fg, [string]$Bg) {
     $b = New-Object System.Windows.Controls.Border
     $b.Background = Brush $Bg; $b.CornerRadius = Corner 6; $b.Padding = Th 8 2 8 2; $b.Margin = Th 8 0 0 0; $b.VerticalAlignment = 'Center'
-    $b.Child = New-Text $Text.ToUpper() 10.5 $Fg 'Bold'
+    $b.Child = New-Text $Text.ToUpper() $Typo.Caption $Fg 'Bold'
     return $b
 }
 function New-Button([string]$Text, [string]$Style, $Tag, [bool]$Busy = $true) {
@@ -323,13 +401,13 @@ function New-Button([string]$Text, [string]$Style, $Tag, [bool]$Busy = $true) {
     if ($Busy) { $Tag.Busy = $true; $btn.IsEnabled = -not [bool]$script:Job; [void]$script:PageButtons.Add($btn) }
     return $btn
 }
-function New-CardBorder([string]$BorderColor = '#232838') {
+function New-CardBorder([string]$BorderColor = $Pal.Line) {
     $card = New-Object System.Windows.Controls.Border
-    $card.Background = Brush '#171A23'; $card.BorderBrush = Brush $BorderColor; $card.BorderThickness = Th 1 1 1 1
+    $card.Background = Brush $Pal.Card; $card.BorderBrush = Brush $BorderColor; $card.BorderThickness = Th 1 1 1 1
     $card.CornerRadius = Corner 12; $card.Padding = Th 20 16 20 16; $card.Margin = Th 0 0 0 12
     return $card
 }
-function New-Section([string]$Text) { $t = New-Text $Text.ToUpper() 11.5 '#7A8399' 'Bold'; $t.Margin = Th 0 18 0 10; return $t }
+function New-Section([string]$Text) { $t = New-Text $Text.ToUpper() $Typo.Small $Pal.Faint 'Bold'; $t.Margin = Th 0 18 0 10; return $t }
 function Add-Child($Parent, $Child) { [void]$Parent.Children.Add($Child) }
 
 # Icône de chaque carte (police d'icônes de Windows, rien à télécharger)
@@ -344,56 +422,100 @@ $script:CardIcons = @{
 }
 function New-CardIcon([string]$Hex, [bool]$Primary) {
     $b = New-Object System.Windows.Controls.Border; $b.Width = 42; $b.Height = 42; $b.CornerRadius = Corner 11; $b.Margin = Th 0 0 16 0; $b.VerticalAlignment = 'Top'
-    $b.Background = Brush $(if ($Primary) { '#2E2560' } else { '#20243A' })
-    $t = New-Object System.Windows.Controls.TextBlock; $t.FontFamily = 'Segoe MDL2 Assets'; $t.FontSize = 18; $t.HorizontalAlignment = 'Center'; $t.VerticalAlignment = 'Center'
-    $t.Text = [string][char][Convert]::ToInt32($Hex, 16); $t.Foreground = Brush $(if ($Primary) { '#C9BBFF' } else { '#A9B0C2' })
+    $b.Background = Brush $(if ($Primary) { $Pal.AccentSoft } else { $Pal.Chip })
+    $t = New-Object System.Windows.Controls.TextBlock; $t.FontFamily = 'Segoe MDL2 Assets'; $t.FontSize = $Typo.H2; $t.HorizontalAlignment = 'Center'; $t.VerticalAlignment = 'Center'
+    $t.Text = [string][char][Convert]::ToInt32($Hex, 16); $t.Foreground = Brush $(if ($Primary) { $Pal.AccentText } else { $Pal.Text3 })
     $b.Child = $t
     return $b
 }
 # Survol : la carte s'éclaire légèrement (repère visuel de ce qui est cliquable)
 function Add-CardHover($Card) {
-    $Card.Add_MouseEnter({ $this.BorderBrush = Brush '#3B3566'; $this.Background = Brush '#1A1D28' })
-    $Card.Add_MouseLeave({ $this.BorderBrush = Brush '#232838'; $this.Background = Brush '#171A23' })
+    $Card.Add_MouseEnter({ $this.BorderBrush = Brush $Pal.AccentLine; $this.Background = Brush $Pal.CardHover })
+    $Card.Add_MouseLeave({ $this.BorderBrush = Brush $Pal.Line; $this.Background = Brush $Pal.Card })
 }
-function New-ActionCard($Def) {
-    if ($Def.StatusFn) {
-        $st = $null
-        try { $st = & $Def.StatusFn } catch { Write-Bug -Context "Statut ($($Def.T))" -ErrorRecord $_ }
-        if ($st) {
-            $D = @{}; foreach ($k in $Def.Keys) { if ($k -ne 'StatusFn') { $D[$k] = $Def[$k] } }
-            foreach ($k in $st.Keys) { $D[$k] = $st[$k] }
-            $Def = $D
-        }
-    }
-    $card = New-CardBorder; Add-CardHover $card
-    $grid = New-Object System.Windows.Controls.Grid
-    $c0 = New-Object System.Windows.Controls.ColumnDefinition; $c0.Width = [System.Windows.GridLength]::Auto
-    $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
-    $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = [System.Windows.GridLength]::Auto
-    $grid.ColumnDefinitions.Add($c0); $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
+# État affiché sous une carte (StatusFn) : remplace aussi le bouton / l'action si l'état le demande
+function Resolve-CardDef($Def) {
+    if (-not $Def.StatusFn) { return $Def }
+    $st = $null
+    try { $st = & $Def.StatusFn } catch { Write-Bug -Context "Statut ($($Def.T))" -ErrorRecord $_ }
+    if (-not $st) { return $Def }
+    $D = @{}; foreach ($k in $Def.Keys) { if ($k -ne 'StatusFn') { $D[$k] = $Def[$k] } }
+    foreach ($k in $st.Keys) { $D[$k] = $st[$k] }
+    return $D
+}
+function New-CardStatus($Def) {
+    $col = switch ($Def.StatusKind) { 'on' { $Pal.Ok } 'warn' { $Pal.Warn } default { $Pal.Muted } }
+    $sr = New-Object System.Windows.Controls.DockPanel; $sr.Margin = Th 0 8 0 0
+    $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 8; $dot.Height = 8; $dot.Fill = Brush $col; $dot.VerticalAlignment = 'Top'; $dot.Margin = Th 0 6 8 0
+    [System.Windows.Controls.DockPanel]::SetDock($dot, 'Left'); Add-Child $sr $dot
+    Add-Child $sr (New-Text $Def.StatusText $Typo.Small $col 'SemiBold')
+    return $sr
+}
+function New-CardButton($Def) {
+    $btn = New-Button $Def.B $(if ($Def.P) { 'PrimaryBtn' } else { 'ActionBtn' }) @{ Kind = $(if ($Def.UI) { 'ui' } elseif ($Def.Go) { 'go' } else { 'action' }); Def = $Def } (-not $Def.UI -or $Def.UiBusy)
+    $btn.MinWidth = 130
+    return $btn
+}
+function Get-CardIconHex($Def) {
     $ik = $(if ($Def.UI) { $Def.UI } elseif ($Def.Go) { $Def.Go } else { $Def.A })
     $ih = $script:CardIcons[[string]$ik]; if (-not $ih) { $ih = 'E946' }
-    Add-Child $grid (New-CardIcon $ih ([bool]$Def.P))
-    $sp = New-Object System.Windows.Controls.StackPanel; [System.Windows.Controls.Grid]::SetColumn($sp, 1)
+    return $ih
+}
+# Grande carte : icône, titre, description complète, état, bouton à droite
+function New-ActionCard($Def) {
+    $Def = Resolve-CardDef $Def
+    $card = New-CardBorder; Add-CardHover $card
+    $grid = New-Object System.Windows.Controls.Grid
+    foreach ($w in 'Auto', '*', 'Auto') { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = $(if ($w -eq '*') { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) } else { [System.Windows.GridLength]::Auto }); $grid.ColumnDefinitions.Add($cd) }
+    Add-Child $grid (New-CardIcon (Get-CardIconHex $Def) ([bool]$Def.P))
+    $sp = New-Object System.Windows.Controls.StackPanel; [System.Windows.Controls.Grid]::SetColumn($sp, 1); $sp.VerticalAlignment = 'Center'
     $row = New-Object System.Windows.Controls.WrapPanel
-    Add-Child $row (New-Text $Def.T 15 '#FFFFFF' 'SemiBold')
-    if ($Def.Badge) { Add-Child $row (New-Pill $Def.Badge '#B9A8FF' '#2A2350') }
+    Add-Child $row (New-Text $Def.T $Typo.Title $Pal.White 'SemiBold')
+    if ($Def.Badge) { Add-Child $row (New-Pill $Def.Badge $Pal.AccentText $Pal.AccentSoft) }
     Add-Child $sp $row
-    $d = New-Text $Def.D 13 '#8B93A7'; $d.Margin = Th 0 5 0 0; Add-Child $sp $d
-    if ($Def.StatusText) {
-        $col = switch ($Def.StatusKind) { 'on' { '#4ADE80' } 'warn' { '#FFB547' } default { '#8B93A7' } }
-        $sr = New-Object System.Windows.Controls.StackPanel; $sr.Orientation = 'Horizontal'; $sr.Margin = Th 0 8 0 0
-        $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 8; $dot.Height = 8; $dot.Fill = Brush $col; $dot.VerticalAlignment = 'Center'; $dot.Margin = Th 0 0 8 0
-        Add-Child $sr $dot; Add-Child $sr (New-Text $Def.StatusText 13 $col 'SemiBold')
-        Add-Child $sp $sr
-    }
+    $d = New-Text $Def.D $Typo.Body $Pal.Muted; $d.Margin = Th 0 4 0 0; $d.LineHeight = 19; Add-Child $sp $d
+    if ($Def.StatusText) { Add-Child $sp (New-CardStatus $Def) }
     Add-Child $grid $sp
-    $style = if ($Def.P) { 'PrimaryBtn' } else { 'ActionBtn' }
-    $btn = New-Button $Def.B $style @{ Kind = $(if ($Def.UI) { 'ui' } elseif ($Def.Go) { 'go' } else { 'action' }); Def = $Def } (-not $Def.UI -or $Def.UiBusy)
-    $btn.Margin = Th 20 0 0 0; $btn.MinWidth = 130
+    $btn = New-CardButton $Def; $btn.Margin = Th 20 0 0 0
     [System.Windows.Controls.Grid]::SetColumn($btn, 2); Add-Child $grid $btn
     $card.Child = $grid
     return $card
+}
+# Petite tuile (2 par ligne) : pour les actions courtes ; la description complète reste en info-bulle
+function New-ActionTile($Def) {
+    $Def = Resolve-CardDef $Def
+    $card = New-CardBorder; Add-CardHover $card; $card.Margin = Th 0 0 12 12; $card.Padding = Th 16 14 16 14
+    $card.ToolTip = $Def.D
+    $dp = New-Object System.Windows.Controls.DockPanel
+    $btn = New-CardButton $Def; $btn.MinWidth = 0; $btn.HorizontalAlignment = 'Left'; $btn.Margin = Th 0 12 0 0
+    [System.Windows.Controls.DockPanel]::SetDock($btn, 'Bottom'); Add-Child $dp $btn
+    $head = New-Object System.Windows.Controls.DockPanel
+    $ic = New-CardIcon (Get-CardIconHex $Def) ([bool]$Def.P); $ic.Width = 34; $ic.Height = 34; $ic.CornerRadius = Corner 9; $ic.Margin = Th 0 0 12 0; $ic.Child.FontSize = $Typo.Title
+    [System.Windows.Controls.DockPanel]::SetDock($ic, 'Left'); Add-Child $head $ic
+    $tt = New-Text $Def.T $Typo.Strong $Pal.White 'SemiBold'; $tt.VerticalAlignment = 'Center'; Add-Child $head $tt
+    [System.Windows.Controls.DockPanel]::SetDock($head, 'Top'); Add-Child $dp $head
+    $body = New-Object System.Windows.Controls.StackPanel
+    $d = New-Text $(if ($Def.S) { $Def.S } else { $Def.D }) $Typo.Small $Pal.Muted; $d.Margin = Th 0 8 0 0; $d.LineHeight = 17; Add-Child $body $d
+    if ($Def.StatusText) { Add-Child $body (New-CardStatus $Def) }
+    Add-Child $dp $body
+    $card.Child = $dp
+    return $card
+}
+# Cartes d'une page, rangées par groupe (G) : grandes cartes, puis tuiles 2 par 2 (Tile)
+function Add-PageCards($Sp, $Cards) {
+    $groups = New-Object System.Collections.ArrayList; $byName = @{}
+    foreach ($c in $Cards) { $g = [string]$c.G; if (-not $byName.ContainsKey($g)) { $byName[$g] = New-Object System.Collections.ArrayList; [void]$groups.Add($g) }; [void]$byName[$g].Add($c) }
+    foreach ($g in $groups) {
+        if ($g) { Add-Child $Sp (New-Section $g) }
+        $tiles = $null
+        foreach ($c in $byName[$g]) {
+            if ($c.Tile) {
+                if (-not $tiles) { $tiles = New-Object System.Windows.Controls.Primitives.UniformGrid; $tiles.Columns = 2; $tiles.Margin = Th 0 0 -12 0 }
+                Add-Child $tiles (New-ActionTile $c)
+            } else { Add-Child $Sp (New-ActionCard $c) }
+        }
+        if ($tiles) { Add-Child $Sp $tiles }
+    }
 }
 
 # ---------------------------------------------------------------- Bilan avant / après (bilan.json dans le dossier des journaux)
@@ -425,7 +547,7 @@ function Add-BilanCard($sp) {
     $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
     $since = ''; try { $since = Format-Date ([datetime]$a.Date) } catch {}
     if (-not ($n -is [hashtable])) {
-        $t = New-Text ("Point de départ enregistré le {0}. Fais tes réglages (démarrage, nettoyage, désinstallations, mises à jour…), redémarre le PC, puis relance le diagnostic : tu verras ici la différence, chiffres à l'appui." -f $since) 13 '#A9B0C2'
+        $t = New-Text ("Point de départ enregistré le {0}. Fais tes réglages (démarrage, nettoyage, désinstallations, mises à jour…), redémarre le PC, puis relance le diagnostic : tu verras ici la différence, chiffres à l'appui." -f $since) $Typo.Body $Pal.Text3
         Add-Child $cs $t; $c.Child = $cs; Add-Child $sp $c; return
     }
     $g = New-Object System.Windows.Controls.Grid
@@ -435,22 +557,22 @@ function Add-BilanCard($sp) {
         param($cells, $colors, $weight)
         $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $g.RowDefinitions.Add($rd)
         for ($k = 0; $k -lt 4; $k++) {
-            $t = New-Text $cells[$k] 13 $colors[$k] $weight; $t.Margin = Th 0 4 8 4
+            $t = New-Text $cells[$k] $Typo.Body $colors[$k] $weight; $t.Margin = Th 0 4 8 4
             if ($k -gt 0) { $t.TextAlignment = 'Right' }
             [System.Windows.Controls.Grid]::SetRow($t, $script:BilanRow); [System.Windows.Controls.Grid]::SetColumn($t, $k); Add-Child $g $t
         }
         $script:BilanRow++
     }
-    & $row @('', ("Avant ({0})" -f $since), 'Maintenant', 'Différence') @('#7A8399', '#7A8399', '#7A8399', '#7A8399') 'SemiBold'
+    & $row @('', ("Avant ({0})" -f $since), 'Maintenant', 'Différence') @($Pal.Faint, $Pal.Faint, $Pal.Faint, $Pal.Faint) 'SemiBold'
     # Une ligne par mesure : valeur avant, maintenant, et écart coloré (vert = mieux)
     $line = {
         param($label, $va, $vn, [bool]$lowerBetter, $fmt)
         if ($null -eq $va -or $null -eq $vn) { return }
         $d = [double]$vn - [double]$va
         $better = if ($lowerBetter) { $d -lt 0 } else { $d -gt 0 }
-        $col = if ([math]::Abs($d) -lt 1e-9) { '#8B93A7' } elseif ($better) { '#4ADE80' } else { '#FFB547' }
+        $col = if ([math]::Abs($d) -lt 1e-9) { $Pal.Muted } elseif ($better) { $Pal.Ok } else { $Pal.Warn }
         $ds = if ([math]::Abs($d) -lt 1e-9) { '=' } else { $(if ($d -gt 0) { '+' } else { '−' }) + (& $fmt ([math]::Abs($d))) }
-        & $row @($label, (& $fmt ([double]$va)), (& $fmt ([double]$vn)), $ds) @('#C3CAD9', '#A9B0C2', '#FFFFFF', $col) 'Normal'
+        & $row @($label, (& $fmt ([double]$va)), (& $fmt ([double]$vn)), $ds) @($Pal.Text2, $Pal.Text3, $Pal.White, $col) 'Normal'
     }
     $num = { param($v) "{0:N0}" -f $v }
     $sec = { param($v) $v = [int][math]::Round($v); if ($v -ge 60) { "{0} min {1:D2} s" -f [math]::Floor($v / 60), ($v % 60) } else { "$v s" } }
@@ -467,19 +589,19 @@ function Add-BilanCard($sp) {
     }
     Add-Child $cs $g
     $note = "Temps de démarrage : mesuré par Windows au dernier démarrage complet. Après tes réglages, redémarre le PC (« Redémarrer », pas « Arrêter ») puis relance le diagnostic pour le voir changer. Mémoire et programmes en fond varient selon ce qui est ouvert au moment de la mesure."
-    $t = New-Text $note 11.5 '#7A8399'; $t.Margin = Th 0 8 0 4; Add-Child $cs $t
+    $t = New-Text $note $Typo.Small $Pal.Faint; $t.Margin = Th 0 8 0 4; Add-Child $cs $t
     $rb = New-Button 'Repartir de zéro' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'bilan-reset' } } $false; $rb.HorizontalAlignment = 'Left'; Add-Child $cs $rb
     $c.Child = $cs; Add-Child $sp $c
 }
 
 function Get-Score { if (-not $script:Diag) { return $null }; $s = 100; foreach ($i in $script:Diag.Issues) { if ($i.Status -ne 'done') { $s -= $(if ($i.Sev -eq 'crit') { 12 } else { 5 }) } }; return [math]::Max([double]0, $s) }
-function Get-Level([int]$S) { if ($S -ge 85) { return @{ Text = 'Bonne forme'; Color = '#4ADE80' } } elseif ($S -ge 60) { return @{ Text = 'Correct, à surveiller'; Color = '#FFB547' } } else { return @{ Text = 'À améliorer'; Color = '#FF6B6B' } } }
+function Get-Level([int]$S) { if ($S -ge 85) { return @{ Text = 'Bonne forme'; Color = $Pal.Ok } } elseif ($S -ge 60) { return @{ Text = 'Correct, à surveiller'; Color = $Pal.Warn } } else { return @{ Text = 'À améliorer'; Color = $Pal.Bad } } }
 function Get-OpenIssues { if (-not $script:Diag) { return @() }; return @($script:Diag.Issues | Where-Object { $_.Status -ne 'done' }) }
 
 function New-Ring([int]$Score, [double]$Size = 96) {
     $g = New-Object System.Windows.Controls.Grid; $g.Width = $Size; $g.Height = $Size; $g.VerticalAlignment = 'Center'
     $th = [math]::Round($Size * 0.095)
-    $tr = New-Object System.Windows.Shapes.Ellipse; $tr.Stroke = Brush '#252A3A'; $tr.StrokeThickness = $th; Add-Child $g $tr
+    $tr = New-Object System.Windows.Shapes.Ellipse; $tr.Stroke = Brush $Pal.Track; $tr.StrokeThickness = $th; Add-Child $g $tr
     $col = (Get-Level $Score).Color
     $r = ($Size - $th) / 2; $c = $Size / 2
     if ($Score -ge 100) { $e = New-Object System.Windows.Shapes.Ellipse; $e.Stroke = Brush $col; $e.StrokeThickness = $th; Add-Child $g $e }
@@ -492,22 +614,22 @@ function New-Ring([int]$Score, [double]$Size = 96) {
         Add-Child $g $p
     }
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.HorizontalAlignment = 'Center'; $sp.VerticalAlignment = 'Center'
-    $n = New-Text "$Score" ([math]::Round($Size * 0.27)) '#FFFFFF' 'Bold'; $n.HorizontalAlignment = 'Center'; Add-Child $sp $n
-    if ($Size -ge 80) { $u = New-Text '/ 100' 10 '#8B93A7'; $u.HorizontalAlignment = 'Center'; Add-Child $sp $u }
+    $n = New-Text "$Score" ([math]::Round($Size * 0.27)) $Pal.White 'Bold'; $n.HorizontalAlignment = 'Center'; Add-Child $sp $n
+    if ($Size -ge 80) { $u = New-Text '/ 100' $Typo.Caption $Pal.Muted; $u.HorizontalAlignment = 'Center'; Add-Child $sp $u }
     Add-Child $g $sp
     return $g
 }
 function New-Chip([string]$Text, [string]$Kind) {
-    $c = @{ bad = @('#FF6B6B', '#3A1E24'); warn = @('#FFB547', '#3A2D17'); ok = @('#4ADE80', '#173326') }[$Kind]
+    $c = @{ bad = @($Pal.Bad, $Pal.BadSoft); warn = @($Pal.Warn, $Pal.WarnSoft); ok = @($Pal.Ok, $Pal.OkSoft) }[$Kind]
     $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $c[1]; $b.CornerRadius = Corner 10; $b.Padding = Th 10 3 10 3; $b.Margin = Th 0 8 8 0
-    $b.Child = New-Text $Text 12 $c[0] 'SemiBold'
+    $b.Child = New-Text $Text $Typo.Small $c[0] 'SemiBold'
     return $b
 }
 function New-StatusDot([string]$State) {
-    $map = @{ ok = @('✓', '#4ADE80', '#173326'); warn = @('!', '#FFB547', '#3A2D17'); bad = @('✕', '#FF6B6B', '#3A1E24'); run = @('…', '#B9A8FF', '#2A2350'); wait = @('', '#6E768B', '#1E2230') }
+    $map = @{ ok = @('✓', $Pal.Ok, $Pal.OkSoft); warn = @('!', $Pal.Warn, $Pal.WarnSoft); bad = @('✕', $Pal.Bad, $Pal.BadSoft); run = @('…', $Pal.AccentText, $Pal.AccentSoft); wait = @('', $Pal.Faint, $Pal.Line) }
     $m = $map[$State]; if (-not $m) { $m = $map.wait }
     $b = New-Object System.Windows.Controls.Border; $b.Width = 22; $b.Height = 22; $b.CornerRadius = Corner 11; $b.Background = Brush $m[2]; $b.VerticalAlignment = 'Center'
-    $t = New-Text $m[0] 12 $m[1] 'Bold'; $t.HorizontalAlignment = 'Center'; $t.VerticalAlignment = 'Center'; $b.Child = $t
+    $t = New-Text $m[0] $Typo.Small $m[1] 'Bold'; $t.HorizontalAlignment = 'Center'; $t.VerticalAlignment = 'Center'; $b.Child = $t
     return $b
 }
 
@@ -515,7 +637,7 @@ function New-StatusDot([string]$State) {
 function New-IssueCard($I, [switch]$IsError) {
     $done = $I.Status -eq 'done'; $fixing = $I.Status -in 'fixing', 'verifying'
     $sev = if ($IsError) { 'crit' } else { $I.Sev }
-    $card = New-CardBorder $(if (-not $done -and $sev -eq 'crit') { '#4A2229' } else { '#232838' })
+    $card = New-CardBorder $(if (-not $done -and $sev -eq 'crit') { $Pal.BadLine } else { $Pal.Line })
     $card.Padding = Th 18 16 18 16; $card.Margin = Th 0 0 0 10
     $grid = New-Object System.Windows.Controls.Grid
     $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = [System.Windows.GridLength]::Auto
@@ -523,18 +645,18 @@ function New-IssueCard($I, [switch]$IsError) {
     $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
     $ico = New-StatusDot $(if ($done) { 'ok' } elseif ($sev -eq 'crit') { 'bad' } else { 'warn' })
     $ico.Width = 34; $ico.Height = 34; $ico.CornerRadius = Corner 17; $ico.VerticalAlignment = 'Top'; $ico.Margin = Th 0 0 14 0
-    $ico.Child.FontSize = 16
+    $ico.Child.FontSize = $Typo.Title
     if (-not $done -and $sev -ne 'crit') { $ico.Child.Text = 'i' }
     Add-Child $grid $ico
     $sp = New-Object System.Windows.Controls.StackPanel; [System.Windows.Controls.Grid]::SetColumn($sp, 1)
     $head = New-Object System.Windows.Controls.WrapPanel
-    $title = New-Text $I.Title 15 $(if ($done) { '#8B93A7' } else { '#FFFFFF' }) 'SemiBold'
+    $title = New-Text $I.Title $Typo.Title $(if ($done) { $Pal.Muted } else { $Pal.White }) 'SemiBold'
     if ($done) { $title.TextDecorations = [System.Windows.TextDecorations]::Strikethrough }
     Add-Child $head $title
-    if ($done) { Add-Child $head (New-Pill 'Corrigé' '#4ADE80' '#173326') }
-    elseif ($sev -eq 'crit') { Add-Child $head (New-Pill $(if ($IsError) { 'Erreur' } else { 'Critique' }) '#FF6B6B' '#3A1E24') }
-    else { Add-Child $head (New-Pill 'À corriger' '#FFB547' '#3A2D17') }
-    if ($I.Cat) { Add-Child $head (New-Pill $I.Cat '#8B93A7' '#222736') }
+    if ($done) { Add-Child $head (New-Pill 'Corrigé' $Pal.Ok $Pal.OkSoft) }
+    elseif ($sev -eq 'crit') { Add-Child $head (New-Pill $(if ($IsError) { 'Erreur' } else { 'Critique' }) $Pal.Bad $Pal.BadSoft) }
+    else { Add-Child $head (New-Pill 'À corriger' $Pal.Warn $Pal.WarnSoft) }
+    if ($I.Cat) { $ct = New-Text $I.Cat.ToUpper() $Typo.Caption $Pal.Faint 'SemiBold'; $ct.Margin = Th 10 0 0 0; $ct.VerticalAlignment = 'Center'; Add-Child $head $ct }
     Add-Child $sp $head
     if ($done) { if ($I.Detail) { Add-Child $sp (New-Rich '' $I.Detail '') } }
     else {
@@ -542,9 +664,11 @@ function New-IssueCard($I, [switch]$IsError) {
         elseif ($I.Detail) { Add-Child $sp (New-Rich '' $I.Detail '') }
         if ($I.Cause)  { Add-Child $sp (New-Rich 'Cause' $I.Cause '') }
         if ($I.Effect) { Add-Child $sp (New-Rich 'Conséquence' $I.Effect '') }
-        $acts = New-Object System.Windows.Controls.WrapPanel; $acts.Margin = Th 0 10 0 0
+        # Actions : boutons à gauche, « Ne plus signaler » à droite (discret)
+        $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 12 0 0; $bar.LastChildFill = $true
+        $acts = New-Object System.Windows.Controls.WrapPanel
         $hint = $null
-        if ($fixing) { Add-Child $acts (New-Text $(if ($I.Status -eq 'verifying') { "Vérification que c'est bien réglé…" } else { "Réparation en cours…" }) 13 '#B9A8FF' 'SemiBold') }
+        if ($fixing) { Add-Child $acts (New-Text $(if ($I.Status -eq 'verifying') { "Vérification que c'est bien réglé…" } else { "Réparation en cours…" }) $Typo.Body $Pal.AccentText 'SemiBold') }
         else {
             if ($I.FixLabel) {
                 $b = New-Button $I.FixLabel 'FixBtn' @{ Kind = $(if ($IsError) { 'errfix' } else { 'fix' }); Issue = $I }; $b.Margin = Th 0 0 8 0; Add-Child $acts $b
@@ -559,19 +683,20 @@ function New-IssueCard($I, [switch]$IsError) {
                     $hint = 'À faire toi-même'
                 }
             }
-            if ($hint) { $h = New-Text $hint 12 '#7A8399'; $h.VerticalAlignment = 'Center'; $h.Margin = Th 4 0 0 0; Add-Child $acts $h }
+            if ($hint) { $h = New-Text $hint $Typo.Small $Pal.Faint; $h.VerticalAlignment = 'Center'; $h.Margin = Th 4 0 0 0; Add-Child $acts $h }
             if (-not $IsError -and $I.Id -and $I.Cat -ne 'Sécurité') {
-                $bi = New-Button 'Ne plus signaler' 'TextBtn' @{ Kind = 'ignore'; Issue = $I } $false; $bi.Margin = Th 8 0 0 0; Add-Child $acts $bi
+                $bi = New-Button 'Ne plus signaler' 'TextBtn' @{ Kind = 'ignore'; Issue = $I } $false; $bi.FontSize = $Typo.Small; $bi.VerticalAlignment = 'Bottom'
+                [System.Windows.Controls.DockPanel]::SetDock($bi, 'Right'); Add-Child $bar $bi
             }
         }
         if ($I.VerifyFailed -and -not $done -and -not $fixing) {
-            $vf = New-Text "⚠ La réparation automatique a été faite mais le problème est toujours là : suis les étapes « Voir comment faire », ou envoie un rapport de bug pour que ce soit amélioré." 12.5 '#FFB547'
+            $vf = New-Text "⚠ La réparation automatique a été faite mais le problème est toujours là : suis les étapes « Voir comment faire », ou envoie un rapport de bug pour que ce soit amélioré." $Typo.Body $Pal.Warn
             $vf.Margin = Th 0 8 0 0; Add-Child $sp $vf
         }
-        if ($acts.Children.Count) { Add-Child $sp $acts }
+        if ($acts.Children.Count -or $bar.Children.Count) { Add-Child $bar $acts; Add-Child $sp $bar }
         if ($I.Steps -and $script:OpenSteps[$I.Title]) {
             $st = New-Object System.Windows.Controls.StackPanel; $st.Margin = Th 4 10 0 0
-            $k = 1; foreach ($s in $I.Steps) { $l = New-Text ("{0}.  {1}" -f $k, $s) 13 '#C3CAD9'; $l.Margin = Th 0 2 0 2; Add-Child $st $l; $k++ }
+            $k = 1; foreach ($s in $I.Steps) { $l = New-Text ("{0}.  {1}" -f $k, $s) $Typo.Body $Pal.Text2; $l.Margin = Th 0 2 0 2; Add-Child $st $l; $k++ }
             Add-Child $sp $st
         }
     }
@@ -583,52 +708,52 @@ function New-IssueCard($I, [switch]$IsError) {
 # ---------------------------------------------------------------- Pages
 $PageDefs = [ordered]@{
  clean = @{ Title = "Nettoyage"; Sub = "Libère de la place et supprime les fichiers inutiles. Tes fichiers perso (photos, documents, téléchargements, jeux) ne sont jamais touchés."; Cards = @(
-    @{ T = "Nettoyage approfondi"; Badge = "Recommandé"; P = $true; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
-    @{ T = "Ce qui prend de la place"; B = "Analyser le disque"; UI = 'space'; UiBusy = $true; D = "Trouve ce qui remplit le disque et te dit quoi en faire : place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes), OneDrive en double, jeux et logiciels oubliés, plus gros fichiers et dossiers. 1 à 3 minutes." },
-    @{ T = "Fichiers en double"; B = "Chercher"; UI = 'dupes'; UiBusy = $true; D = "Photos, vidéos, documents et installateurs présents en plusieurs exemplaires dans tes dossiers. Tu choisis ce qui part à la corbeille, un exemplaire est toujours gardé." },
-    @{ T = "Fichiers temporaires (rapide)"; B = "Nettoyer"; A = "Clear-TempFiles"; D = "Juste les fichiers temporaires et le cache des miniatures, en quelques secondes." },
-    @{ T = "Corbeille"; B = "Vider"; A = "Clear-RecycleBinAll"; D = "Vide la corbeille de tous les disques. Vérifie avant qu'il n'y a rien dedans dont tu as besoin !"; C = "Vider définitivement la corbeille ? Les fichiers dedans ne pourront plus être récupérés." },
-    @{ T = "Nettoyage automatique"; B = "Activer"; A = "Enable-StorageSense"; StatusFn = { Get-SenseCardStatus }; D = "L'Assistant stockage de Windows vide tout seul les fichiers temporaires et la corbeille régulièrement." }) }
+    @{ G = "Libérer de la place"; T = "Nettoyage approfondi"; Badge = "Recommandé"; P = $true; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
+    @{ G = "Libérer de la place"; T = "Ce qui prend de la place"; B = "Analyser le disque"; UI = 'space'; UiBusy = $true; D = "Trouve ce qui remplit le disque et te dit quoi en faire : place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes), OneDrive en double, jeux et logiciels oubliés, plus gros fichiers et dossiers. 1 à 3 minutes." },
+    @{ G = "Libérer de la place"; T = "Fichiers en double"; B = "Chercher"; UI = 'dupes'; UiBusy = $true; D = "Photos, vidéos, documents et installateurs présents en plusieurs exemplaires dans tes dossiers. Tu choisis ce qui part à la corbeille, un exemplaire est toujours gardé." },
+    @{ G = "En un clic"; Tile = $true; S = "Temporaires et miniatures, en quelques secondes."; T = "Fichiers temporaires (rapide)"; B = "Nettoyer"; A = "Clear-TempFiles"; D = "Juste les fichiers temporaires et le cache des miniatures, en quelques secondes." },
+    @{ G = "En un clic"; Tile = $true; S = "Vide la corbeille de tous les disques."; T = "Corbeille"; B = "Vider"; A = "Clear-RecycleBinAll"; D = "Vide la corbeille de tous les disques. Vérifie avant qu'il n'y a rien dedans dont tu as besoin !"; C = "Vider définitivement la corbeille ? Les fichiers dedans ne pourront plus être récupérés." },
+    @{ G = "En un clic"; Tile = $true; S = "Windows vide tout seul les temporaires et la corbeille."; T = "Nettoyage automatique"; B = "Activer"; A = "Enable-StorageSense"; StatusFn = { Get-SenseCardStatus }; D = "L'Assistant stockage de Windows vide tout seul les fichiers temporaires et la corbeille régulièrement." }) }
  update = @{ Title = "Mises à jour"; Sub = "Des logiciels et un Windows à jour, c'est moins de bugs, moins de plantages et plus de sécurité."; Cards = @(
-    @{ T = "Choisir les mises à jour de logiciels"; P = $true; B = "Voir la liste"; UI = 'appupdates'; UiBusy = $true; StatusFn = { Get-IgnoredCardStatus }; D = "Liste les logiciels qui ont une nouvelle version : coche ceux à mettre à jour, ignore ceux que tu ne veux pas toucher (c'est mémorisé)." },
-    @{ T = "Tout mettre à jour"; B = "Tout mettre à jour"; A = "Update-Apps"; D = "Met à jour d'un coup tous les logiciels, sauf ceux que tu as ignorés. Outil officiel de Microsoft (winget)."; C = "Tous les logiciels qui ont une mise à jour vont être mis à jour (sauf ceux que tu as ignorés).`n`nFerme tes logiciels ouverts avant de continuer.`n`nContinuer ?" },
-    @{ T = "Mises à jour Windows"; P = $true; B = "Rechercher et installer"; A = "Update-Windows"; D = "Recherche, télécharge et installe les mises à jour de sécurité de Windows. Peut prendre 5 à 30 minutes."; C = "L'installation peut prendre du temps et le PC devra peut-être redémarrer ensuite.`n`nContinuer ?" },
-    @{ T = "Pilotes (drivers)"; B = "Vérifier"; UI = 'drivers'; UiBusy = $true; D = "Compare le pilote de ta carte graphique à la dernière version officielle, liste les pilotes que Windows propose (tu choisis lesquels installer) et les périphériques qui ont un problème. 1 à 2 minutes." },
-    @{ T = "Ouvrir Windows Update"; B = "Ouvrir"; A = "Open-WindowsUpdate"; D = "Ouvre la page Windows Update des Paramètres, si tu préfères regarder toi-même." }) }
+    @{ G = "Logiciels"; T = "Choisir les mises à jour de logiciels"; P = $true; B = "Voir la liste"; UI = 'appupdates'; UiBusy = $true; StatusFn = { Get-IgnoredCardStatus }; D = "Liste les logiciels qui ont une nouvelle version : coche ceux à mettre à jour, ignore ceux que tu ne veux pas toucher (c'est mémorisé)." },
+    @{ G = "Logiciels"; T = "Tout mettre à jour"; B = "Tout mettre à jour"; A = "Update-Apps"; D = "Met à jour d'un coup tous les logiciels, sauf ceux que tu as ignorés. Outil officiel de Microsoft (winget)."; C = "Tous les logiciels qui ont une mise à jour vont être mis à jour (sauf ceux que tu as ignorés).`n`nFerme tes logiciels ouverts avant de continuer.`n`nContinuer ?" },
+    @{ G = "Windows et pilotes"; T = "Mises à jour Windows"; P = $true; B = "Rechercher et installer"; A = "Update-Windows"; D = "Recherche, télécharge et installe les mises à jour de sécurité de Windows. Peut prendre 5 à 30 minutes."; C = "L'installation peut prendre du temps et le PC devra peut-être redémarrer ensuite.`n`nContinuer ?" },
+    @{ G = "Windows et pilotes"; T = "Pilotes (drivers)"; B = "Vérifier"; UI = 'drivers'; UiBusy = $true; D = "Compare le pilote de ta carte graphique à la dernière version officielle, liste les pilotes que Windows propose (tu choisis lesquels installer) et les périphériques qui ont un problème. 1 à 2 minutes." },
+    @{ G = "Windows et pilotes"; T = "Ouvrir Windows Update"; B = "Ouvrir"; A = "Open-WindowsUpdate"; D = "Ouvre la page Windows Update des Paramètres, si tu préfères regarder toi-même." }) }
  repair = @{ Title = "Réparation"; Sub = "Pour les bugs, les plantages, les problèmes de connexion ou un Windows Update bloqué."; Cards = @(
-    @{ T = "Test de débit Internet"; Badge = "Speedtest® by Ookla"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
-    @{ T = "Pas de son"; Badge = "Dépannage rapide"; B = "Réparer"; A = "Repair-Sound"; D = "Vérifie le son de Windows (le relance seulement s'il est arrêté), réactive ce qui est désactivé, enlève la sourdine, remonte le volume s'il est à zéro, et te dit quoi choisir dans Discord." },
-    @{ T = "Discord bugue ou ne s'installe plus"; Badge = "Dépannage rapide"; B = "Réparer"; A = "Repair-Discord"; D = "Écran gris, chargement sans fin, son ou micro bizarres, ou réinstallation impossible ? Ferme Discord, vide son cache (tu restes connecté), repère une installation abîmée et vérifie que son téléchargement passe depuis ce PC."; C = "Discord va être fermé et son cache vidé. Tu restes connecté et tes réglages sont gardés.`n`nContinuer ?" },
-    @{ T = "Le micro ne marche pas"; Badge = "Dépannage rapide"; B = "Réparer"; A = "Repair-Microphone"; D = "Réautorise le micro dans la confidentialité de Windows (cause n°1), réactive le micro s'il est désactivé, enlève la sourdine et remonte son niveau." },
-    @{ T = "Webcam introuvable ou image noire"; Badge = "Dépannage rapide"; B = "Réparer"; A = "Repair-Webcam"; D = "Réautorise la caméra dans la confidentialité de Windows, réactive la webcam si elle est désactivée, vérifie son pilote et ouvre l'appli Caméra pour tester." },
-    @{ T = "L'imprimante n'imprime plus"; Badge = "Dépannage rapide"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
-    @{ T = "Bureau ou barre des tâches figés"; Badge = "Dépannage rapide"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
-    @{ T = "Pubs et fausses alertes de virus"; Badge = "Arnaques"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." },
-    @{ T = "Ça lague en ligne (jeu, Discord)"; Badge = "Nouveau"; B = "Analyser"; UI = 'lag'; UiBusy = $true; D = "Personnages qui « sautent », voix hachée, déconnexions ? Mesure ta connexion pendant 1 minute (liaison PC ↔ box, Internet, Wi-Fi, téléchargements en fond, VPN) et te dit d'où vient le lag." },
-    @{ T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
-    @{ T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
-    @{ T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
-    @{ T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows." },
-    @{ T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
-    @{ T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
+    @{ G = "Internet et connexion"; T = "Test de débit Internet"; Badge = "Speedtest® by Ookla"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
+    @{ G = "Internet et connexion"; T = "Ça lague en ligne (jeu, Discord)"; B = "Analyser"; UI = 'lag'; UiBusy = $true; D = "Personnages qui « sautent », voix hachée, déconnexions ? Mesure ta connexion pendant 1 minute (liaison PC ↔ box, Internet, Wi-Fi, téléchargements en fond, VPN) et te dit d'où vient le lag." },
+    @{ G = "Internet et connexion"; T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
+    @{ G = "Internet et connexion"; T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Son coupé, sourdine, mauvaise sortie : réactive et remonte le son."; T = "Pas de son"; B = "Réparer"; A = "Repair-Sound"; D = "Vérifie le son de Windows (le relance seulement s'il est arrêté), réactive ce qui est désactivé, enlève la sourdine, remonte le volume s'il est à zéro, et te dit quoi choisir dans Discord." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Réautorise le micro, le réactive et remonte son niveau."; T = "Le micro ne marche pas"; B = "Réparer"; A = "Repair-Microphone"; D = "Réautorise le micro dans la confidentialité de Windows (cause n°1), réactive le micro s'il est désactivé, enlève la sourdine et remonte son niveau." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Réautorise la caméra, la réactive et vérifie son pilote."; T = "Webcam introuvable ou image noire"; B = "Réparer"; A = "Repair-Webcam"; D = "Réautorise la caméra dans la confidentialité de Windows, réactive la webcam si elle est désactivée, vérifie son pilote et ouvre l'appli Caméra pour tester." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Vide la file bloquée et remet l'imprimante en ligne."; T = "L'imprimante n'imprime plus"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Relance l'Explorateur en quelques secondes, sans redémarrer."; T = "Bureau ou barre des tâches figés"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Vide le cache (tu restes connecté) et répare l'installation."; T = "Discord bugue ou ne s'installe plus"; B = "Réparer"; A = "Repair-Discord"; D = "Écran gris, chargement sans fin, son ou micro bizarres, ou réinstallation impossible ? Ferme Discord, vide son cache (tu restes connecté), repère une installation abîmée et vérifie que son téléchargement passe depuis ce PC."; C = "Discord va être fermé et son cache vidé. Tu restes connecté et tes réglages sont gardés.`n`nContinuer ?" },
+    @{ G = "Arnaques et pubs"; T = "Pubs et fausses alertes de virus"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." },
+    @{ G = "Windows"; T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
+    @{ G = "Windows"; T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows." },
+    @{ G = "Windows"; T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
+    @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
  perf = @{ Title = "Performances"; Sub = "Pour un PC qui démarre plus vite et rame moins. Chaque réglage affiche son état actuel et peut être annulé."; Cards = @(
-    @{ T = "Pourquoi mon PC rame ?"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'slow'; UiBusy = $true; D = "Mesure pendant 20 secondes ce qui occupe le processeur, la mémoire et le disque, trouve les programmes gourmands et les réglages qui brident le PC, et te dit quoi faire. Encore mieux si tu la lances quand le PC rame." },
-    @{ T = "Programmes cachés en fond"; Badge = "Gros gain"; B = "Voir"; UI = 'bgitems'; UiBusy = $true; D = "Tâches planifiées et services qui tournent tout seuls sans apparaître au démarrage : statistiques des fabricants, outils de mise à jour inutiles, logiciels « d'optimisation »… AEROX t'explique chacun, tu choisis ce que tu coupes (annulable)." },
-    @{ T = "Programmes au démarrage"; Badge = "Gros gain"; P = $true; B = "Choisir"; UI = 'startup'; StatusFn = { Get-StartupCardStatus }; D = "Choisis appli par appli ce qui se lance tout seul à l'allumage. Garde ce que tu utilises tout le temps (Discord, par exemple), décoche le reste." },
-    @{ T = "Mode performances maximales"; B = "Activer"; A = "Set-HighPerformance"; StatusFn = { Get-PerfCardStatus }; D = "Le processeur ne se bride plus pour économiser l'énergie. Idéal pour jouer sur un PC fixe." },
-    @{ T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." },
-    @{ T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." }) }
+    @{ G = "Trouver ce qui ralentit"; T = "Pourquoi mon PC rame ?"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'slow'; UiBusy = $true; D = "Mesure pendant 20 secondes ce qui occupe le processeur, la mémoire et le disque, trouve les programmes gourmands et les réglages qui brident le PC, et te dit quoi faire. Encore mieux si tu la lances quand le PC rame." },
+    @{ G = "Trouver ce qui ralentit"; T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." },
+    @{ G = "Alléger le démarrage et le fond"; T = "Programmes au démarrage"; Badge = "Gros gain"; P = $true; B = "Choisir"; UI = 'startup'; StatusFn = { Get-StartupCardStatus }; D = "Choisis appli par appli ce qui se lance tout seul à l'allumage. Garde ce que tu utilises tout le temps (Discord, par exemple), décoche le reste." },
+    @{ G = "Alléger le démarrage et le fond"; T = "Programmes cachés en fond"; Badge = "Gros gain"; B = "Voir"; UI = 'bgitems'; UiBusy = $true; D = "Tâches planifiées et services qui tournent tout seuls sans apparaître au démarrage : statistiques des fabricants, outils de mise à jour inutiles, logiciels « d'optimisation »… AEROX t'explique chacun, tu choisis ce que tu coupes (annulable)." },
+    @{ G = "Réglages de Windows"; T = "Mode performances maximales"; B = "Activer"; A = "Set-HighPerformance"; StatusFn = { Get-PerfCardStatus }; D = "Le processeur ne se bride plus pour économiser l'énergie. Idéal pour jouer sur un PC fixe." },
+    @{ G = "Réglages de Windows"; T = "Effets visuels"; B = "Régler"; A = "Open-VisualEffects"; StatusFn = { Get-FxCardStatus }; D = "Désactive les animations et transparences de Windows. Utile surtout sur les PC un peu anciens." }) }
  help = @{ Title = "Aide"; Sub = "Tout ce qu'il faut savoir pour utiliser AEROX PC Care sans stress."; Cards = @(
-    @{ T = "Partager AEROX à un ami"; Badge = "💜"; P = $true; B = "Copier le message"; UI = 'share'; D = "Un pote dont le PC rame ou bugue ? Copie un petit message tout prêt avec le lien de téléchargement, à coller sur Discord, WhatsApp, Snap… AEROX est gratuit : plus on est nombreux, plus il s'améliore." },
-    @{ T = "Rejoindre la communauté Discord"; Badge = "Communauté"; P = $true; B = "Rejoindre"; UI = 'discord'; StatusFn = { Get-DiscordCardStatus }; D = "Pose tes questions, partage ta config, propose des idées et suis les nouvelles versions avec les autres utilisateurs d'AEROX et le développeur." },
-    @{ T = "Aide à distance"; Badge = "Nouveau"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
-    @{ T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
-    @{ T = "Donner mon avis"; Badge = "⭐"; B = "Donner mon avis"; UI = 'review'; D = "AEROX PC Care est gratuit : une note et un petit mot font plaisir au développeur et aident d'autres personnes à lui faire confiance. Ton avis est publié sur la page GitHub du logiciel." },
-    @{ T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
-    @{ T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
-    @{ T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
-    @{ T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
-    @{ T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
+    @{ G = "Communauté"; T = "Partager AEROX à un ami"; P = $true; B = "Copier le message"; UI = 'share'; D = "Un pote dont le PC rame ou bugue ? Copie un petit message tout prêt avec le lien de téléchargement, à coller sur Discord, WhatsApp, Snap… AEROX est gratuit : plus on est nombreux, plus il s'améliore." },
+    @{ G = "Communauté"; T = "Rejoindre la communauté Discord"; B = "Rejoindre"; UI = 'discord'; StatusFn = { Get-DiscordCardStatus }; D = "Pose tes questions, partage ta config, propose des idées et suis les nouvelles versions avec les autres utilisateurs d'AEROX et le développeur." },
+    @{ G = "Communauté"; T = "Donner mon avis"; B = "Donner mon avis"; UI = 'review'; D = "AEROX PC Care est gratuit : une note et un petit mot font plaisir au développeur et aident d'autres personnes à lui faire confiance. Ton avis est publié sur la page GitHub du logiciel." },
+    @{ G = "Besoin d'aide"; T = "Aide à distance"; P = $true; B = "J'ai besoin d'aide"; UI = 'remotehelp'; D = "Quelqu'un que tu connais prend la main sur ton PC pour t'aider, avec l'outil gratuit de Microsoft (Assistance rapide). Prépare aussi un rapport de ton PC à lui envoyer." },
+    @{ G = "Besoin d'aide"; T = "Signaler un bug"; B = "Faire un rapport"; UI = 'report'; D = "Un truc ne marche pas comme prévu ? Envoie un rapport au développeur. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe." },
+    @{ G = "Besoin d'aide"; T = "Historique et annulation"; B = "Voir"; UI = 'history'; D = "Tout ce qu'AEROX PC Care a changé sur ce PC, avec un bouton « Annuler » pour chaque réglage (démarrage, mode d'alimentation...). Et la restauration complète de Windows si besoin." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Les nouveautés des dernières versions."; T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Vérifie s'il y a une nouvelle version et l'installe en un clic."; T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Compteurs anonymes pour corriger d'abord ce qui touche le plus de monde. Jamais ton nom ni tes fichiers."; T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Les journaux de chaque jour, enregistrés sur ce PC."; T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
 }
 
 function Get-PerfCardStatus {
@@ -666,49 +791,49 @@ function Get-IgnoredCardStatus {
 }
 
 function Build-Header($Sp, [string]$Title, [string]$Sub) {
-    Add-Child $Sp (New-Text $Title 26 '#FFFFFF' 'Bold')
-    $s = New-Text $Sub 13 '#8B93A7'; $s.Margin = Th 0 6 0 20; $s.MaxWidth = 760; $s.HorizontalAlignment = 'Left'; Add-Child $Sp $s
+    Add-Child $Sp (New-Text $Title $Typo.Page $Pal.White 'Bold')
+    $s = New-Text $Sub $Typo.Body $Pal.Muted; $s.Margin = Th 0 6 0 20; $s.MaxWidth = 760; $s.HorizontalAlignment = 'Left'; Add-Child $Sp $s
 }
 
 function Build-HomePage {
     $sp = New-Object System.Windows.Controls.StackPanel
     Build-Header $sp "Salut 👋" "Lance le diagnostic : AEROX PC Care trouve ce qui ne va pas, t'explique pourquoi et le répare pour toi quand c'est possible. Rien n'est modifié sans ton clic."
     if ($sync.UpdateInfo) {
-        $u = New-CardBorder '#2A2350'
+        $u = New-CardBorder $Pal.AccentSoft
         $g = New-Object System.Windows.Controls.DockPanel
         if ($sync.UpdateInfo.Setup) { $b = New-Button "Mettre à jour" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'selfupdate' } } $false }
         else { $b = New-Button "Télécharger" 'PrimaryBtn' @{ Kind = 'openurl'; Url = $sync.UpdateInfo.Url } $false }
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $g $b
         $t = New-Object System.Windows.Controls.StackPanel
-        Add-Child $t (New-Text ("Nouvelle version disponible : {0}{1}" -f $sync.UpdateInfo.Version, $(if ($sync.UpdateInfo.Test) { ' (version de test)' } else { '' })) 15 '#FFFFFF' 'SemiBold')
-        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier" + $(if ($Portable) { " sur la clé (garde le dossier « donnees » : il contient tes réglages)." } else { '.' }) }) 13 '#8B93A7')
+        Add-Child $t (New-Text ("Nouvelle version disponible : {0}{1}" -f $sync.UpdateInfo.Version, $(if ($sync.UpdateInfo.Test) { ' (version de test)' } else { '' })) $Typo.Title $Pal.White 'SemiBold')
+        Add-Child $t (New-Text $(if ($sync.UpdateInfo.Setup) { "Un clic : le logiciel télécharge la nouvelle version, l'installe et se relance tout seul. Tes réglages sont gardés." } else { "Télécharge-la, dézippe-la et remplace l'ancien dossier" + $(if ($Portable) { " sur la clé (garde le dossier « donnees » : il contient tes réglages)." } else { '.' }) }) $Typo.Body $Pal.Muted)
         Add-Child $g $t; $u.Child = $g; Add-Child $sp $u
     }
     if (Test-ReviewInvite) {
-        $rv = New-CardBorder '#2A2350'; $rd = New-Object System.Windows.Controls.DockPanel
+        $rv = New-CardBorder $Pal.AccentSoft; $rd = New-Object System.Windows.Controls.DockPanel
         $rb = New-Object System.Windows.Controls.StackPanel; $rb.Orientation = 'Horizontal'; [System.Windows.Controls.DockPanel]::SetDock($rb, 'Right'); $rb.VerticalAlignment = 'Center'
         $b1 = New-Button 'Plus tard' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'review-later' } } $false; $b1.Margin = Th 0 0 4 0; Add-Child $rb $b1
         $b2 = New-Button 'Ne plus demander' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'review-never' } } $false; $b2.Margin = Th 0 0 8 0; Add-Child $rb $b2
         Add-Child $rb (New-Button 'Donner mon avis' 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'review' } } $false)
         Add-Child $rd $rb
         $rt = New-Object System.Windows.Controls.StackPanel; $rt.VerticalAlignment = 'Center'
-        Add-Child $rt (New-Text "AEROX PC Care t'a aidé ? ⭐" 15 '#FFFFFF' 'SemiBold')
-        Add-Child $rt (New-Text "Le logiciel est gratuit : une note et un petit mot, ça fait plaisir et ça aide d'autres personnes à lui faire confiance." 13 '#8B93A7')
+        Add-Child $rt (New-Text "AEROX PC Care t'a aidé ? ⭐" $Typo.Title $Pal.White 'SemiBold')
+        Add-Child $rt (New-Text "Le logiciel est gratuit : une note et un petit mot, ça fait plaisir et ça aide d'autres personnes à lui faire confiance." $Typo.Body $Pal.Muted)
         Add-Child $rd $rt; $rv.Child = $rd; Add-Child $sp $rv
     }
     # Bannière santé, mise en avant (dégradé violet discret)
-    $h = New-CardBorder '#2E2856'; $h.Padding = Th 22 18 22 18
+    $h = New-CardBorder $Pal.AccentLine; $h.Padding = Th 22 18 22 18
     $gb = New-Object System.Windows.Media.LinearGradientBrush; $gb.StartPoint = New-Object System.Windows.Point(0, 0); $gb.EndPoint = New-Object System.Windows.Point(1, 0)
-    $gb.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.ColorConverter]::ConvertFromString('#231E40'), 0)))
-    $gb.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.ColorConverter]::ConvertFromString('#171A23'), 0.75)))
+    $gb.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.ColorConverter]::ConvertFromString($Pal.AccentGlow), 0)))
+    $gb.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.ColorConverter]::ConvertFromString($Pal.Card), 0.75)))
     $h.Background = $gb
     $dp = New-Object System.Windows.Controls.DockPanel
     if (-not $script:Diag) {
         $b = New-Button "Lancer le diagnostic" 'PrimaryBtn' @{ Kind = 'startdiag' }; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
         $t = New-Object System.Windows.Controls.StackPanel; $t.VerticalAlignment = 'Center'
-        Add-Child $t (New-Text 'ÉTAT DE TON PC' 11 '#9C8CFF' 'Bold')
-        Add-Child $t (New-Text "Pas encore analysé" 18 '#FFFFFF' 'Bold')
-        Add-Child $t (New-Text "Le diagnostic prend une minute environ et ne modifie rien." 13 '#8B93A7')
+        Add-Child $t (New-Text 'ÉTAT DE TON PC' $Typo.Caption $Pal.AccentText 'Bold')
+        Add-Child $t (New-Text "Pas encore analysé" $Typo.H2 $Pal.White 'Bold')
+        Add-Child $t (New-Text "Le diagnostic prend une minute environ et ne modifie rien." $Typo.Body $Pal.Muted)
         Add-Child $dp $t
     } else {
         $s = Get-Score; $lv = Get-Level $s; $open = @(Get-OpenIssues)
@@ -716,31 +841,35 @@ function Build-HomePage {
         [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
         $ring = New-Ring $s 80; $ring.Margin = Th 0 0 20 0; [System.Windows.Controls.DockPanel]::SetDock($ring, 'Left'); Add-Child $dp $ring
         $t = New-Object System.Windows.Controls.StackPanel; $t.VerticalAlignment = 'Center'
-        Add-Child $t (New-Text 'ÉTAT DE TON PC' 11 '#9C8CFF' 'Bold')
-        Add-Child $t (New-Text $lv.Text 18 $lv.Color 'Bold')
-        Add-Child $t (New-Text $(if ($open.Count) { "$($open.Count) problème(s) à régler" } else { "Aucun problème en attente" }) 13 '#8B93A7')
+        Add-Child $t (New-Text 'ÉTAT DE TON PC' $Typo.Caption $Pal.AccentText 'Bold')
+        Add-Child $t (New-Text $lv.Text $Typo.H2 $lv.Color 'Bold')
+        Add-Child $t (New-Text $(if ($open.Count) { "$($open.Count) problème(s) à régler" } else { "Aucun problème en attente" }) $Typo.Body $Pal.Muted)
         Add-Child $dp $t
     }
     $h.Child = $dp; Add-Child $sp $h
     # Tuiles
     $tiles = New-Object System.Windows.Controls.Primitives.UniformGrid; $tiles.Columns = 4; $tiles.Margin = Th 0 0 0 4
     foreach ($k in 'OS', 'CPU', 'RAM', 'DISK') {
-        $st = $script:Stats[$k]; if (-not $st) { $st = @{ L = $k; V = '...'; S = ''; C = '#FFFFFF' } }
-        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 12; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 12
+        $st = $script:Stats[$k]; if (-not $st) { $st = @{ L = $k; V = '...'; S = ''; C = $Pal.White } }
+        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 12; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 12
         $s2 = New-Object System.Windows.Controls.StackPanel
-        Add-Child $s2 (New-Text $st.L.ToUpper() 11 '#7A8399' 'Bold')
-        $v = New-Text $st.V 16 $st.C 'SemiBold'; $v.Margin = Th 0 6 0 0; Add-Child $s2 $v
-        $x = New-Text $st.S 12 '#8B93A7'; $x.Margin = Th 0 2 0 0; Add-Child $s2 $x
+        Add-Child $s2 (New-Text $st.L.ToUpper() $Typo.Caption $Pal.Faint 'Bold')
+        $v = New-Text $st.V $Typo.Title $st.C 'SemiBold'; $v.Margin = Th 0 6 0 0; Add-Child $s2 $v
+        $x = New-Text $st.S $Typo.Small $Pal.Muted; $x.Margin = Th 0 2 0 0; Add-Child $s2 $x
         $b.Child = $s2; Add-Child $tiles $b
     }
     Add-Child $sp $tiles
-    Add-Child $sp (New-ActionCard @{ T = "Optimisation complète"; Badge = "Le plus efficace"; P = $true; B = "Commencer"; UI = 'optimize'; UiBusy = $true; D = "Le grand ménage guidé, étape par étape : point de restauration, diagnostic, programmes au démarrage, programmes cachés en fond, logiciels inutiles, nettoyage approfondi et mises à jour. Tu choisis à chaque étape, puis le bilan avant / après te montre la différence." })
-    Add-Child $sp (New-ActionCard @{ T = "Diagnostic complet"; Badge = "Commence ici"; P = $true; B = "Lancer"; Go = 'diag'; D = "Vérifie ton PC point par point (stockage, performances, stabilité, mises à jour, pilotes, sécurité, réseau...) et t'affiche chaque problème avec sa cause et sa réparation." })
+    # Actions principales (le diagnostic se lance depuis le bandeau ci-dessus)
     $nCh = @(Get-Changes 300 | Where-Object { $_.Undo -and -not $_.Undone }).Count
-    Add-Child $sp (New-ActionCard @{ T = "Historique des changements"; B = "Voir"; UI = 'history'; D = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX PC Care peuvent être annulés en un clic." } else { "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." }) })
-    Add-Child $sp (New-ActionCard @{ T = "Optimisation rapide"; Badge = "Recommandé"; P = $true; B = "Optimiser"; A = "Start-QuickOptimize"
-        D = "En un clic : point de restauration, fichiers temporaires, cache des navigateurs et du DNS, mise à jour des logiciels."
-        C = "L'optimisation rapide va :`n`n• créer un point de restauration (sécurité)`n• supprimer les fichiers temporaires`n• vider le cache des navigateurs fermés`n• mettre à jour tes logiciels`n`nFerme tes logiciels ouverts avant. Tes fichiers perso ne sont pas touchés.`n`nOn y va ?" })
+    Add-PageCards $sp @(
+        @{ G = 'Optimiser ton PC'; T = "Optimisation complète"; Badge = "Le plus efficace"; P = $true; B = "Commencer"; UI = 'optimize'; UiBusy = $true; D = "Le grand ménage guidé, étape par étape : point de restauration, diagnostic, programmes au démarrage, programmes cachés en fond, logiciels inutiles, nettoyage approfondi et mises à jour. Tu choisis à chaque étape, puis le bilan avant / après te montre la différence." },
+        @{ G = 'Optimiser ton PC'; Tile = $true; T = "Optimisation rapide"; B = "Optimiser"; A = "Start-QuickOptimize"
+           S = "En un clic : temporaires, caches, DNS et mise à jour des logiciels."
+           D = "En un clic : point de restauration, fichiers temporaires, cache des navigateurs et du DNS, mise à jour des logiciels."
+           C = "L'optimisation rapide va :`n`n• créer un point de restauration (sécurité)`n• supprimer les fichiers temporaires`n• vider le cache des navigateurs fermés`n• mettre à jour tes logiciels`n`nFerme tes logiciels ouverts avant. Tes fichiers perso ne sont pas touchés.`n`nOn y va ?" },
+        @{ G = 'Optimiser ton PC'; Tile = $true; T = "Historique des changements"; B = "Voir"; UI = 'history'
+           S = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX, annulables en un clic." } else { "Tout ce qu'AEROX change est noté ici, avec un bouton pour l'annuler." })
+           D = "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." })
     return $sp
 }
 
@@ -751,10 +880,10 @@ function Build-DiagPage {
         $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 2
         foreach ($k in $sync.ScanOrder) {
             $state = $sync.Scan[$k]
-            $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 10; $b.Margin = Th 0 0 8 8
+            $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 10; $b.Margin = Th 0 0 8 8
             $dp = New-Object System.Windows.Controls.StackPanel; $dp.Orientation = 'Horizontal'
             Add-Child $dp (New-StatusDot $state)
-            $t = New-Text ($k + $(if ($state -eq 'run') { '  — vérification…' } else { '' })) 13 '#C3CAD9'; $t.Margin = Th 10 0 0 0; $t.VerticalAlignment = 'Center'; Add-Child $dp $t
+            $t = New-Text ($k + $(if ($state -eq 'run') { '  — vérification…' } else { '' })) $Typo.Body $Pal.Text2; $t.Margin = Th 10 0 0 0; $t.VerticalAlignment = 'Center'; Add-Child $dp $t
             $b.Child = $dp; Add-Child $ug $b
         }
         Add-Child $sp $ug
@@ -762,8 +891,8 @@ function Build-DiagPage {
     }
     if (-not $script:Diag) {
         $c = New-CardBorder; $st = New-Object System.Windows.Controls.StackPanel; $st.HorizontalAlignment = 'Center'; $st.Margin = Th 0 12 0 12
-        $t = New-Text "Aucun diagnostic pour l'instant" 16 '#FFFFFF' 'SemiBold'; $t.HorizontalAlignment = 'Center'; Add-Child $st $t
-        $t = New-Text "Ça prend une minute environ et ne modifie rien sur le PC." 13 '#8B93A7'; $t.HorizontalAlignment = 'Center'; Add-Child $st $t
+        $t = New-Text "Aucun diagnostic pour l'instant" $Typo.Title $Pal.White 'SemiBold'; $t.HorizontalAlignment = 'Center'; Add-Child $st $t
+        $t = New-Text "Ça prend une minute environ et ne modifie rien sur le PC." $Typo.Body $Pal.Muted; $t.HorizontalAlignment = 'Center'; Add-Child $st $t
         $b = New-Button "Lancer le diagnostic" 'PrimaryBtn' @{ Kind = 'startdiag' }; $b.Margin = Th 0 14 0 0; $b.HorizontalAlignment = 'Center'; Add-Child $st $b
         $c.Child = $st; Add-Child $sp $c
         return $sp
@@ -780,16 +909,16 @@ function Build-DiagPage {
     Add-Child $dp $btns
     $ring = New-Ring $s 96; $ring.Margin = Th 0 0 22 0; [System.Windows.Controls.DockPanel]::SetDock($ring, 'Left'); Add-Child $dp $ring
     $t = New-Object System.Windows.Controls.StackPanel; $t.VerticalAlignment = 'Center'
-    Add-Child $t (New-Text $lv.Text 18 $lv.Color 'Bold')
+    Add-Child $t (New-Text $lv.Text $Typo.H2 $lv.Color 'Bold')
     $msg = if ($open.Count) { "$($open.Count) problème(s) trouvé(s)" + $(if ($auto) { ", dont $auto réparable(s) automatiquement." } else { '.' }) } else { "Tout est réglé, bravo !" }
-    Add-Child $t (New-Text $msg 13 '#8B93A7')
+    Add-Child $t (New-Text $msg $Typo.Body $Pal.Muted)
     $chips = New-Object System.Windows.Controls.WrapPanel
     if ($crit)  { Add-Child $chips (New-Chip "$crit critique(s)" 'bad') }
     if ($warn)  { Add-Child $chips (New-Chip "$warn à corriger" 'warn') }
     if ($fixed) { Add-Child $chips (New-Chip "$fixed corrigé(s)" 'ok') }
     Add-Child $chips (New-Chip "$($script:Diag.Ok.Count) OK" 'ok')
     Add-Child $t $chips
-    $d = New-Text ("Analyse du {0}" -f $script:Diag.Date.ToString('dd/MM/yyyy à HH:mm')) 11 '#6E768B'; $d.Margin = Th 0 8 0 0; Add-Child $t $d
+    $d = New-Text ("Analyse du {0}" -f $script:Diag.Date.ToString('dd/MM/yyyy à HH:mm')) $Typo.Caption $Pal.Faint; $d.Margin = Th 0 8 0 0; Add-Child $t $d
     Add-Child $dp $t
     $sum.Child = $dp; Add-Child $sp $sum
     Add-BilanCard $sp
@@ -798,26 +927,46 @@ function Build-DiagPage {
     $done = @($script:Diag.Issues | Where-Object { $_.Status -eq 'done' })
     if ($todo.Count) { Add-Child $sp (New-Section 'À régler'); foreach ($i in $todo) { Add-Child $sp (New-IssueCard $i) } }
     if ($done.Count) { Add-Child $sp (New-Section 'Corrigé'); foreach ($i in $done) { Add-Child $sp (New-IssueCard $i) } }
-    Add-Child $sp (New-Section 'Ce qui va bien')
-    $ok = New-Object System.Windows.Controls.Border; $ok.Background = Brush '#171A23'; $ok.CornerRadius = Corner 12; $ok.Padding = Th 16 6 16 6
-    $ol = New-Object System.Windows.Controls.StackPanel
-    foreach ($o in $script:Diag.Ok) {
-        $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.Margin = Th 0 6 0 6
-        Add-Child $row (New-StatusDot 'ok'); $x = New-Text $o 13 '#C3CAD9'; $x.Margin = Th 10 0 0 0; $x.VerticalAlignment = 'Center'; Add-Child $row $x
-        Add-Child $ol $row
+    # Ce qui va bien : replié par défaut (souvent plus de 20 lignes), sur 2 colonnes une fois ouvert
+    $okList = @($script:Diag.Ok)
+    $okOpen = [bool]$script:OkOpen
+    $hdr = New-Object System.Windows.Controls.Button; $hdr.Style = $window.FindResource('PlainBtn'); $hdr.HorizontalContentAlignment = 'Left'; $hdr.Margin = Th 0 18 0 10
+    $hp = New-Object System.Windows.Controls.StackPanel; $hp.Orientation = 'Horizontal'
+    $chev = New-Object System.Windows.Controls.TextBlock; $chev.FontFamily = 'Segoe MDL2 Assets'; $chev.FontSize = $Typo.Caption; $chev.Foreground = Brush $Pal.Faint; $chev.VerticalAlignment = 'Center'; $chev.Margin = Th 0 0 8 0
+    $chev.Text = $(if ($okOpen) { [string][char]0xE70D } else { [string][char]0xE76C })
+    Add-Child $hp $chev
+    Add-Child $hp (New-Text ("CE QUI VA BIEN  ·  {0} POINT(S) VÉRIFIÉ(S)" -f $okList.Count) $Typo.Caption $Pal.Faint 'Bold')
+    if (-not $okOpen) { $hx = New-Text 'afficher' $Typo.Caption $Pal.AccentText; $hx.Margin = Th 10 0 0 0; Add-Child $hp $hx }
+    $hdr.Content = $hp
+    $hdr.Add_Click({ $script:OkOpen = -not [bool]$script:OkOpen; Refresh-Page })
+    Add-Child $sp $hdr
+    if ($okOpen) {
+        $ok = New-Object System.Windows.Controls.Border; $ok.Background = Brush $Pal.Card; $ok.CornerRadius = Corner 12; $ok.Padding = Th 16 8 16 8
+        $og = New-Object System.Windows.Controls.Grid
+        foreach ($k in 0, 1) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star); $og.ColumnDefinitions.Add($cd) }
+        for ($k = 0; $k -lt [math]::Ceiling($okList.Count / 2); $k++) { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $og.RowDefinitions.Add($rd) }
+        $k = 0
+        foreach ($o in $okList) {
+            $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 5 12 5
+            [System.Windows.Controls.Grid]::SetRow($row, [math]::Floor($k / 2)); [System.Windows.Controls.Grid]::SetColumn($row, $k % 2); $k++
+            $dot = New-StatusDot 'ok'; $dot.Width = 18; $dot.Height = 18; $dot.Child.FontSize = $Typo.Caption; $dot.VerticalAlignment = 'Top'
+            [System.Windows.Controls.DockPanel]::SetDock($dot, 'Left'); Add-Child $row $dot
+            $x = New-Text $o $Typo.Small $Pal.Text2; $x.Margin = Th 10 1 0 0; Add-Child $row $x
+            Add-Child $og $row
+        }
+        $ok.Child = $og; Add-Child $sp $ok
     }
-    $ok.Child = $ol; Add-Child $sp $ok
     $ign = @($script:Diag.Ignored | Where-Object { $_ })
     if ($ign.Count) {
         Add-Child $sp (New-Section 'Ignoré à ta demande')
-        $ib = New-Object System.Windows.Controls.Border; $ib.Background = Brush '#13161E'; $ib.CornerRadius = Corner 12; $ib.Padding = Th 16 6 12 6
+        $ib = New-Object System.Windows.Controls.Border; $ib.Background = Brush $Pal.Sunken; $ib.CornerRadius = Corner 12; $ib.Padding = Th 16 6 12 6
         $il = New-Object System.Windows.Controls.StackPanel
         foreach ($x in $ign) {
             $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
             $rb = New-Button 'Réactiver' 'TextBtn' @{ Kind = 'unignore'; Issue = $x } $false; [System.Windows.Controls.DockPanel]::SetDock($rb, 'Right'); Add-Child $row $rb
             $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
-            Add-Child $tx (New-Text $x.Title 13 '#8B93A7' 'SemiBold')
-            if ($x.Detail) { Add-Child $tx (New-Text $x.Detail 12 '#6E768B') }
+            Add-Child $tx (New-Text $x.Title $Typo.Body $Pal.Muted 'SemiBold')
+            if ($x.Detail) { Add-Child $tx (New-Text $x.Detail $Typo.Small $Pal.Faint) }
             Add-Child $row $tx
             Add-Child $il $row
         }
@@ -830,14 +979,14 @@ function Build-StaticPage([string]$Key) {
     $def = $PageDefs[$Key]
     $sp = New-Object System.Windows.Controls.StackPanel
     Build-Header $sp $def.Title $def.Sub
-    foreach ($c in $def.Cards) { Add-Child $sp (New-ActionCard $c) }
+    Add-PageCards $sp $def.Cards
     if ($Key -eq 'help') {
         $t = New-Text ("Bon à savoir :`n" +
             "• Un point de restauration est créé avant les réparations automatiques.`n" +
             "• Le logiciel ne supprime jamais tes photos, documents, téléchargements ou jeux.`n" +
             "• Pas de « nettoyeur de registre » ni de réglages douteux : uniquement des outils officiels de Windows.`n" +
             "• Quand une erreur arrive, le logiciel affiche sa cause et la réparation possible.`n" +
-            "• Les opérations longues peuvent sembler bloquées sur un pourcentage : c'est normal, laisse tourner.") 13 '#A9B0C2'
+            "• Les opérations longues peuvent sembler bloquées sur un pourcentage : c'est normal, laisse tourner.") $Typo.Body $Pal.Text3
         $t.Margin = Th 0 10 0 0; $t.LineHeight = 21; Add-Child $sp $t
     }
     return $sp
@@ -855,8 +1004,8 @@ function Show-Page([string]$Key) {
         # Une page qui plante ne doit jamais fermer le logiciel : on affiche l'erreur à la place
         Write-Bug -Context "Page $Key" -ErrorRecord $_
         $page = New-Object System.Windows.Controls.StackPanel
-        Add-Child $page (New-Text "Cette page n'a pas pu s'afficher" 20 '#FFFFFF' 'Bold')
-        $t = New-Text ("Un bug du logiciel l'en empêche : " + $_.Exception.Message + "`n`nLe reste du logiciel fonctionne. Clique sur « Signaler un bug » en bas pour qu'il soit corrigé.") 13 '#A9B0C2'
+        Add-Child $page (New-Text "Cette page n'a pas pu s'afficher" $Typo.Stat $Pal.White 'Bold')
+        $t = New-Text ("Un bug du logiciel l'en empêche : " + $_.Exception.Message + "`n`nLe reste du logiciel fonctionne. Clique sur « Signaler un bug » en bas pour qu'il soit corrigé.") $Typo.Body $Pal.Text3
         $t.Margin = Th 0 8 0 0; Add-Child $page $t
     }
     if ($Key -ne 'monitor') { $script:MonUi = $null }
@@ -890,10 +1039,10 @@ function Update-HomeStats([switch]$KeepDrives) {
         $ramPct = [math]::Round((1 - ([double]$os.FreePhysicalMemory * 1KB) / [double]$cs.TotalPhysicalMemory) * 100)
         $pct = [math]::Round($c.FreeSpace / $c.Size * 100)
         $script:Stats = @{
-            OS   = @{ L = 'Système'; V = ($os.Caption -replace '^Microsoft\s+', ''); S = "Build $($os.BuildNumber)"; C = '#FFFFFF' }
-            CPU  = @{ L = 'Processeur'; V = ($cpu.Name.Trim() -replace '\s+', ' ' -replace '\(R\)|\(TM\)|CPU|Processor|\d+-Core', '' -replace '\s+', ' ').Trim(); S = "$($cpu.NumberOfCores) cœurs / $($cpu.NumberOfLogicalProcessors) threads"; C = '#FFFFFF' }
-            RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { '#FFB547' } else { '#FFFFFF' }) }
-            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#FFFFFF' }) }
+            OS   = @{ L = 'Système'; V = ($os.Caption -replace '^Microsoft\s+', ''); S = "Build $($os.BuildNumber)"; C = $Pal.White }
+            CPU  = @{ L = 'Processeur'; V = ($cpu.Name.Trim() -replace '\s+', ' ' -replace '\(R\)|\(TM\)|CPU|Processor|\d+-Core', '' -replace '\s+', ' ').Trim(); S = "$($cpu.NumberOfCores) cœurs / $($cpu.NumberOfLogicalProcessors) threads"; C = $Pal.White }
+            RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { $Pal.Warn } else { $Pal.White }) }
+            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { $Pal.Bad } elseif ($pct -lt 15) { $Pal.Warn } else { $Pal.White }) }
         }
         # Les autres disques (internes et externes) sous celui de Windows : lus en arrière-plan (un disque USB en veille
         # peut mettre plusieurs secondes à répondre), affichés au rafraîchissement suivant
@@ -1399,9 +1548,9 @@ function Set-DisplayWithConfirm($d, $Issue) {
     $w = New-Dialog "$AppName : écran" 480
     $script:HzWin = $w; $script:HzKeep = $false; $script:HzLeft = 15; $script:HzPrev = $prev; $script:HzDev = $d.Device; $script:HzReverted = $false
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text ("{0} est maintenant à {1} Hz" -f $d.Name, $target) 17 '#FFFFFF' 'Bold')
-    $t = New-Text "L'image s'affiche bien ? Si tu ne cliques sur rien, l'ancien réglage revient tout seul." 13 '#A9B0C2'; $t.Margin = Th 0 6 0 10; Add-Child $sp $t
-    $script:HzCount = New-Text ("Retour à {0} Hz dans 15 s" -f $prev) 13 '#FFB547' 'SemiBold'; Add-Child $sp $script:HzCount
+    Add-Child $sp (New-Text ("{0} est maintenant à {1} Hz" -f $d.Name, $target) $Typo.H2 $Pal.White 'Bold')
+    $t = New-Text "L'image s'affiche bien ? Si tu ne cliques sur rien, l'ancien réglage revient tout seul." $Typo.Body $Pal.Text3; $t.Margin = Th 0 6 0 10; Add-Child $sp $t
+    $script:HzCount = New-Text ("Retour à {0} Hz dans 15 s" -f $prev) $Typo.Body $Pal.Warn 'SemiBold'; Add-Child $sp $script:HzCount
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 16 0 0
     $bBack = New-Object System.Windows.Controls.Button; $bBack.Content = ("Revenir à {0} Hz" -f $prev); $bBack.Style = $window.FindResource('ActionBtn'); $bBack.Margin = Th 0 0 8 0
     $bKeep = New-Object System.Windows.Controls.Button; $bKeep.Content = 'Garder'; $bKeep.Style = $window.FindResource('PrimaryBtn')
@@ -1444,27 +1593,27 @@ function Show-HistoryDialog {
     $w = New-Dialog "$AppName : historique des changements" 700
     $script:HistWin = $w; $script:HistChoice = $null
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Historique des changements" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Tout ce qu'AEROX PC Care a modifié sur ce PC, du plus récent au plus ancien. Les réglages se remettent comme avant avec « Annuler ». Les nettoyages et désinstallations sont notés pour info." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Historique des changements" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Tout ce qu'AEROX PC Care a modifié sur ce PC, du plus récent au plus ancien. Les réglages se remettent comme avant avec « Annuler ». Les nettoyages et désinstallations sont notés pour info." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $changes = @(Get-Changes 300)
-    if (-not $changes.Count) { Add-Child $list (New-Text "Aucun changement pour l'instant." 13 '#8B93A7') }
+    if (-not $changes.Count) { Add-Child $list (New-Text "Aucun changement pour l'instant." $Typo.Body $Pal.Muted) }
     foreach ($c in $changes) {
-        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
         $dp = New-Object System.Windows.Controls.DockPanel
-        if ($c.Undone) { $x = New-Pill 'Annulé' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
+        if ($c.Undone) { $x = New-Pill 'Annulé' $Pal.Muted $Pal.Line; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
         elseif ($c.Undo) {
             $b = New-Object System.Windows.Controls.Button; $b.Content = 'Annuler'; $b.Style = $window.FindResource('ActionBtn'); $b.Tag = $c; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
             $b.Add_Click({ $script:HistChoice = $this.Tag; $script:HistWin.Close() })
             [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
-        } else { $x = New-Pill 'Info' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
+        } else { $x = New-Pill 'Info' $Pal.Muted $Pal.Line; [System.Windows.Controls.DockPanel]::SetDock($x, 'Right'); Add-Child $dp $x }
         $t = New-Object System.Windows.Controls.StackPanel
         $h = New-Object System.Windows.Controls.WrapPanel
-        $d = New-Text ((Format-Date $c.Date 'dd/MM HH:mm') + '   ') 12 '#7A8399'; $d.VerticalAlignment = 'Center'; Add-Child $h $d
-        Add-Child $h (New-Text $c.Title 13.5 $(if ($c.Undone) { '#8B93A7' } else { '#FFFFFF' }) 'SemiBold')
+        $d = New-Text ((Format-Date $c.Date 'dd/MM HH:mm') + '   ') $Typo.Small $Pal.Faint; $d.VerticalAlignment = 'Center'; Add-Child $h $d
+        Add-Child $h (New-Text $c.Title $Typo.Body $(if ($c.Undone) { $Pal.Muted } else { $Pal.White }) 'SemiBold')
         Add-Child $t $h
-        if ($c.Detail) { $dd = New-Text $c.Detail 12 '#8B93A7'; $dd.Margin = Th 0 2 0 0; Add-Child $t $dd }
+        if ($c.Detail) { $dd = New-Text $c.Detail $Typo.Small $Pal.Muted; $dd.Margin = Th 0 2 0 0; Add-Child $t $dd }
         Add-Child $dp $t
         $row.Child = $dp; Add-Child $list $row
     }
@@ -1558,13 +1707,26 @@ function New-InfoRow([string]$Label, [string]$Value, [string]$Pill = '', [string
     $box = New-Object System.Windows.Controls.StackPanel; $box.Margin = Th 0 6 0 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Pill) {
-        $c = switch ($PillKind) { 'ok' { @('#4ADE80', '#173326') } 'warn' { @('#FFB547', '#3A2C12') } 'bad' { @('#FF6B6B', '#3A1B1B') } default { @('#B9A8FF', '#2A2350') } }
+        $c = switch ($PillKind) { 'ok' { @($Pal.Ok, $Pal.OkSoft) } 'warn' { @($Pal.Warn, $Pal.WarnSoft) } 'bad' { @($Pal.Bad, $Pal.BadSoft) } default { @($Pal.AccentText, $Pal.AccentSoft) } }
         $p = New-Pill $Pill $c[0] $c[1]; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $dp $p
     }
-    $l = New-Text $Label 13 '#8B93A7'; $l.Width = 190; $l.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($l, 'Left'); Add-Child $dp $l
-    $v = New-Text $Value 14 '#FFFFFF' 'SemiBold'; $v.VerticalAlignment = 'Center'; $v.TextWrapping = 'Wrap'; Add-Child $dp $v
+    $l = New-Text $Label $Typo.Body $Pal.Muted; $l.Width = 190; $l.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($l, 'Left'); Add-Child $dp $l
+    $v = New-Text $Value $Typo.Strong $Pal.White 'SemiBold'; $v.VerticalAlignment = 'Center'; $v.TextWrapping = 'Wrap'; Add-Child $dp $v
     Add-Child $box $dp
-    if ($Help) { $h = New-Text $Help 12.5 '#A9B0C2'; $h.Margin = Th 190 4 0 0; $h.LineHeight = 19; Add-Child $box $h }
+    if ($Help) {
+        # 1re ligne : l'explication, toujours visible. La suite (où régler dans le BIOS, étapes) : repliée derrière « Comment faire »
+        $parts = $Help -split "`n", 2
+        $first = $parts[0]; $rest = $(if ($parts.Count -gt 1) { $parts[1] } else { '' })
+        if ($first -match '^\d+\.\s') { $first = ''; $rest = $Help }
+        if ($first) { $h = New-Text $first $Typo.Small $Pal.Text3; $h.Margin = Th 190 4 0 0; $h.LineHeight = 18; Add-Child $box $h }
+        if ($rest) {
+            $more = New-Text $rest $Typo.Small $Pal.Text2; $more.Margin = Th 190 6 0 2; $more.LineHeight = 19; $more.Visibility = 'Collapsed'
+            $tb = New-Object System.Windows.Controls.Button; $tb.Style = $window.FindResource('PlainBtn'); $tb.HorizontalAlignment = 'Left'; $tb.Margin = Th 190 5 0 0; $tb.Tag = $more
+            $tb.Content = New-Text 'Comment faire  ▾' $Typo.Small $Pal.AccentText 'SemiBold'
+            $tb.Add_Click({ $m = $this.Tag; $open = $m.Visibility -ne 'Visible'; $m.Visibility = $(if ($open) { 'Visible' } else { 'Collapsed' }); $this.Content.Text = $(if ($open) { 'Masquer  ▴' } else { 'Comment faire  ▾' }) })
+            Add-Child $box $tb; Add-Child $box $more
+        }
+    }
     return $box
 }
 
@@ -1577,17 +1739,17 @@ function Update-FanCard($Sens = $null, $Tool = $null) {
     $p = $u.Panel; $p.Children.Clear()
     $add = { param($el) [void]$p.Children.Add($el) }
     if (-not $ts -or -not $ts.Lhm) {
-        $t = New-Text "Pour voir la vitesse de chaque ventilateur, installe le module de températures (gratuit, le même que pour l'overlay). Il lit aussi les températures du processeur et de la carte graphique." 12.5 '#A9B0C2'; $t.LineHeight = 19; & $add $t
+        $t = New-Text "Pour voir la vitesse de chaque ventilateur, installe le module de températures (gratuit, le même que pour l'overlay). Il lit aussi les températures du processeur et de la carte graphique." $Typo.Body $Pal.Text3; $t.LineHeight = 19; & $add $t
         $b = New-Button 'Installer le module de températures' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'inst-lhm' } } $false; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 4; & $add $b
     } elseif (-not ($null -ne $Sens -or $sync.SensMode -eq 'lhm' -or ($s -and $s.ContainsKey('fans')))) {
-        & $add (New-Text "Lecture des ventilateurs…" 13 '#A9B0C2')
+        & $add (New-Text "Lecture des ventilateurs…" $Typo.Body $Pal.Text3)
     } else {
         if (-not $s) { $s = @{} }
         $f = Get-FanFindings @($s['fans']) $s['cpu.temp'] $s['cpu.load'] $s['gpu.temp']
         foreach ($a in $f.Alerts) {
             $bx = New-Object System.Windows.Controls.Border; $bx.CornerRadius = Corner 8; $bx.Padding = Th 12 8 12 8; $bx.Margin = Th 0 0 0 8
-            $bx.Background = Brush $(if ($a.Kind -eq 'bad') { '#3A1B1B' } else { '#211B3D' })
-            $bx.Child = (New-Text ($(if ($a.Kind -eq 'bad') { '⚠ ' } else { 'ℹ ' }) + $a.Text) 12.5 $(if ($a.Kind -eq 'bad') { '#FFB4B4' } else { '#C9BEFF' })); & $add $bx
+            $bx.Background = Brush $(if ($a.Kind -eq 'bad') { $Pal.BadSoft } else { $Pal.AccentSoft })
+            $bx.Child = (New-Text ($(if ($a.Kind -eq 'bad') { '⚠ ' } else { 'ℹ ' }) + $a.Text) $Typo.Body $(if ($a.Kind -eq 'bad') { $Pal.BadText } else { $Pal.AccentText })); & $add $bx
         }
         foreach ($r in $f.Rows) {
             $pill = ''; $pk = ''; $help = ''
@@ -1598,22 +1760,22 @@ function Update-FanCard($Sens = $null, $Tool = $null) {
         if (-not $f.Rows.Count) {
             $msg = if (-not $f.Mb -and -not $ts.PawnIO -and -not $u.Oem) { "Les ventilateurs de la carte mère se lisent avec le pilote PawnIO (gratuit, signé, utilisé par les logiciels de monitoring connus) : installe-le depuis l'onglet Gaming > En direct." }
                    else { "Ce PC ne donne pas la vitesse de ses ventilateurs à Windows (fréquent sur les portables et les PC de marque : c'est le PC lui-même qui les pilote)." }
-            $t = New-Text $msg 12.5 '#A9B0C2'; $t.LineHeight = 19; & $add $t
+            $t = New-Text $msg $Typo.Body $Pal.Text3; $t.LineHeight = 19; & $add $t
         }
-        if ($f.IdleHeaders -gt 0 -and $f.Rows.Count) { $t = New-Text ("{0} prise(s) de ventilateur de la carte mère à 0 tr/min : rien n'y est branché, ou tes ventilateurs passent par un hub (ou le boîtier) relié à une seule prise : AEROX ne voit alors que cette prise." -f $f.IdleHeaders) 12 '#7A8399'; $t.Margin = Th 0 2 0 0; & $add $t }
+        if ($f.IdleHeaders -gt 0 -and $f.Rows.Count) { $t = New-Text ("{0} prise(s) de ventilateur de la carte mère à 0 tr/min : rien n'y est branché, ou tes ventilateurs passent par un hub (ou le boîtier) relié à une seule prise : AEROX ne voit alors que cette prise." -f $f.IdleHeaders) $Typo.Small $Pal.Faint; $t.Margin = Th 0 2 0 0; & $add $t }
     }
     $how = New-Text ("Régler le bruit des ventilateurs (silence / standard / performance) : " + (Get-BiosHowTo $u.Brand 'fans' $u.Amd $u.Oem) +
         $(if (@($u.Soft).Count) { "`nSur ce PC, tu peux aussi le faire avec : " + (@($u.Soft) -join ', ') + "." } elseif (-not $u.Oem) { "`nPour des courbes sur mesure sous Windows : FanControl (gratuit et reconnu)." } else { '' }) +
-        "`nAEROX affiche les ventilateurs mais ne les règle pas lui-même : un mauvais réglage peut faire surchauffer le PC.") 12 '#7A8399'
+        "`nAEROX affiche les ventilateurs mais ne les règle pas lui-même : un mauvais réglage peut faire surchauffer le PC.") $Typo.Small $Pal.Faint
     $how.Margin = Th 0 10 0 0; $how.LineHeight = 18; & $add $how
 }
 function Build-SystemPage {
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Mon PC" "Carte mère, infos du BIOS (mémoire et XMP / EXPO, dual channel, virtualisation, Resizable BAR), ventilateurs, sécurité du démarrage (TPM, Secure Boot) et batterie des portables. Tout est lu depuis Windows, sans aller dans le BIOS : rien n'est modifié ici."
+    Build-Header $sp "Mon PC" "Carte mère et BIOS, mémoire (XMP / EXPO, dual channel), ventilateurs, sécurité du démarrage et batterie. Tout est lu depuis Windows, sans aller dans le BIOS : rien n'est modifié ici."
     $i = $sync.SysInfo
     if (-not $i) {
         if (-not $script:SysWaiting) { $script:SysWaiting = $true; Start-Background 'Get-SystemInfo' }
-        Add-Child $sp (New-Text "Lecture des infos du PC..." 14 '#A9B0C2')
+        Add-Child $sp (New-Text "Lecture des infos du PC..." $Typo.Strong $Pal.Text3)
         return $sp
     }
     $keys = Get-BiosKeys $i.Brand
@@ -1634,7 +1796,7 @@ function Build-SystemPage {
     Add-Child $cs (New-InfoRow 'Version du BIOS' ("{0}{1}" -f $i.BiosVersion, $(if ($i.BiosDate) { "  ·  du " + (Format-Date $i.BiosDate) + " ($ageTxt)" } else { '' })) $pill $pk $help)
     $n = New-Text ("AEROX ne peut pas connaître la dernière version de chaque modèle : le bouton ci-dessous cherche ta page sur le site officiel du fabricant pour comparer." +
         $(if ($i.BrandTool) { "`n" + $i.BrandTool } else { '' }) +
-        "`nMets à jour le BIOS seulement si tu en as besoin (TPM, Secure Boot, nouveau processeur, plantages), avec le fichier du site officiel uniquement, et sans jamais couper le courant pendant l'opération.") 12 '#7A8399'
+        "`nMets à jour le BIOS seulement si tu en as besoin (TPM, Secure Boot, nouveau processeur, plantages), avec le fichier du site officiel uniquement, et sans jamais couper le courant pendant l'opération.") $Typo.Small $Pal.Faint
     $n.Margin = Th 0 8 0 10; $n.LineHeight = 19; Add-Child $cs $n
     $bw = New-Object System.Windows.Controls.WrapPanel
     $b = New-Button "Chercher mon BIOS sur le site officiel" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'bios-site' } } $false; $b.Margin = Th 0 0 8 0; Add-Child $bw $b
@@ -1646,8 +1808,8 @@ function Build-SystemPage {
     $bi = $i.BiosInfo
     Add-Child $sp (New-Section 'Infos BIOS')
     $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
-    $t = New-Text "Ce que le BIOS a réglé, lu directement depuis Windows : pas besoin d'y aller pour savoir. Pour chaque réglage à changer, AEROX te dit où le trouver sur ta carte mère (les noms peuvent varier un peu selon la version du BIOS)." 12.5 '#A9B0C2'
-    $t.Margin = Th 0 0 0 6; $t.LineHeight = 19; Add-Child $cs $t
+    $t = New-Text "Ce que le BIOS a réglé, lu depuis Windows. Pour chaque réglage à changer, « Comment faire » te dit où le trouver sur ta carte mère." $Typo.Small $Pal.Muted
+    $t.Margin = Th 0 0 0 6; Add-Child $cs $t
     $amd = [bool]$i.CpuAmd
     if (-not $bi -or -not $bi.Ram -or -not $bi.Ram.Count) { Add-Child $cs (New-InfoRow 'Mémoire vive (RAM)' 'Non lisible sur ce PC') }
     else {
@@ -1693,7 +1855,6 @@ function Build-SystemPage {
             }
         } else { Add-Child $cs (New-InfoRow 'Resizable BAR' 'Non lisible depuis Windows pour cette carte graphique' '' '' "Cartes AMD : regarde « Smart Access Memory » dans AMD Software. Cartes Intel Arc : il est indispensable, vérifie « Re-Size BAR » dans le BIOS.") }
     }
-    Add-Child $cs (New-InfoRow 'Démarrage, TPM, Secure Boot' 'Voir « Sécurité du démarrage » plus bas')
     $c.Child = $cs; Add-Child $sp $c
 
     # ---- Ventilateurs (vitesse en direct avec le module de températures ; AEROX ne les règle pas)
@@ -1819,7 +1980,7 @@ function Build-SystemPage {
             if ($bt.Chem) { Add-Child $cs (New-InfoRow 'Type' $bt.Chem) }
         }
         $b = New-Button "Rapport complet de Windows" 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'battery-report' } }; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 4; Add-Child $cs $b
-        $t = New-Text "Historique de charge, capacité au fil des mois et autonomie estimée, par l'outil officiel de Windows." 12 '#7A8399'; $t.Margin = Th 0 2 0 4; Add-Child $cs $t
+        $t = New-Text "Historique de charge, capacité au fil des mois et autonomie estimée, par l'outil officiel de Windows." $Typo.Small $Pal.Faint; $t.Margin = Th 0 2 0 4; Add-Child $cs $t
         $c.Child = $cs; Add-Child $sp $c
     }
 
@@ -1846,25 +2007,25 @@ function Get-ActiveLink {
 function Format-Mbps($v) { if ($null -eq $v -or $v -lt 0) { return '—' }; if ($v -ge 100) { return ('{0:N0}' -f $v) }; return ('{0:N1}' -f $v) }
 function Get-SpeedVerdict($Down, $Up, $Ping, $Jitter, $Link, $Loss = -1) {
     $lines = New-Object System.Collections.ArrayList
-    $dv = if ($Down -lt 5) { @('Très lent', '#FF6B6B', "Même une vidéo en HD risque de saccader.") }
-          elseif ($Down -lt 25) { @('Correct', '#FFB547', "Suffisant pour la vidéo HD et le jeu en ligne, mais télécharger un jeu sera long.") }
-          elseif ($Down -lt 100) { @('Bon', '#4ADE80', "Parfait pour la 4K, le jeu en ligne et plusieurs écrans en même temps.") }
-          elseif ($Down -lt 500) { @('Très bon', '#4ADE80', "Débit de fibre : tout est fluide, les téléchargements vont vite.") }
-          else { @('Excellent', '#4ADE80', "Fibre très rapide.") }
+    $dv = if ($Down -lt 5) { @('Très lent', $Pal.Bad, "Même une vidéo en HD risque de saccader.") }
+          elseif ($Down -lt 25) { @('Correct', $Pal.Warn, "Suffisant pour la vidéo HD et le jeu en ligne, mais télécharger un jeu sera long.") }
+          elseif ($Down -lt 100) { @('Bon', $Pal.Ok, "Parfait pour la 4K, le jeu en ligne et plusieurs écrans en même temps.") }
+          elseif ($Down -lt 500) { @('Très bon', $Pal.Ok, "Débit de fibre : tout est fluide, les téléchargements vont vite.") }
+          else { @('Excellent', $Pal.Ok, "Fibre très rapide.") }
     [void]$lines.Add(@(("Réception : " + $dv[0]), $dv[1], ($dv[2] + $(if ($Down -gt 0) { " Un jeu de 100 Go se télécharge en {0} environ." -f (Format-Duration (100 * 8000 / $Down)) } else { '' }))))
-    $pv = if ($Ping -lt 20) { @('Excellent pour jouer', '#4ADE80', "Idéal même pour les FPS compétitifs.") }
-          elseif ($Ping -lt 50) { @('Bon pour jouer', '#4ADE80', "Aucun souci pour le jeu en ligne.") }
-          elseif ($Ping -lt 100) { @('Moyen', '#FFB547', "Ça se sent dans les jeux rapides (FPS, jeux de combat).") }
-          else { @('Élevé', '#FF6B6B', "Le jeu en ligne va être pénible (décalage, « lag »).") }
+    $pv = if ($Ping -lt 20) { @('Excellent pour jouer', $Pal.Ok, "Idéal même pour les FPS compétitifs.") }
+          elseif ($Ping -lt 50) { @('Bon pour jouer', $Pal.Ok, "Aucun souci pour le jeu en ligne.") }
+          elseif ($Ping -lt 100) { @('Moyen', $Pal.Warn, "Ça se sent dans les jeux rapides (FPS, jeux de combat).") }
+          else { @('Élevé', $Pal.Bad, "Le jeu en ligne va être pénible (décalage, « lag »).") }
     [void]$lines.Add(@(("Ping : " + $pv[0]), $pv[1], $pv[2]))
-    if ($Jitter -ge 15) { [void]$lines.Add(@("Connexion instable", '#FFB547', ("Le ping varie beaucoup ({0:N0} ms de variation) : c'est ce qui donne des « lags » par moments. Cause la plus fréquente : le Wi-Fi, ou quelqu'un qui télécharge en même temps sur le réseau." -f $Jitter))) }
-    if ($Loss -gt 1) { [void]$lines.Add(@(("Perte de paquets : {0:N1} %" -f $Loss), '#FF6B6B', "Des données se perdent en route : coupures en jeu, appels qui hachent. Causes fréquentes : Wi-Fi faible, câble abîmé, box à redémarrer ou souci chez le fournisseur.")) }
-    if ($Up -ge 0 -and $Up -lt 5) { [void]$lines.Add(@("Envoi lent", '#FFB547', "Le streaming (Twitch), les appels vidéo et l'envoi de gros fichiers seront limités.")) }
+    if ($Jitter -ge 15) { [void]$lines.Add(@("Connexion instable", $Pal.Warn, ("Le ping varie beaucoup ({0:N0} ms de variation) : c'est ce qui donne des « lags » par moments. Cause la plus fréquente : le Wi-Fi, ou quelqu'un qui télécharge en même temps sur le réseau." -f $Jitter))) }
+    if ($Loss -gt 1) { [void]$lines.Add(@(("Perte de paquets : {0:N1} %" -f $Loss), $Pal.Bad, "Des données se perdent en route : coupures en jeu, appels qui hachent. Causes fréquentes : Wi-Fi faible, câble abîmé, box à redémarrer ou souci chez le fournisseur.")) }
+    if ($Up -ge 0 -and $Up -lt 5) { [void]$lines.Add(@("Envoi lent", $Pal.Warn, "Le streaming (Twitch), les appels vidéo et l'envoi de gros fichiers seront limités.")) }
     if ($Link -and $Link.Wifi) {
         $t = "Tu es en Wi-Fi" + $(if ($Link.Signal -ge 0) { " (signal $($Link.Signal) %)" } else { '' }) + ". Pour connaître le vrai débit de ta box, refais le test avec un câble Ethernet : en Wi-Fi on perd souvent 30 à 70 %."
-        [void]$lines.Add(@("Wi-Fi", $(if ($Link.Signal -ge 0 -and $Link.Signal -lt 60) { '#FFB547' } else { '#8B93A7' }), $t))
+        [void]$lines.Add(@("Wi-Fi", $(if ($Link.Signal -ge 0 -and $Link.Signal -lt 60) { $Pal.Warn } else { $Pal.Muted }), $t))
     } elseif ($Link -and $Link.Link -match '^100 Mbps' -and $Down -gt 80) {
-        [void]$lines.Add(@("Câble limité à 100 Mb/s", '#FFB547', "Ta carte réseau est connectée à 100 Mb/s seulement : souvent un vieux câble (catégorie 5) ou une prise mal enfoncée. Avec un câble Cat 6, la fibre peut aller beaucoup plus vite."))
+        [void]$lines.Add(@("Câble limité à 100 Mb/s", $Pal.Warn, "Ta carte réseau est connectée à 100 Mb/s seulement : souvent un vieux câble (catégorie 5) ou une prise mal enfoncée. Avec un câble Cat 6, la fibre peut aller beaucoup plus vite."))
     }
     return $lines
 }
@@ -1878,35 +2039,35 @@ function Show-SpeedTestDialog {
     $w = New-Dialog "$AppName : test de débit" 600
     $script:SpWin = $w
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Test de débit Internet" 18 '#FFFFFF' 'Bold')
-    $sub = New-Text "Ferme les téléchargements et les vidéos en cours pour un résultat juste. Le test dure environ 30 secondes." 13 '#A9B0C2'; $sub.Margin = Th 0 6 0 4; Add-Child $sp $sub
-    $lic = New-Object System.Windows.Controls.TextBlock; $lic.TextWrapping = 'Wrap'; $lic.FontSize = 11.5; $lic.Foreground = Brush '#7A8399'; $lic.Margin = Th 0 0 0 16
+    Add-Child $sp (New-Text "Test de débit Internet" $Typo.H2 $Pal.White 'Bold')
+    $sub = New-Text "Ferme les téléchargements et les vidéos en cours pour un résultat juste. Le test dure environ 30 secondes." $Typo.Body $Pal.Text3; $sub.Margin = Th 0 6 0 4; Add-Child $sp $sub
+    $lic = New-Object System.Windows.Controls.TextBlock; $lic.TextWrapping = 'Wrap'; $lic.FontSize = $Typo.Small; $lic.Foreground = Brush $Pal.Faint; $lic.Margin = Th 0 0 0 16
     $lic.Inlines.Add("Mesure faite avec Speedtest® by Ookla, l'outil officiel de speedtest.net (téléchargé la première fois, environ 1 Mo) : mêmes serveurs que le site. Gratuit pour un usage personnel ; en lançant le test, tu acceptes ses ")
-    $hl = New-Object System.Windows.Documents.Hyperlink; $hl.Inlines.Add("conditions d'utilisation"); $hl.NavigateUri = [uri]'https://www.speedtest.net/about/eula'; $hl.Foreground = Brush '#B9A8FF'
+    $hl = New-Object System.Windows.Documents.Hyperlink; $hl.Inlines.Add("conditions d'utilisation"); $hl.NavigateUri = [uri]'https://www.speedtest.net/about/eula'; $hl.Foreground = Brush $Pal.AccentText
     $hl.Add_RequestNavigate({ param($s, $e) [void](Open-Url $e.Uri.AbsoluteUri); $e.Handled = $true }); $lic.Inlines.Add($hl); $lic.Inlines.Add('.')
     Add-Child $sp $lic
 
     $big = New-Object System.Windows.Controls.StackPanel; $big.HorizontalAlignment = 'Center'
-    $phase = New-Text "Prêt" 13 '#B9A8FF' 'SemiBold'; $phase.HorizontalAlignment = 'Center'; Add-Child $big $phase
-    $num = New-Text "—" 54 '#FFFFFF' 'Bold'; $num.HorizontalAlignment = 'Center'; Add-Child $big $num
-    $unit = New-Text "Mb/s" 14 '#8B93A7'; $unit.HorizontalAlignment = 'Center'; Add-Child $big $unit
+    $phase = New-Text "Prêt" $Typo.Body $Pal.AccentText 'SemiBold'; $phase.HorizontalAlignment = 'Center'; Add-Child $big $phase
+    $num = New-Text "—" 54 $Pal.White 'Bold'; $num.HorizontalAlignment = 'Center'; Add-Child $big $num
+    $unit = New-Text "Mb/s" $Typo.Strong $Pal.Muted; $unit.HorizontalAlignment = 'Center'; Add-Child $big $unit
     Add-Child $sp $big
     $bar = New-Object System.Windows.Controls.ProgressBar; $bar.Height = 6; $bar.Margin = Th 0 14 0 16; $bar.Minimum = 0; $bar.Maximum = 100
-    $bar.Foreground = Brush '#7C5CFF'; $bar.Background = Brush '#232838'; $bar.BorderThickness = Th 0 0 0 0
+    $bar.Foreground = Brush $Pal.Accent; $bar.Background = Brush $Pal.Line; $bar.BorderThickness = Th 0 0 0 0
     Add-Child $sp $bar
 
     $grid = New-Object System.Windows.Controls.Primitives.UniformGrid; $grid.Columns = 3
     $cells = @{}
     foreach ($k in @(@('ping', 'PING'), @('down', 'RÉCEPTION'), @('up', 'ENVOI'))) {
-        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 12 10 12 10; $b.Margin = Th 0 0 8 0
+        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 10; $b.Padding = Th 12 10 12 10; $b.Margin = Th 0 0 8 0
         $st = New-Object System.Windows.Controls.StackPanel
-        Add-Child $st (New-Text $k[1] 11 '#7A8399' 'Bold')
-        $v = New-Text '—' 22 '#FFFFFF' 'Bold'; $v.Margin = Th 0 4 0 0; Add-Child $st $v
-        $u = New-Text $(if ($k[0] -eq 'ping') { 'ms' } else { 'Mb/s' }) 12 '#8B93A7'; Add-Child $st $u
+        Add-Child $st (New-Text $k[1] $Typo.Caption $Pal.Faint 'Bold')
+        $v = New-Text '—' $Typo.Stat $Pal.White 'Bold'; $v.Margin = Th 0 4 0 0; Add-Child $st $v
+        $u = New-Text $(if ($k[0] -eq 'ping') { 'ms' } else { 'Mb/s' }) $Typo.Small $Pal.Muted; Add-Child $st $u
         $b.Child = $st; Add-Child $grid $b; $cells[$k[0]] = @{ V = $v; U = $u }
     }
     Add-Child $sp $grid
-    $info = New-Text "" 12 '#7A8399'; $info.Margin = Th 0 10 0 0; Add-Child $sp $info
+    $info = New-Text "" $Typo.Small $Pal.Faint; $info.Margin = Th 0 10 0 0; Add-Child $sp $info
     $verdict = New-Object System.Windows.Controls.StackPanel; $verdict.Margin = Th 0 10 0 0; Add-Child $sp $verdict
 
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 14 0 0
@@ -1941,7 +2102,7 @@ function Show-SpeedTestDialog {
                 $u.Go.IsEnabled = $true; $u.Go.Content = 'Refaire le test'
                 if ($ph -eq 'error') {
                     $u.Phase.Text = 'Le test a échoué'; $u.Num.Text = '—'
-                    $e = New-Text ("Impossible de joindre le serveur de test : " + [AeroxSpeed]::Error + "`nVérifie que tu es connecté à Internet (sinon lance « Tester ma connexion »). Un antivirus, un VPN ou un réseau d'entreprise peuvent aussi bloquer le test.") 12.5 '#FFB547'
+                    $e = New-Text ("Impossible de joindre le serveur de test : " + [AeroxSpeed]::Error + "`nVérifie que tu es connecté à Internet (sinon lance « Tester ma connexion »). Un antivirus, un VPN ou un réseau d'entreprise peuvent aussi bloquer le test.") $Typo.Body $Pal.Warn
                     $u.Verdict.Children.Clear(); Add-Child $u.Verdict $e
                     Write-UiLog ("❌ Test de débit : " + [AeroxSpeed]::Error)
                 } elseif ($ph -eq 'done') {
@@ -1950,8 +2111,8 @@ function Show-SpeedTestDialog {
                     $u.Verdict.Children.Clear()
                     foreach ($l in (Get-SpeedVerdict $d $up $pg $jt $u.Link ([AeroxSpeed]::Loss))) {
                         $bx = New-Object System.Windows.Controls.StackPanel; $bx.Margin = Th 0 0 0 8
-                        Add-Child $bx (New-Text $l[0] 13.5 $l[1] 'SemiBold')
-                        $t = New-Text $l[2] 12.5 '#A9B0C2'; $t.Margin = Th 0 2 0 0; Add-Child $bx $t
+                        Add-Child $bx (New-Text $l[0] $Typo.Body $l[1] 'SemiBold')
+                        $t = New-Text $l[2] $Typo.Body $Pal.Text3; $t.Margin = Th 0 2 0 0; Add-Child $bx $t
                         Add-Child $u.Verdict $bx
                     }
                     if ([AeroxSpeed]::ResultUrl) {
@@ -2118,10 +2279,10 @@ function Show-ReviewDialog {
     $w = New-Dialog "$AppName : donner mon avis" 560
     $script:RevWin = $w; $script:RevNote = [int]$script:Settings.ReviewNote; $script:RevStars = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text $(if ($script:Settings.ReviewSent) { "Modifier mon avis" } else { "Donner mon avis" }) 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Ton avis est publié sur la page GitHub d'AEROX PC Care, visible par tout le monde, avec le pseudo de ton choix (ou « Anonyme »). N'y mets pas d'informations personnelles. Un seul avis par PC : tu pourras le modifier." 13 '#A9B0C2'
+    Add-Child $sp (New-Text $(if ($script:Settings.ReviewSent) { "Modifier mon avis" } else { "Donner mon avis" }) $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Ton avis est publié sur la page GitHub d'AEROX PC Care, visible par tout le monde, avec le pseudo de ton choix (ou « Anonyme »). N'y mets pas d'informations personnelles. Un seul avis par PC : tu pourras le modifier." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 14; Add-Child $sp $p
-    Add-Child $sp (New-Text "Ta note" 12 '#C3CAD9' 'SemiBold')
+    Add-Child $sp (New-Text "Ta note" $Typo.Small $Pal.Text2 'SemiBold')
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.Margin = Th 0 4 0 12
     foreach ($i in 1..5) {
         $b = New-Object System.Windows.Controls.Button; $b.Content = '★'; $b.FontSize = 30; $b.Tag = $i; $b.Cursor = 'Hand'
@@ -2129,16 +2290,16 @@ function Show-ReviewDialog {
         $b.Add_Click({ $script:RevNote = [int]$this.Tag; & $script:PaintStars })
         Add-Child $row $b; [void]$script:RevStars.Add($b)
     }
-    $script:RevLabel = New-Text '' 13 '#B9A8FF' 'SemiBold'; $script:RevLabel.VerticalAlignment = 'Center'; $script:RevLabel.Margin = Th 10 0 0 0; Add-Child $row $script:RevLabel
+    $script:RevLabel = New-Text '' $Typo.Body $Pal.AccentText 'SemiBold'; $script:RevLabel.VerticalAlignment = 'Center'; $script:RevLabel.Margin = Th 10 0 0 0; Add-Child $row $script:RevLabel
     Add-Child $sp $row
     $mk = { param($h, $max, $multi)
         $t = New-Object System.Windows.Controls.TextBox; $t.MaxLength = $max; $t.Margin = Th 0 6 0 12
         if ($multi) { $t.AcceptsReturn = $true; $t.TextWrapping = 'Wrap'; $t.Height = $h; $t.VerticalScrollBarVisibility = 'Auto' }
-        $t.Background = Brush '#0E1016'; $t.Foreground = Brush '#E6E9F2'; $t.BorderBrush = Brush '#2E3446'; $t.Padding = Th 8 6 8 6; $t.FontSize = 13; $t.CaretBrush = Brush '#E6E9F2'
+        $t.Background = Brush $Pal.Bg; $t.Foreground = Brush $Pal.Text; $t.BorderBrush = Brush $Pal.LineStrong; $t.Padding = Th 8 6 8 6; $t.FontSize = $Typo.Body; $t.CaretBrush = Brush $Pal.Text
         return $t }
-    Add-Child $sp (New-Text "Ton commentaire (facultatif)" 12 '#C3CAD9' 'SemiBold')
+    Add-Child $sp (New-Text "Ton commentaire (facultatif)" $Typo.Small $Pal.Text2 'SemiBold')
     $script:RevText = & $mk 110 1500 $true; $script:RevText.Text = "$($script:Settings.ReviewText)"; Add-Child $sp $script:RevText
-    Add-Child $sp (New-Text "Ton pseudo (facultatif)" 12 '#C3CAD9' 'SemiBold')
+    Add-Child $sp (New-Text "Ton pseudo (facultatif)" $Typo.Small $Pal.Text2 'SemiBold')
     $script:RevPseudo = & $mk 0 30 $false; $script:RevPseudo.Text = "$($script:Settings.ReviewPseudo)"; Add-Child $sp $script:RevPseudo
     $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 4 0 0
     $bRead = New-DlgButton 'Lire les avis' 'TextBtn'; [System.Windows.Controls.DockPanel]::SetDock($bRead, 'Left'); Add-Child $bar $bRead
@@ -2148,7 +2309,7 @@ function Show-ReviewDialog {
     Add-Child $right $bClose; Add-Child $right $script:RevSend; Add-Child $bar $right; Add-Child $sp $bar
     $script:PaintStars = {
         $labels = @('', 'Décevant', 'Bof', 'Correct', 'Bien', 'Génial !')
-        foreach ($s in $script:RevStars) { $s.Foreground = Brush $(if ([int]$s.Tag -le $script:RevNote) { '#FFC83D' } else { '#3A4052' }) }
+        foreach ($s in $script:RevStars) { $s.Foreground = Brush $(if ([int]$s.Tag -le $script:RevNote) { $Pal.Gold } else { $Pal.LineStrong }) }
         $script:RevLabel.Text = $labels[$script:RevNote]
         $script:RevSend.IsEnabled = ($script:RevNote -ge 1)
     }
@@ -2240,11 +2401,11 @@ function Copy-ShareMessage {
 }
 # Encadré « partage + retours » (fenêtre Quoi de neuf)
 function New-ShareBox {
-    $box = New-Object System.Windows.Controls.Border; $box.Background = Brush '#211B3D'; $box.BorderBrush = Brush '#7C5CFF'; $box.BorderThickness = Th 1 1 1 1
+    $box = New-Object System.Windows.Controls.Border; $box.Background = Brush $Pal.AccentSoft; $box.BorderBrush = Brush $Pal.Accent; $box.BorderThickness = Th 1 1 1 1
     $box.CornerRadius = Corner 10; $box.Padding = Th 14 12 14 12; $box.Margin = Th 0 12 0 0
     $bs = New-Object System.Windows.Controls.StackPanel
-    Add-Child $bs (New-Text "💜 Tu aimes AEROX PC Care ?" 14 '#FFFFFF' 'SemiBold')
-    $t = New-Text "N'hésite pas à le partager à tes amis : il est gratuit, et plus on est nombreux, plus il s'améliore. Et fais-nous un retour sur le moindre souci, même petit (Aide > Signaler un bug, ou sur le Discord) : chaque retour est lu et corrigé." 12.5 '#C3CAD9'
+    Add-Child $bs (New-Text "💜 Tu aimes AEROX PC Care ?" $Typo.Strong $Pal.White 'SemiBold')
+    $t = New-Text "N'hésite pas à le partager à tes amis : il est gratuit, et plus on est nombreux, plus il s'améliore. Et fais-nous un retour sur le moindre souci, même petit (Aide > Signaler un bug, ou sur le Discord) : chaque retour est lu et corrigé." $Typo.Body $Pal.Text2
     $t.Margin = Th 0 4 0 8; Add-Child $bs $t
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'
     $b1 = New-DlgButton 'Partager à un ami' 'ActionBtn'; $b1.Margin = Th 0 0 8 0; $b1.Add_Click({ Copy-ShareMessage }); Add-Child $row $b1
@@ -2268,16 +2429,16 @@ function Show-WhatsNew([string]$Since) {
     $w = New-Dialog "$AppName : quoi de neuf ?" 600
     $script:NewWin = $w
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text $(if ($Since) { "Quoi de neuf dans la $AppVersion ?" } else { "Quoi de neuf ?" }) 18 '#FFFFFF' 'Bold')
-    $p = New-Text "AEROX PC Care s'améliore grâce à vos retours et vos rapports de bug. Merci !" 13 '#A9B0C2'; $p.Margin = Th 0 6 0 10; Add-Child $sp $p
+    Add-Child $sp (New-Text $(if ($Since) { "Quoi de neuf dans la $AppVersion ?" } else { "Quoi de neuf ?" }) $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "AEROX PC Care s'améliore grâce à vos retours et vos rapports de bug. Merci !" $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 10; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 420; $sv.Content = $list
     Add-Child $sp $sv
     foreach ($v in $vers) {
-        $h = New-Text ("VERSION {0}" -f $v) 11.5 '#B9A8FF' 'Bold'; $h.Margin = Th 2 10 0 6; Add-Child $list $h
+        $h = New-Text ("VERSION {0}" -f $v) $Typo.Small $Pal.AccentText 'Bold'; $h.Margin = Th 2 10 0 6; Add-Child $list $h
         foreach ($line in $script:WhatsNew[$v]) {
-            $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 9 12 9; $card.Margin = Th 0 0 0 6
-            $card.Child = (New-Text ("•  " + $line) 13 '#E6E9F2'); Add-Child $list $card
+            $card = New-Object System.Windows.Controls.Border; $card.Background = Brush $Pal.Card; $card.CornerRadius = Corner 10; $card.Padding = Th 14 9 12 9; $card.Margin = Th 0 0 0 6
+            $card.Child = (New-Text ("•  " + $line) $Typo.Body $Pal.Text); Add-Child $list $card
         }
     }
     Add-Child $sp (New-ShareBox)
@@ -2293,12 +2454,12 @@ function Show-RemoteHelpDialog {
     $script:HelpWin = $w
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Aide à distance" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Une personne de confiance voit ton écran et peut prendre la main pour t'aider, avec « Assistance rapide », l'outil gratuit de Microsoft inclus dans Windows." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Aide à distance" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Une personne de confiance voit ton écran et peut prendre la main pour t'aider, avec « Assistance rapide », l'outil gratuit de Microsoft inclus dans Windows." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
 
-    $warn = New-Object System.Windows.Controls.Border; $warn.Background = Brush '#3A1B1B'; $warn.CornerRadius = Corner 10; $warn.Padding = Th 14 10 14 10; $warn.Margin = Th 0 0 0 14
-    $wt = New-Text "⚠ N'accepte JAMAIS l'aide à distance de quelqu'un qui t'a appelé, écrit ou affiché un message de lui-même (« support Microsoft », « technicien », « ton PC est infecté »...). C'est l'arnaque la plus répandue. Utilise-la seulement avec quelqu'un que tu connais vraiment." 13 '#FFB4B4' 'SemiBold'
+    $warn = New-Object System.Windows.Controls.Border; $warn.Background = Brush $Pal.BadSoft; $warn.CornerRadius = Corner 10; $warn.Padding = Th 14 10 14 10; $warn.Margin = Th 0 0 0 14
+    $wt = New-Text "⚠ N'accepte JAMAIS l'aide à distance de quelqu'un qui t'a appelé, écrit ou affiché un message de lui-même (« support Microsoft », « technicien », « ton PC est infecté »...). C'est l'arnaque la plus répandue. Utilise-la seulement avec quelqu'un que tu connais vraiment." $Typo.Body $Pal.BadText 'SemiBold'
     $warn.Child = $wt; Add-Child $sp $warn
 
     $steps = @(
@@ -2307,14 +2468,14 @@ function Show-RemoteHelpDialog {
         @("3", "Tape le code et accepte", "Entre le code dans « Code de sécurité de l'assistant », clique sur « Envoyer » puis accepte le partage d'écran. Tu peux tout arrêter à tout moment avec le bouton « Arrêter » ou en fermant la fenêtre.", $null, $null)
     )
     foreach ($s in $steps) {
-        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 12 14 12; $row.Margin = Th 0 0 0 8
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 14 12 14 12; $row.Margin = Th 0 0 0 8
         $dp = New-Object System.Windows.Controls.DockPanel
-        $num = New-Object System.Windows.Controls.Border; $num.Width = 28; $num.Height = 28; $num.CornerRadius = Corner 14; $num.Background = Brush '#2A2350'; $num.VerticalAlignment = 'Top'; $num.Margin = Th 0 0 12 0
-        $nt = New-Text $s[0] 13 '#B9A8FF' 'Bold'; $nt.HorizontalAlignment = 'Center'; $nt.VerticalAlignment = 'Center'; $num.Child = $nt
+        $num = New-Object System.Windows.Controls.Border; $num.Width = 28; $num.Height = 28; $num.CornerRadius = Corner 14; $num.Background = Brush $Pal.AccentSoft; $num.VerticalAlignment = 'Top'; $num.Margin = Th 0 0 12 0
+        $nt = New-Text $s[0] $Typo.Body $Pal.AccentText 'Bold'; $nt.HorizontalAlignment = 'Center'; $nt.VerticalAlignment = 'Center'; $num.Child = $nt
         [System.Windows.Controls.DockPanel]::SetDock($num, 'Left'); Add-Child $dp $num
         $tx = New-Object System.Windows.Controls.StackPanel
-        Add-Child $tx (New-Text $s[1] 14 '#FFFFFF' 'SemiBold')
-        $d = New-Text $s[2] 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $tx $d
+        Add-Child $tx (New-Text $s[1] $Typo.Strong $Pal.White 'SemiBold')
+        $d = New-Text $s[2] $Typo.Body $Pal.Text3; $d.Margin = Th 0 3 0 0; Add-Child $tx $d
         if ($s[3]) {
             $b = New-Object System.Windows.Controls.Button; $b.Content = $s[3]; $b.Style = $window.FindResource($(if ($s[4] -eq 'qa') { 'PrimaryBtn' } else { 'ActionBtn' })); $b.Tag = $s[4]
             $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 8 0 0
@@ -2342,7 +2503,7 @@ function Show-RemoteHelpDialog {
     $n = New-Text ("Bon à savoir :`n" +
         "• La personne qui aide doit se connecter avec un compte Microsoft (gratuit). Toi, non.`n" +
         "• Si une fenêtre « Voulez-vous autoriser... » apparaît, c'est toi qui dois cliquer : la personne qui t'aide ne la voit pas.`n" +
-        "• Pour aider quelqu'un toi-même : ouvre Assistance rapide et clique sur « Aider quelqu'un ».") 12 '#8B93A7'
+        "• Pour aider quelqu'un toi-même : ouvre Assistance rapide et clique sur « Aider quelqu'un ».") $Typo.Small $Pal.Muted
     $n.Margin = Th 0 6 0 0; $n.LineHeight = 19; Add-Child $sp $n
     $close = New-Object System.Windows.Controls.Button; $close.Content = 'Fermer'; $close.Style = $window.FindResource('TextBtn'); $close.HorizontalAlignment = 'Right'; $close.Margin = Th 0 12 0 0
     $close.Add_Click({ $script:HelpWin.Close() }); Add-Child $sp $close
@@ -2363,22 +2524,22 @@ function Show-StartupDialog($Issue) {
     $script:StartupWin = $w; $script:StartupChoice = $null
     $script:StartupRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Programmes au démarrage" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Coché = se lance tout seul quand tu allumes le PC. Décoche ce dont tu n'as pas besoin dès l'allumage : l'appli reste installée et tu l'ouvres quand tu veux.`nCe que tu laisses coché est validé : le diagnostic ne te le signalera plus." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Programmes au démarrage" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Coché = se lance tout seul quand tu allumes le PC. Décoche ce dont tu n'as pas besoin dès l'allumage : l'appli reste installée et tu l'ouvres quand tu veux.`nCe que tu laisses coché est validé : le diagnostic ne te le signalera plus." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
 
     $list = New-Object System.Windows.Controls.StackPanel
     foreach ($e in $entries) {
         $kind = & $kindOf $e
-        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
         $dp = New-Object System.Windows.Controls.DockPanel
-        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' '#B9A8FF' '#2A2350' } 'keep' { New-Pill 'À garder' '#4ADE80' '#173326' } 'mine' { New-Pill 'Validé par toi' '#7DD3FC' '#12303F' } 'back' { New-Pill 'De nouveau actif' '#FFB547' '#3A2A12' } default { $null } }
+        $pill = switch ($kind) { 'optional' { New-Pill 'Pas indispensable' $Pal.AccentText $Pal.AccentSoft } 'keep' { New-Pill 'À garder' $Pal.Ok $Pal.OkSoft } 'mine' { New-Pill 'Validé par toi' $Pal.Info $Pal.InfoSoft } 'back' { New-Pill 'De nouveau actif' $Pal.Warn $Pal.WarnSoft } default { $null } }
         if ($pill) { [System.Windows.Controls.DockPanel]::SetDock($pill, 'Right'); Add-Child $dp $pill }
         $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = [bool]$e.Enabled; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
         $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-        Add-Child $txt (New-Text $e.Name 14 '#FFFFFF' 'SemiBold')
-        $cmd = New-Text ($e.Command -replace '"', '') 11 '#7A8399'; $cmd.TextWrapping = 'NoWrap'; $cmd.TextTrimming = 'CharacterEllipsis'; $cmd.MaxWidth = 420; Add-Child $txt $cmd
-        if ($kind -eq 'back') { $bk = New-Text "Tu l'avais décoché, mais il est de nouveau actif : le plus souvent, c'est l'appli qui se remet toute seule au démarrage. Pour que ça tienne : ouvre-la, va dans ses paramètres et désactive son option du type « Lancer au démarrage de Windows »." 11.5 '#FFB547'; $bk.MaxWidth = 440; $bk.Margin = Th 0 3 0 0; Add-Child $txt $bk }
+        Add-Child $txt (New-Text $e.Name $Typo.Strong $Pal.White 'SemiBold')
+        $cmd = New-Text ($e.Command -replace '"', '') $Typo.Caption $Pal.Faint; $cmd.TextWrapping = 'NoWrap'; $cmd.TextTrimming = 'CharacterEllipsis'; $cmd.MaxWidth = 420; Add-Child $txt $cmd
+        if ($kind -eq 'back') { $bk = New-Text "Tu l'avais décoché, mais il est de nouveau actif : le plus souvent, c'est l'appli qui se remet toute seule au démarrage. Pour que ça tienne : ouvre-la, va dans ses paramètres et désactive son option du type « Lancer au démarrage de Windows »." $Typo.Small $Pal.Warn; $bk.MaxWidth = 440; $bk.Margin = Th 0 3 0 0; Add-Child $txt $bk }
         $cb.Content = $txt
         Add-Child $dp $cb
         $row.Child = $dp; Add-Child $list $row
@@ -2449,7 +2610,9 @@ function New-Dialog([string]$Title, [double]$Width) {
     $w = New-Object System.Windows.Window
     $w.Title = $Title; $w.Width = $Width; $w.SizeToContent = 'Height'; $w.MaxHeight = 720
     $w.WindowStartupLocation = 'CenterOwner'; $w.Owner = $window; $w.ResizeMode = 'NoResize'
-    $w.Background = Brush '#141720'; $w.FontFamily = 'Segoe UI'; $w.ShowInTaskbar = $false
+    $w.Background = Brush $Pal.Side; $w.FontFamily = 'Segoe UI'; $w.ShowInTaskbar = $false
+    # Mêmes barres de défilement sombres que la fenêtre principale
+    try { $sb = [System.Windows.Controls.Primitives.ScrollBar]; $w.Resources.Add($sb, $window.FindResource($sb)) } catch {}
     return $w
 }
 
@@ -2459,9 +2622,9 @@ function Show-ErrorDialog($Errors, [string]$Label) {
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
     $head = New-Object System.Windows.Controls.WrapPanel
-    Add-Child $head (New-Text $(if ($Errors.Count -gt 1) { "$($Errors.Count) problèmes pendant « $Label »" } else { "Un problème pendant « $Label »" }) 17 '#FFFFFF' 'Bold')
+    Add-Child $head (New-Text $(if ($Errors.Count -gt 1) { "$($Errors.Count) problèmes pendant « $Label »" } else { "Un problème pendant « $Label »" }) $Typo.H2 $Pal.White 'Bold')
     Add-Child $sp $head
-    $p = New-Text "Le reste s'est bien passé. Voici ce qui a coincé, pourquoi, et comment le régler :" 13 '#A9B0C2'; $p.Margin = Th 0 6 0 14; Add-Child $sp $p
+    $p = New-Text "Le reste s'est bien passé. Voici ce qui a coincé, pourquoi, et comment le régler :" $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 14; Add-Child $sp $p
     foreach ($e in $Errors) {
         $e.Status = 'open'
         $card = New-IssueCard $e -IsError
@@ -2554,24 +2717,24 @@ function Save-ReportDone { try { Set-Content -LiteralPath $LastReportFile -Value
 function Show-BugReport([string]$Prefill) {
     $w = New-Dialog "$AppName : signaler un bug" 640
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Signaler un bug" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Ce rapport aide le développeur (AEROX) à corriger les bugs. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe : uniquement la version de Windows, les erreurs du logiciel et la fin du journal. Tu peux tout vérifier ci-dessous." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Signaler un bug" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Ce rapport aide le développeur (AEROX) à corriger les bugs. Il ne contient ni ton nom, ni tes fichiers, ni tes mots de passe : uniquement la version de Windows, les erreurs du logiciel et la fin du journal. Tu peux tout vérifier ci-dessous." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 14; Add-Child $sp $p
-    Add-Child $sp (New-Text "Décris ce qui s'est passé (facultatif)" 12 '#C3CAD9' 'SemiBold')
+    Add-Child $sp (New-Text "Décris ce qui s'est passé (facultatif)" $Typo.Small $Pal.Text2 'SemiBold')
     $desc = New-Object System.Windows.Controls.TextBox
     $desc.Text = $Prefill; $desc.AcceptsReturn = $true; $desc.TextWrapping = 'Wrap'; $desc.Height = 70; $desc.Margin = Th 0 6 0 12
-    $desc.Background = Brush '#0E1016'; $desc.Foreground = Brush '#E6E9F2'; $desc.BorderBrush = Brush '#2E3446'; $desc.Padding = Th 8 6 8 6; $desc.FontSize = 13
-    $desc.CaretBrush = Brush '#E6E9F2'
+    $desc.Background = Brush $Pal.Bg; $desc.Foreground = Brush $Pal.Text; $desc.BorderBrush = Brush $Pal.LineStrong; $desc.Padding = Th 8 6 8 6; $desc.FontSize = $Typo.Body
+    $desc.CaretBrush = Brush $Pal.Text
     Add-Child $sp $desc
-    Add-Child $sp (New-Text "Contenu du rapport" 12 '#C3CAD9' 'SemiBold')
+    Add-Child $sp (New-Text "Contenu du rapport" $Typo.Small $Pal.Text2 'SemiBold')
     $prev = New-Object System.Windows.Controls.TextBox
     $prev.IsReadOnly = $true; $prev.TextWrapping = 'Wrap'; $prev.Height = 220; $prev.VerticalScrollBarVisibility = 'Auto'; $prev.Margin = Th 0 6 0 14
-    $prev.Background = Brush '#0A0C11'; $prev.Foreground = Brush '#C3CAD9'; $prev.BorderBrush = Brush '#2E3446'; $prev.FontFamily = 'Cascadia Mono, Consolas'; $prev.FontSize = 11.5; $prev.Padding = Th 8 6 8 6
+    $prev.Background = Brush $Pal.BgDeep; $prev.Foreground = Brush $Pal.Text2; $prev.BorderBrush = Brush $Pal.LineStrong; $prev.FontFamily = 'Cascadia Mono, Consolas'; $prev.FontSize = $Typo.Small; $prev.Padding = Th 8 6 8 6
     $prev.Text = Build-BugReport $Prefill
     Add-Child $sp $prev
     $script:RptWin = $w; $script:RptDesc = $desc; $script:RptPrev = $prev
     $desc.Add_TextChanged({ $script:RptPrev.Text = Build-BugReport $script:RptDesc.Text })
-    $note = New-Text "« Copier » : colle le rapport (Ctrl+V) dans un message Discord ou un mail au développeur." 12 '#7A8399'; $note.Margin = Th 0 0 0 10
+    $note = New-Text "« Copier » : colle le rapport (Ctrl+V) dans un message Discord ou un mail au développeur." $Typo.Small $Pal.Faint; $note.Margin = Th 0 0 0 10
     if ($sync.BugRelay) { $note.Text = "« Envoyer le rapport » l'envoie directement au développeur, sans compte à créer. Il sera visible dans la liste publique des bugs du logiciel sur GitHub (sans ton nom ni celui du PC)." }
     elseif ($GitHubRepo) { $note.Text = "« Envoyer sur GitHub » ouvre la page de rapport préremplie (compte GitHub gratuit requis). Sinon, « Copier » puis colle-le dans un message au développeur." }
     Add-Child $sp $note
@@ -2658,7 +2821,7 @@ function New-DlgButton([string]$Text, [string]$Style) {
     $b = New-Object System.Windows.Controls.Button; $b.Content = $Text; $b.Style = $window.FindResource($Style); return $b
 }
 function New-CheckRow([bool]$Checked, $Content, $Right) {
-    $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
+    $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); Add-Child $dp $Right }
     $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = $Checked; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
@@ -2680,8 +2843,8 @@ function Show-AppUpdatesDialog($Issue) {
     $w = New-Dialog "$AppName : mises à jour des logiciels" 680
     $script:UpdWin = $w; $script:UpdChoice = $null; $script:UpdApps = $apps; $script:UpdRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Mises à jour des logiciels" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Coche ce que tu veux mettre à jour. « Ignorer » met un logiciel de côté : il ne sera plus proposé, ni touché par « Tout mettre à jour » (tu peux changer d'avis plus bas)." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Mises à jour des logiciels" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Coche ce que tu veux mettre à jour. « Ignorer » met un logiciel de côté : il ne sera plus proposé, ni touché par « Tout mettre à jour » (tu peux changer d'avis plus bas)." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $script:UpdList = $list
@@ -2699,13 +2862,13 @@ function Show-AppUpdatesDialog($Issue) {
     $script:RenderUpd = {
         $script:UpdList.Children.Clear(); $script:UpdRows.Clear()
         $active = @($script:UpdApps | Where-Object { -not $_.Ignored }); $ign = @($script:UpdApps | Where-Object { $_.Ignored })
-        if (-not $active.Count) { $t = New-Text "Plus rien à mettre à jour (tout le reste est ignoré)." 13 '#8B93A7'; $t.Margin = Th 4 4 0 10; Add-Child $script:UpdList $t }
+        if (-not $active.Count) { $t = New-Text "Plus rien à mettre à jour (tout le reste est ignoré)." $Typo.Body $Pal.Muted; $t.Margin = Th 4 4 0 10; Add-Child $script:UpdList $t }
         foreach ($a in $active) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-            Add-Child $txt (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
-            Add-Child $txt (New-Text ("{0}  →  {1}" -f $a.Version, $a.Available) 12 '#8B93A7')
-            if ($a.Ghost) { Add-Child $txt (New-Text "Semble déjà désinstallé (il ne reste qu'une trace dans Windows) : le cocher le réinstallerait. Ne le coche que si tu l'utilises encore." 12 '#FFB547') }
-            elseif ($a.Self) { Add-Child $txt (New-Text "Se met à jour tout seul ou par son propre lanceur : l'outil de Microsoft ne peut pas le faire à sa place. Rien à faire." 12 '#8B93A7') }
+            Add-Child $txt (New-Text $a.Name $Typo.Strong $Pal.White 'SemiBold')
+            Add-Child $txt (New-Text ("{0}  →  {1}" -f $a.Version, $a.Available) $Typo.Small $Pal.Muted)
+            if ($a.Ghost) { Add-Child $txt (New-Text "Semble déjà désinstallé (il ne reste qu'une trace dans Windows) : le cocher le réinstallerait. Ne le coche que si tu l'utilises encore." $Typo.Small $Pal.Warn) }
+            elseif ($a.Self) { Add-Child $txt (New-Text "Se met à jour tout seul ou par son propre lanceur : l'outil de Microsoft ne peut pas le faire à sa place. Rien à faire." $Typo.Small $Pal.Muted) }
             $ib = New-DlgButton 'Ignorer' 'TextBtn'; $ib.Tag = $a; $ib.VerticalAlignment = 'Center'
             $ib.Add_Click({ $x = $this.Tag; $x.Ignored = $true; $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps) + $x.Id; Save-Settings; & $script:RenderUpd })
             $r = New-CheckRow (-not $a.Ghost -and -not $a.Self) $txt $ib
@@ -2714,15 +2877,15 @@ function Show-AppUpdatesDialog($Issue) {
             [void]$script:UpdRows.Add(@{ App = $a; Check = $r.Check })
         }
         if ($ign.Count) {
-            $h = New-Text ("IGNORÉS ({0})" -f $ign.Count) 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 12 0 8; Add-Child $script:UpdList $h
+            $h = New-Text ("IGNORÉS ({0})" -f $ign.Count) $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 12 0 8; Add-Child $script:UpdList $h
             foreach ($a in $ign) {
-                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Sunken; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
                 $dp = New-Object System.Windows.Controls.DockPanel
                 $ub = New-DlgButton 'Ne plus ignorer' 'TextBtn'; $ub.Tag = $a; [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); Add-Child $dp $ub
                 $ub.Add_Click({ $x = $this.Tag; $x.Ignored = $false; $script:Settings.IgnoredApps = @($script:Settings.IgnoredApps | Where-Object { $_ -ne $x.Id }); Save-Settings; & $script:RenderUpd })
                 $txt = New-Object System.Windows.Controls.StackPanel
-                Add-Child $txt (New-Text $a.Name 14 '#8B93A7' 'SemiBold')
-                Add-Child $txt (New-Text ("{0}  →  {1}  (ignoré)" -f $a.Version, $a.Available) 12 '#6E768B')
+                Add-Child $txt (New-Text $a.Name $Typo.Strong $Pal.Muted 'SemiBold')
+                Add-Child $txt (New-Text ("{0}  →  {1}  (ignoré)" -f $a.Version, $a.Available) $Typo.Small $Pal.Faint)
                 Add-Child $dp $txt
                 $row.Child = $dp; Add-Child $script:UpdList $row
             }
@@ -2760,16 +2923,16 @@ function Show-CleanDialog($Issue) {
     $w = New-Dialog "$AppName : nettoyage approfondi" 700
     $script:CleanWin = $w; $script:CleanChoice = $null; $script:CleanRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Nettoyage approfondi" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Voici ce qui peut être supprimé sans risque pour tes fichiers perso. Les cases cochées sont conseillées ; les autres sont à choisir en connaissance de cause (lis la description)." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Nettoyage approfondi" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Voici ce qui peut être supprimé sans risque pour tes fichiers perso. Les cases cochées sont conseillées ; les autres sont à choisir en connaissance de cause (lis la description)." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     foreach ($c in $cats) {
         $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-        Add-Child $txt (New-Text $c.Name 14 '#FFFFFF' 'SemiBold')
-        $d = New-Text $c.Desc 12 '#8B93A7'; $d.MaxWidth = 470; Add-Child $txt $d
+        Add-Child $txt (New-Text $c.Name $Typo.Strong $Pal.White 'SemiBold')
+        $d = New-Text $c.Desc $Typo.Small $Pal.Muted; $d.MaxWidth = 470; Add-Child $txt $d
         $sz = if ($c.Size -ge 0) { Format-Size $c.Size } else { '?' }
-        $st = New-Text $sz 14 $(if ($c.Size -ge 1GB) { '#4ADE80' } elseif ($c.Size -lt 0) { '#7A8399' } else { '#C3CAD9' }) 'SemiBold'
+        $st = New-Text $sz $Typo.Strong $(if ($c.Size -ge 1GB) { $Pal.Ok } elseif ($c.Size -lt 0) { $Pal.Faint } else { $Pal.Text2 }) 'SemiBold'
         $st.VerticalAlignment = 'Center'; $st.Margin = Th 12 0 0 0; $st.MinWidth = 70; $st.TextAlignment = 'Right'
         $r = New-CheckRow ([bool]$c.Default) $txt $st
         $r.Check.Add_Click({ & $script:CountClean })
@@ -2783,7 +2946,7 @@ function Show-CleanDialog($Issue) {
     $bCancel = New-DlgButton 'Annuler' 'TextBtn'; $bCancel.Margin = Th 0 0 8 0
     $bApply = New-DlgButton 'Nettoyer la sélection' 'PrimaryBtn'
     Add-Child $right $bCancel; Add-Child $right $bApply; Add-Child $bar $right
-    $script:CleanTotal = New-Text '' 13 '#C3CAD9' 'SemiBold'; $script:CleanTotal.VerticalAlignment = 'Center'; Add-Child $bar $script:CleanTotal
+    $script:CleanTotal = New-Text '' $Typo.Body $Pal.Text2 'SemiBold'; $script:CleanTotal.VerticalAlignment = 'Center'; Add-Child $bar $script:CleanTotal
     Add-Child $sp $bar
     $w.Content = $sp
     $script:CountClean = {
@@ -2815,14 +2978,14 @@ function Show-UninstallDialog($Issue) {
     $w = New-Dialog "$AppName : logiciels installés" 760
     $script:UniWin = $w; $script:UniApps = $apps; $script:UniFilter = ''
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Logiciels installés" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "En haut, ce qu'AEROX te conseille d'enlever, avec la raison. « Désinstaller » lance le désinstalleur officiel du logiciel : suis ses étapes. Dans le doute (pilote, Microsoft Visual C++, .NET…), n'y touche pas." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Logiciels installés" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "En haut, ce qu'AEROX te conseille d'enlever, avec la raison. « Désinstaller » lance le désinstalleur officiel du logiciel : suis ses étapes. Dans le doute (pilote, Microsoft Visual C++, .NET…), n'y touche pas." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 10; Add-Child $sp $p
-    $search = New-Object System.Windows.Controls.TextBox; $search.Margin = Th 0 0 0 10; $search.Padding = Th 8 6 8 6; $search.FontSize = 13
-    $search.Background = Brush '#0E1016'; $search.Foreground = Brush '#E6E9F2'; $search.BorderBrush = Brush '#2E3446'; $search.CaretBrush = Brush '#E6E9F2'
+    $search = New-Object System.Windows.Controls.TextBox; $search.Margin = Th 0 0 0 10; $search.Padding = Th 8 6 8 6; $search.FontSize = $Typo.Body
+    $search.Background = Brush $Pal.Bg; $search.Foreground = Brush $Pal.Text; $search.BorderBrush = Brush $Pal.LineStrong; $search.CaretBrush = Brush $Pal.Text
     $search.ToolTip = 'Rechercher un logiciel'
     $fbar = New-Object System.Windows.Controls.DockPanel; $fbar.Margin = Th 0 0 0 10
-    $drv = New-Object System.Windows.Controls.ComboBox; $drv.MinWidth = 150; $drv.Margin = Th 10 0 0 0; $drv.FontSize = 13; $drv.VerticalContentAlignment = 'Center'
+    $drv = New-Object System.Windows.Controls.ComboBox; $drv.MinWidth = 150; $drv.Margin = Th 10 0 0 0; $drv.FontSize = $Typo.Body; $drv.VerticalContentAlignment = 'Center'
     [void]$drv.Items.Add('Tous les disques')
     foreach ($d in @($apps | ForEach-Object { $_.Drive } | Where-Object { $_ } | Sort-Object -Unique)) {
         $n = @($apps | Where-Object { $_.Drive -eq $d }).Count
@@ -2849,15 +3012,15 @@ function Show-UninstallDialog($Issue) {
         $dv = $script:UniDrive
         $vis = @($script:UniApps | Where-Object { -not $_.Removed -and (-not $dv -or $_.Drive -eq $dv) -and (-not $f -or $_.Name -like "*$f*" -or $_.Publisher -like "*$f*" -or $_.Location -like "*$f*") })
         $groups = @(
-            @('CONSEILLÉ DE DÉSINSTALLER', @($vis | Where-Object { $_.Tag -eq 'reco' }), '#FFB547'),
-            @('À VOIR SELON TON USAGE', @($vis | Where-Object { $_.Tag -eq 'maybe' }), '#B9A8FF'),
-            @('TOUS LES AUTRES LOGICIELS (DU PLUS GROS AU PLUS PETIT)', @($vis | Where-Object { -not $_.Tag } | Sort-Object { -$_.Size }), '#7A8399')
+            @('CONSEILLÉ DE DÉSINSTALLER', @($vis | Where-Object { $_.Tag -eq 'reco' }), $Pal.Warn),
+            @('À VOIR SELON TON USAGE', @($vis | Where-Object { $_.Tag -eq 'maybe' }), $Pal.AccentText),
+            @('TOUS LES AUTRES LOGICIELS (DU PLUS GROS AU PLUS PETIT)', @($vis | Where-Object { -not $_.Tag } | Sort-Object { -$_.Size }), $Pal.Faint)
         )
         foreach ($g in $groups) {
             if (-not $g[1].Count) { continue }
-            $h = New-Text ("{0} ({1})" -f $g[0], $g[1].Count) 11.5 $g[2] 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $script:UniList $h
+            $h = New-Text ("{0} ({1})" -f $g[0], $g[1].Count) $Typo.Small $g[2] 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $script:UniList $h
             foreach ($a in $g[1]) {
-                $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 12 10; $b.Margin = Th 0 0 6 6
+                $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 12 10; $b.Margin = Th 0 0 6 6
                 $dp = New-Object System.Windows.Controls.DockPanel
                 $btn = New-DlgButton $(if ($a.Pending) { 'En cours…' } else { 'Désinstaller' }) $(if ($a.Tag -eq 'reco') { 'PrimaryBtn' } else { 'ActionBtn' }); $btn.Tag = $a; $btn.VerticalAlignment = 'Center'; $btn.Margin = Th 12 0 0 0
                 if ($a.Pending) { $btn.IsEnabled = $false }
@@ -2869,19 +3032,19 @@ function Show-UninstallDialog($Issue) {
                     [System.Windows.Controls.DockPanel]::SetDock($ob, 'Right'); Add-Child $dp $ob
                 }
                 $t = New-Object System.Windows.Controls.StackPanel
-                Add-Child $t (New-Text $a.Name 14 '#FFFFFF' 'SemiBold')
+                Add-Child $t (New-Text $a.Name $Typo.Strong $Pal.White 'SemiBold')
                 $meta = @(); if ($a.Drive) { $meta += "Disque $($a.Drive)" }; if ($a.Publisher) { $meta += $a.Publisher }; if ($a.Size -gt 0) { $meta += (Format-Size $a.Size) }; if ($a.Date) { $meta += ("installé le " + $a.Date.ToString('dd/MM/yyyy')) }; if ($a.LastUsed) { $meta += ("utilisé le " + $a.LastUsed.ToString('dd/MM/yyyy')) }
-                if ($meta.Count) { Add-Child $t (New-Text ($meta -join '  ·  ') 12 '#8B93A7') }
-                if ($a.Location) { $lt = New-Text $a.Location 11 '#6E768B'; $lt.FontFamily = 'Cascadia Mono, Consolas'; $lt.TextTrimming = 'CharacterEllipsis'; $lt.TextWrapping = 'NoWrap'; $lt.ToolTip = $a.Location; Add-Child $t $lt }
-                elseif ($a.Kind -eq 'win32') { Add-Child $t (New-Text 'Emplacement non indiqué par le logiciel' 11 '#6E768B') }
-                if ($a.Reason) { $r = New-Text $a.Reason 12 $(if ($a.Tag -eq 'reco') { '#FFB547' } else { '#B9A8FF' }); $r.Margin = Th 0 3 0 0; Add-Child $t $r }
-                if ($a.Pending) { $r = New-Text "Désinstallation en cours : termine-la dans la fenêtre du désinstalleur. Le logiciel disparaîtra d'ici dès qu'il sera vraiment désinstallé." 12 '#4ADE80'; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
-                elseif ($a.NotRemoved) { $r = New-Text "Toujours installé : la désinstallation a été annulée ou n'a pas abouti." 12 '#FFB547'; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
+                if ($meta.Count) { Add-Child $t (New-Text ($meta -join '  ·  ') $Typo.Small $Pal.Muted) }
+                if ($a.Location) { $lt = New-Text $a.Location $Typo.Caption $Pal.Faint; $lt.FontFamily = 'Cascadia Mono, Consolas'; $lt.TextTrimming = 'CharacterEllipsis'; $lt.TextWrapping = 'NoWrap'; $lt.ToolTip = $a.Location; Add-Child $t $lt }
+                elseif ($a.Kind -eq 'win32') { Add-Child $t (New-Text 'Emplacement non indiqué par le logiciel' $Typo.Caption $Pal.Faint) }
+                if ($a.Reason) { $r = New-Text $a.Reason $Typo.Small $(if ($a.Tag -eq 'reco') { $Pal.Warn } else { $Pal.AccentText }); $r.Margin = Th 0 3 0 0; Add-Child $t $r }
+                if ($a.Pending) { $r = New-Text "Désinstallation en cours : termine-la dans la fenêtre du désinstalleur. Le logiciel disparaîtra d'ici dès qu'il sera vraiment désinstallé." $Typo.Small $Pal.Ok; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
+                elseif ($a.NotRemoved) { $r = New-Text "Toujours installé : la désinstallation a été annulée ou n'a pas abouti." $Typo.Small $Pal.Warn; $r.Margin = Th 0 3 0 0; Add-Child $t $r }
                 Add-Child $dp $t
                 $b.Child = $dp; Add-Child $script:UniList $b
             }
         }
-        if (-not $vis.Count) { $e = New-Text "Aucun logiciel trouvé." 13 '#8B93A7'; $e.Margin = Th 4 8 0 0; Add-Child $script:UniList $e }
+        if (-not $vis.Count) { $e = New-Text "Aucun logiciel trouvé." $Typo.Body $Pal.Muted; $e.Margin = Th 4 8 0 0; Add-Child $script:UniList $e }
     }
     $search.Add_TextChanged({ $script:UniFilter = $this.Text.Trim(); & $script:RenderUni })
     $bSet.Add_Click({ Open-WinUri 'ms-settings:appsfeatures' })
@@ -2962,17 +3125,17 @@ function New-SpaceItem([string]$Path, [double]$Size, [double]$Max, [bool]$IsFile
     $it = New-Object System.Windows.Controls.TreeViewItem
     $it.Tag = $Path
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.Margin = Th 0 3 0 3
-    $barBg = New-Object System.Windows.Controls.Border; $barBg.Width = 90; $barBg.Height = 8; $barBg.Background = Brush '#252A3A'; $barBg.CornerRadius = Corner 4; $barBg.VerticalAlignment = 'Center'
-    $bar = New-Object System.Windows.Controls.Border; $bar.HorizontalAlignment = 'Left'; $bar.Height = 8; $bar.CornerRadius = Corner 4; $bar.Background = Brush '#7C5CFF'
+    $barBg = New-Object System.Windows.Controls.Border; $barBg.Width = 90; $barBg.Height = 8; $barBg.Background = Brush $Pal.Track; $barBg.CornerRadius = Corner 4; $barBg.VerticalAlignment = 'Center'
+    $bar = New-Object System.Windows.Controls.Border; $bar.HorizontalAlignment = 'Left'; $bar.Height = 8; $bar.CornerRadius = Corner 4; $bar.Background = Brush $Pal.Accent
     $bar.Width = [math]::Max([double]2, [math]::Min([double]90, 90.0 * [double]$Size / [math]::Max([double]1, [double]$Max))); $barBg.Child = $bar
     Add-Child $row $barBg
-    $sz = New-Text (Format-Size $Size) 13 '#FFFFFF' 'SemiBold'; $sz.Width = 90; $sz.TextAlignment = 'Right'; $sz.Margin = Th 0 0 12 0; Add-Child $row $sz
+    $sz = New-Text (Format-Size $Size) $Typo.Body $Pal.White 'SemiBold'; $sz.Width = 90; $sz.TextAlignment = 'Right'; $sz.Margin = Th 0 0 12 0; Add-Child $row $sz
     $name = [IO.Path]::GetFileName($Path); if (-not $name) { $name = $Path }
-    Add-Child $row (New-Text $name 13 $(if ($IsFile) { '#B9A8FF' } else { '#E6E9F2' }))
+    Add-Child $row (New-Text $name $Typo.Body $(if ($IsFile) { $Pal.AccentText } else { $Pal.Text }))
     $hint = Get-SpaceHint $Path
-    if ($hint) { $h = New-Text ("   " + $hint) 12 '#7A8399'; Add-Child $row $h }
+    if ($hint) { $h = New-Text ("   " + $hint) $Typo.Small $Pal.Faint; Add-Child $row $h }
     $it.Header = $row
-    $it.Foreground = Brush '#E6E9F2'
+    $it.Foreground = Brush $Pal.Text
     if (-not $IsFile -and $script:SpaceKids.ContainsKey($Path)) { [void]$it.Items.Add('…') }
     $it.Add_Expanded({
         param($s, $e)
@@ -3014,17 +3177,17 @@ function Show-SpaceDialog {
     }
     $w = New-Dialog "$AppName : ce qui prend de la place" 860
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text ("Ce qui prend de la place sur {0}" -f $scan.Drive) 18 '#FFFFFF' 'Bold')
+    Add-Child $sp (New-Text ("Ce qui prend de la place sur {0}" -f $scan.Drive) $Typo.H2 $Pal.White 'Bold')
     $used = $scan.Size - $scan.Free
-    $p = New-Text ("{0} utilisés sur {1} — {2} libres. Clique sur ▸ pour voir le détail d'un dossier, double-clic pour l'ouvrir. Supprime ou déplace tes fichiers toi-même : AEROX ne touche jamais à tes fichiers perso." -f (Format-Size $used), (Format-Size $scan.Size), (Format-Size $scan.Free)) 13 '#A9B0C2'
+    $p = New-Text ("{0} utilisés sur {1} — {2} libres. Clique sur ▸ pour voir le détail d'un dossier, double-clic pour l'ouvrir. Supprime ou déplace tes fichiers toi-même : AEROX ne touche jamais à tes fichiers perso." -f (Format-Size $used), (Format-Size $scan.Size), (Format-Size $scan.Free)) $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $body = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $body
     Add-Child $sp $sv
     Add-SpaceAdvice $body $scan $big
-    $h = New-Text "TOUS LES DOSSIERS, DU PLUS GROS AU PLUS PETIT" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 8; Add-Child $body $h
+    $h = New-Text "TOUS LES DOSSIERS, DU PLUS GROS AU PLUS PETIT" $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 8; Add-Child $body $h
     $tv = New-Object System.Windows.Controls.TreeView
-    $tv.Background = Brush '#0E1016'; $tv.BorderBrush = Brush '#232838'; $tv.Foreground = Brush '#E6E9F2'; $tv.Padding = Th 6 6 6 6; $tv.Height = 380
+    $tv.Background = Brush $Pal.Bg; $tv.BorderBrush = Brush $Pal.Line; $tv.Foreground = Brush $Pal.Text; $tv.Padding = Th 6 6 6 6; $tv.Height = 380
     $items = @($top | ForEach-Object { @{ P = $_; S = $script:SpaceSizes[$_]; F = $false } }) + @($files | ForEach-Object { @{ P = $_; S = $script:SpaceSizes[$_]; F = $true } })
     $items = @($items | Sort-Object { -$_.S })
     $mx = if ($items.Count) { $items[0].S } else { 1 }
@@ -3107,15 +3270,15 @@ function Start-SpaceScan {
     $w = New-Dialog "$AppName : quel disque analyser ?" 520
     $script:DriveWin = $w; $script:DrivePick = $null
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Quel disque analyser ?" 18 '#FFFFFF' 'Bold')
-    $t = New-Text "L'analyse détaille tous les dossiers du disque choisi (1 à 3 minutes)." 13 '#A9B0C2'; $t.Margin = Th 0 6 0 12; Add-Child $sp $t
+    Add-Child $sp (New-Text "Quel disque analyser ?" $Typo.H2 $Pal.White 'Bold')
+    $t = New-Text "L'analyse détaille tous les dossiers du disque choisi (1 à 3 minutes)." $Typo.Body $Pal.Text3; $t.Margin = Th 0 6 0 12; Add-Child $sp $t
     foreach ($d in $drives) {
         $pct = [math]::Round(100 * [double]$d.FreeSpace / [double]$d.Size)
         $lbl = "{0}  {1}" -f $d.DeviceID, $(if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $env:SystemDrive) { 'Windows' } else { 'Disque local' })
         $b = New-Object System.Windows.Controls.Button; $b.Style = $window.FindResource('ActionBtn'); $b.HorizontalContentAlignment = 'Stretch'; $b.Margin = Th 0 0 0 8; $b.Tag = "$($d.DeviceID)"
         $dp = New-Object System.Windows.Controls.DockPanel; $dp.LastChildFill = $true
-        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) 12.5 $(if ($pct -lt 10) { '#FF6B6B' } elseif ($pct -lt 15) { '#FFB547' } else { '#A9B0C2' }); $r.Margin = Th 16 0 0 0; $r.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
-        Add-Child $dp (New-Text $lbl 14 '#FFFFFF' 'SemiBold')
+        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) $Typo.Body $(if ($pct -lt 10) { $Pal.Bad } elseif ($pct -lt 15) { $Pal.Warn } else { $Pal.Text3 }); $r.Margin = Th 16 0 0 0; $r.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
+        Add-Child $dp (New-Text $lbl $Typo.Strong $Pal.White 'SemiBold')
         $b.Content = $dp
         $b.Add_Click({ $script:DrivePick = [string]$this.Tag; $script:DriveWin.Close() })
         Add-Child $sp $b
@@ -3168,14 +3331,14 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
     $win = @($Scan.Win | Where-Object { $_ })
     if ($win.Count) {
         $wt = [double](($win | ForEach-Object { $_.S } | Measure-Object -Sum).Sum)
-        $h = New-Text ("WINDOWS GARDE DE LA PLACE POUR LUI · ENVIRON {0} RÉCUPÉRABLES" -f (Format-Size $wt)) 11.5 '#B9A8FF' 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
+        $h = New-Text ("WINDOWS GARDE DE LA PLACE POUR LUI · ENVIRON {0} RÉCUPÉRABLES" -f (Format-Size $wt)) $Typo.Small $Pal.AccentText 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
         foreach ($x in @($win | Sort-Object { - $_.S })) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
             $hd = New-Object System.Windows.Controls.WrapPanel
-            Add-Child $hd (New-Text $x.T 14 '#FFFFFF' 'SemiBold')
-            Add-Child $hd (New-Pill ($(if ($x.Est) { '≈ ' } else { '' }) + (Format-Size $x.S)) '#B9A8FF' '#2A2350')
+            Add-Child $hd (New-Text $x.T $Typo.Strong $Pal.White 'SemiBold')
+            Add-Child $hd (New-Pill ($(if ($x.Est) { '≈ ' } else { '' }) + (Format-Size $x.S)) $Pal.AccentText $Pal.AccentSoft)
             Add-Child $txt $hd
-            $d = New-Text $x.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $txt $d
+            $d = New-Text $x.D $Typo.Body $Pal.Text3; $d.Margin = Th 0 3 0 0; Add-Child $txt $d
             $r = New-CheckRow ([bool]$x.Check) $txt $null
             Add-Child $Body $r.Row
             [void]$script:SpaceWinRows.Add(@{ Item = $x; Check = $r.Check })
@@ -3250,9 +3413,9 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
     }
     [void]$tips.Add(@{ S = 0; T = "Logiciels installés"; D = "La liste de tes logiciels du plus gros au plus petit, avec ceux qui ne servent à rien repérés pour toi."; B = 'Voir les logiciels'; A = 'apps' })
 
-    $h = New-Text "CE QUE TU PEUX FAIRE POUR LIBÉRER DE LA PLACE" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
+    $h = New-Text "CE QUE TU PEUX FAIRE POUR LIBÉRER DE LA PLACE" $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 4 0 8; Add-Child $Body $h
     foreach ($t in @($tips | Sort-Object { - $_.S })) {
-        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 12 10; $card.Margin = Th 0 0 0 6
+        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush $Pal.Card; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 12 10; $card.Margin = Th 0 0 0 6
         $dp = New-Object System.Windows.Controls.DockPanel
         if ($t.B) {
             $b = New-DlgButton $t.B 'ActionBtn'; $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0; $b.Tag = $t
@@ -3276,10 +3439,10 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
         }
         $cs = New-Object System.Windows.Controls.StackPanel
         $hd = New-Object System.Windows.Controls.WrapPanel
-        Add-Child $hd (New-Text $t.T 14 '#FFFFFF' 'SemiBold')
-        if ($t.S -gt 0) { Add-Child $hd (New-Pill (Format-Size $t.S) '#B9A8FF' '#2A2350') }
+        Add-Child $hd (New-Text $t.T $Typo.Strong $Pal.White 'SemiBold')
+        if ($t.S -gt 0) { Add-Child $hd (New-Pill (Format-Size $t.S) $Pal.AccentText $Pal.AccentSoft) }
         Add-Child $cs $hd
-        $d = New-Text $t.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
+        $d = New-Text $t.D $Typo.Body $Pal.Text3; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
         foreach ($f in @($t.Files | Where-Object { $_ })) {
             $fr = New-Object System.Windows.Controls.DockPanel; $fr.Margin = Th 0 4 0 0
             # « Corbeille » : ce fichier seul, tout de suite (confirmation, récupérable), sans fermer la fenêtre
@@ -3298,9 +3461,9 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
                     $e.Check.IsChecked = $false; $e.Check.IsEnabled = $false; $e.Btn.IsEnabled = $false; $e.Btn.Content = 'À la corbeille ✓'; $e.Show.IsEnabled = $false; $e.Row.Opacity = 0.5
                 }
             })
-            Add-Child $fr (New-Text ("{0}  ·  {1}  ·  {2}" -f (Format-Size $f.Size), [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) 12.5 '#E6E9F2')
+            Add-Child $fr (New-Text ("{0}  ·  {1}  ·  {2}" -f (Format-Size $f.Size), [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) $Typo.Body $Pal.Text)
             $ft = New-Object System.Windows.Controls.StackPanel; Add-Child $ft $fr
-            $fp = New-Text ([IO.Path]::GetDirectoryName($f.Path)) 11 '#6E768B'; Add-Child $ft $fp
+            $fp = New-Text ([IO.Path]::GetDirectoryName($f.Path)) $Typo.Caption $Pal.Faint; Add-Child $ft $fp
             Add-Child $cs $ft
         }
         Add-Child $dp $cs
@@ -3323,7 +3486,7 @@ function Start-DriverCheck($Issue) {
     [void](Start-AeroxTask 'Get-DriverReport' 'Vérification des pilotes' 'driverdialog')
 }
 
-function New-DrvSection([string]$Text) { $h = New-Text $Text 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 8; return $h }
+function New-DrvSection([string]$Text) { $h = New-Text $Text $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 8; return $h }
 
 function Show-DriverDialog($Issue) {
     $rep = $sync.DriverScan
@@ -3331,8 +3494,8 @@ function Show-DriverDialog($Issue) {
     $w = New-Dialog "$AppName : pilotes" 720
     $script:DrvWin = $w; $script:DrvChoice = $null; $script:DrvRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Pilotes (drivers)" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Les pilotes font le lien entre Windows et ton matériel. Ici tu vois s'ils sont à jour, et tu installes en un clic ceux que Windows propose. AEROX n'utilise que des sources officielles (fabricant et Windows Update)." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Pilotes (drivers)" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Les pilotes font le lien entre Windows et ton matériel. Ici tu vois s'ils sont à jour, et tu installes en un clic ceux que Windows propose. AEROX n'utilise que des sources officielles (fabricant et Windows Update)." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 4; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 470; $sv.Content = $list
@@ -3340,9 +3503,9 @@ function Show-DriverDialog($Issue) {
 
     # 1. Carte(s) graphique(s)
     Add-Child $list (New-DrvSection 'CARTE GRAPHIQUE')
-    if (-not @($rep.Gpus).Count) { Add-Child $list (New-Text "Aucune carte graphique détectée." 13 '#8B93A7') }
+    if (-not @($rep.Gpus).Count) { Add-Child $list (New-Text "Aucune carte graphique détectée." $Typo.Body $Pal.Muted) }
     foreach ($g in @($rep.Gpus)) {
-        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 10 12 10; $row.Margin = Th 0 0 6 6
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 14 10 12 10; $row.Margin = Th 0 0 6 6
         $dp = New-Object System.Windows.Controls.DockPanel
         $url = if ($g.Latest -and $g.Latest.Url) { $g.Latest.Url } else { $g.Page }
         if ($url) {
@@ -3353,19 +3516,19 @@ function Show-DriverDialog($Issue) {
         }
         $txt = New-Object System.Windows.Controls.StackPanel
         $head = New-Object System.Windows.Controls.StackPanel; $head.Orientation = 'Horizontal'
-        Add-Child $head (New-Text $g.Name 14 '#FFFFFF' 'SemiBold')
+        Add-Child $head (New-Text $g.Name $Typo.Strong $Pal.White 'SemiBold')
         switch ($g.Status) {
-            'ok'   { Add-Child $head (New-Pill 'À jour' '#4ADE80' '#173326') }
-            'old'  { Add-Child $head (New-Pill 'Pas à jour' '#FFB547' '#3A2D17') }
-            'none' { Add-Child $head (New-Pill 'Pas de pilote' '#FF6B6B' '#3A1E24') }
-            default { Add-Child $head (New-Pill 'Non vérifiable' '#8B93A7' '#222736') }
+            'ok'   { Add-Child $head (New-Pill 'À jour' $Pal.Ok $Pal.OkSoft) }
+            'old'  { Add-Child $head (New-Pill 'Pas à jour' $Pal.Warn $Pal.WarnSoft) }
+            'none' { Add-Child $head (New-Pill 'Pas de pilote' $Pal.Bad $Pal.BadSoft) }
+            default { Add-Child $head (New-Pill 'Non vérifiable' $Pal.Muted $Pal.Chip) }
         }
         Add-Child $txt $head
         # La date de Windows est celle que le fabricant a donnée au pilote (souvent quelques jours avant sa sortie), pas celle de ton installation
         $info = "Version installée : $($g.Version)" + $(if ($g.Installed) { ", installée le " + (Format-Date $g.Installed) } else { '' }) + $(if ($g.Date) { " (pilote daté du " + (Format-Date $g.Date) + " par le fabricant)" } else { '' })
         if ($g.Latest -and $g.Latest.Version) { $info += "   ·   Dernière officielle : $($g.Latest.Version)" + $(if ($g.Latest.Date) { " (sortie le " + (Format-Date $g.Latest.Date) + ")" } else { '' }) }
-        Add-Child $txt (New-Text $info 12 '#8B93A7')
-        if ($g.Tool -and $g.Status -ne 'ok') { $t = New-Text ("Le plus simple : installe « {0} », il garde le pilote à jour tout seul." -f $g.Tool) 12 '#7A8399'; $t.Margin = Th 0 3 0 0; Add-Child $txt $t }
+        Add-Child $txt (New-Text $info $Typo.Small $Pal.Muted)
+        if ($g.Tool -and $g.Status -ne 'ok') { $t = New-Text ("Le plus simple : installe « {0} », il garde le pilote à jour tout seul." -f $g.Tool) $Typo.Small $Pal.Faint; $t.Margin = Th 0 3 0 0; Add-Child $txt $t }
         Add-Child $dp $txt
         $row.Child = $dp; Add-Child $list $row
     }
@@ -3374,31 +3537,31 @@ function Show-DriverDialog($Issue) {
     $wu = @($rep.Wu | Where-Object { -not $_.Display }); $wuDisp = @($rep.Wu | Where-Object { $_.Display })
     Add-Child $list (New-DrvSection 'PROPOSÉS PAR WINDOWS UPDATE')
     if ($rep.WuError) {
-        Add-Child $list (New-Text ("Windows Update n'a pas répondu ({0}). Si ça se répète : onglet Réparation > « Débloquer Windows Update »." -f $rep.WuError) 13 '#FFB547')
+        Add-Child $list (New-Text ("Windows Update n'a pas répondu ({0}). Si ça se répète : onglet Réparation > « Débloquer Windows Update »." -f $rep.WuError) $Typo.Body $Pal.Warn)
     } elseif (-not $wu.Count) {
-        Add-Child $list (New-Text "Rien à installer : Windows ne propose aucun nouveau pilote pour ton PC." 13 '#4ADE80')
+        Add-Child $list (New-Text "Rien à installer : Windows ne propose aucun nouveau pilote pour ton PC." $Typo.Body $Pal.Ok)
     }
     foreach ($u in $wu) {
         $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-        Add-Child $txt (New-Text $u.Title 13.5 '#FFFFFF' 'SemiBold')
+        Add-Child $txt (New-Text $u.Title $Typo.Body $Pal.White 'SemiBold')
         $meta = @(); if ($u.Maker) { $meta += $u.Maker }; if ($u.Class) { $meta += $u.Class }; if ($u.Date) { $meta += "pilote du " + (Format-Date $u.Date) }; if ($u.Size -gt 0) { $meta += (Format-Size $u.Size) }
-        if ($meta.Count) { Add-Child $txt (New-Text ($meta -join '  ·  ') 12 '#8B93A7') }
-        if ($u.Repeat) { $rt = New-Text ("Déjà installé par AEROX le {0}, mais Windows le propose encore : le réinstaller ne changera rien (un pilote équivalent est souvent déjà en place)." -f (Format-Date $u.DoneAt)) 12 '#FFB547'; $rt.Margin = Th 0 3 0 0; Add-Child $txt $rt }
+        if ($meta.Count) { Add-Child $txt (New-Text ($meta -join '  ·  ') $Typo.Small $Pal.Muted) }
+        if ($u.Repeat) { $rt = New-Text ("Déjà installé par AEROX le {0}, mais Windows le propose encore : le réinstaller ne changera rien (un pilote équivalent est souvent déjà en place)." -f (Format-Date $u.DoneAt)) $Typo.Small $Pal.Warn; $rt.Margin = Th 0 3 0 0; Add-Child $txt $rt }
         $r = New-CheckRow (-not $u.Repeat) $txt $null
         $r.Check.Add_Click({ & $script:CountDrv })
         Add-Child $list $r.Row
         [void]$script:DrvRows.Add(@{ U = $u; Check = $r.Check })
     }
     if ($wuDisp.Count) {
-        $t = New-Text ("{0} pilote(s) graphique(s) proposé(s) par Windows non affiché(s) : ils sont souvent plus vieux que ceux du fabricant. Pour la carte graphique, utilise le bouton officiel au-dessus." -f $wuDisp.Count) 12 '#7A8399'
+        $t = New-Text ("{0} pilote(s) graphique(s) proposé(s) par Windows non affiché(s) : ils sont souvent plus vieux que ceux du fabricant. Pour la carte graphique, utilise le bouton officiel au-dessus." -f $wuDisp.Count) $Typo.Small $Pal.Faint
         $t.Margin = Th 2 2 0 0; Add-Child $list $t
     }
 
     # 3. Périphériques en erreur
     if (@($rep.Devices).Count) {
         Add-Child $list (New-DrvSection ("PÉRIPHÉRIQUES AVEC UN PROBLÈME ({0})" -f @($rep.Devices).Count))
-        foreach ($d in @($rep.Devices)) { $t = New-Text ("•  {0} — {1}" -f $d.Name, $d.Reason) 13 '#E6E9F2'; $t.Margin = Th 4 0 0 4; Add-Child $list $t }
-        $t = New-Text $(if ($wu.Count) { "Installe d'abord les pilotes proposés au-dessus et redémarre : ça règle souvent ces problèmes. Sinon, prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC)." } else { "Windows n'a pas de pilote pour eux : prends-le sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC > « Chercher sur le site officiel »)." }) 12 '#7A8399'
+        foreach ($d in @($rep.Devices)) { $t = New-Text ("•  {0} — {1}" -f $d.Name, $d.Reason) $Typo.Body $Pal.Text; $t.Margin = Th 4 0 0 4; Add-Child $list $t }
+        $t = New-Text $(if ($wu.Count) { "Installe d'abord les pilotes proposés au-dessus et redémarre : ça règle souvent ces problèmes. Sinon, prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC)." } else { "Windows n'a pas de pilote pour eux : prends-le sur le site du fabricant de ton PC ou de ta carte mère (onglet Mon PC > « Chercher sur le site officiel »)." }) $Typo.Small $Pal.Faint
         $t.Margin = Th 4 4 0 0; Add-Child $list $t
     }
 
@@ -3432,29 +3595,29 @@ function Show-DriverDialog($Issue) {
 
 # ---------------------------------------------------------------- Fenêtre : pourquoi mon PC rame
 function New-Meter([string]$Label, [double]$Pct, [string]$Sub) {
-    $col = if ($Pct -ge 85) { '#FF6B6B' } elseif ($Pct -ge 60) { '#FFB547' } else { '#4ADE80' }
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 0
+    $col = if ($Pct -ge 85) { $Pal.Bad } elseif ($Pct -ge 60) { $Pal.Warn } else { $Pal.Ok }
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 0
     $sp = New-Object System.Windows.Controls.StackPanel
-    Add-Child $sp (New-Text $Label 12 '#8B93A7' 'SemiBold')
-    Add-Child $sp (New-Text ("{0} %" -f [math]::Round($Pct)) 24 $col 'Bold')
-    $tr = New-Object System.Windows.Controls.Border; $tr.Height = 6; $tr.CornerRadius = Corner 3; $tr.Background = Brush '#252A3A'; $tr.Margin = Th 0 4 0 4
+    Add-Child $sp (New-Text $Label $Typo.Small $Pal.Muted 'SemiBold')
+    Add-Child $sp (New-Text ("{0} %" -f [math]::Round($Pct)) $Typo.Page $col 'Bold')
+    $tr = New-Object System.Windows.Controls.Border; $tr.Height = 6; $tr.CornerRadius = Corner 3; $tr.Background = Brush $Pal.Track; $tr.Margin = Th 0 4 0 4
     $g = New-Object System.Windows.Controls.Grid
     $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength([math]::Max([double]0.01, [math]::Min([double]100.0, $Pct)), [System.Windows.GridUnitType]::Star)
     $c2 = New-Object System.Windows.Controls.ColumnDefinition; $c2.Width = New-Object System.Windows.GridLength([math]::Max([double]0.01, 100.0 - [math]::Min([double]100.0, $Pct)), [System.Windows.GridUnitType]::Star)
     $g.ColumnDefinitions.Add($c1); $g.ColumnDefinitions.Add($c2)
     $fl = New-Object System.Windows.Controls.Border; $fl.CornerRadius = Corner 3; $fl.Background = Brush $col; Add-Child $g $fl
     $tr.Child = $g; Add-Child $sp $tr
-    if ($Sub) { Add-Child $sp (New-Text $Sub 11.5 '#7A8399') }
+    if ($Sub) { Add-Child $sp (New-Text $Sub $Typo.Small $Pal.Faint) }
     $b.Child = $sp
     return $b
 }
 # Tuile de chiffre clé (mesures du lag, carnet des jeux) : libellé, valeur en gros (couleur selon l'état), détail
 function New-StatTile([string]$Label, [string]$Value, [string]$Color = '', [string]$Sub = '') {
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 8
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 10; $b.Padding = Th 14 10 14 12; $b.Margin = Th 0 0 8 8
     $sp = New-Object System.Windows.Controls.StackPanel
-    Add-Child $sp (New-Text $Label.ToUpper() 11 '#7A8399' 'Bold')
-    $v = New-Text $Value 22 $(if ($Color) { $Color } else { '#FFFFFF' }) 'Bold'; $v.Margin = Th 0 4 0 0; Add-Child $sp $v
-    if ($Sub) { Add-Child $sp (New-Text $Sub 12 '#8B93A7') }
+    Add-Child $sp (New-Text $Label.ToUpper() $Typo.Caption $Pal.Faint 'Bold')
+    $v = New-Text $Value $Typo.Stat $(if ($Color) { $Color } else { $Pal.White }) 'Bold'; $v.Margin = Th 0 4 0 0; Add-Child $sp $v
+    if ($Sub) { Add-Child $sp (New-Text $Sub $Typo.Small $Pal.Muted) }
     $b.Child = $sp
     return $b
 }
@@ -3482,23 +3645,23 @@ function Show-SlowDialog {
     $w = New-Dialog ("$AppName : " + $(switch ($mode) { 'lag' { "pourquoi ça lague" } 'jeu' { "mesure pendant ton jeu" } default { "pourquoi mon PC rame" } })) 820
     $script:SlowWin = $w; $script:SlowNext = $null; $script:SlowArg = $null
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text $title 18 '#FFFFFF' 'Bold')
+    Add-Child $sp (New-Text $title $Typo.H2 $Pal.White 'Bold')
     $sub = switch ($mode) {
         'lag' { "Connexion mesurée pendant 1 minute : entre le PC et la box, puis vers Internet. Si ça lague seulement à certains moments, relance l'analyse à ce moment-là." }
         'jeu' { "Mesure faite pendant 20 secondes, pendant que tu jouais." }
         default { "Mesure faite pendant 20 secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." }
     }
-    $p = New-Text $sub 13 '#A9B0C2'; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $p = New-Text $sub $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $body = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 520; $sv.Content = $body
     Add-Child $sp $sv
     $mg = New-Object System.Windows.Controls.Grid
     $tiles = @()
     if ($mode -eq 'lag') {
-        $col = { param($v, $warn, $bad) if ($v -ge $bad) { '#FF6B6B' } elseif ($v -ge $warn) { '#FFB547' } else { '#4ADE80' } }
-        $tiles += $(if ($r.Gw.Ok) { New-StatTile 'PC ↔ BOX' ("{0} ms" -f [math]::Round($r.Gw.Avg)) (& $col $r.Gw.Avg 10 30) ("±{0} ms · {1} % perdus" -f $r.Gw.Jitter, $r.Gw.Loss) } else { New-StatTile 'PC ↔ BOX' '—' '#8B93A7' 'la box ne répond pas au ping' })
-        $tiles += $(if ($r.Net.Ok) { New-StatTile 'INTERNET' ("{0} ms" -f [math]::Round($r.Net.Avg)) (& $col $r.Net.Avg 50 80) ("variations ±{0} ms" -f $r.Net.Jitter) } else { New-StatTile 'INTERNET' '—' '#8B93A7' 'ping bloqué sur ce réseau' })
-        $tiles += $(if ($r.Net.Ok) { New-StatTile 'PAQUETS PERDUS' ("{0} %" -f $r.Net.Loss) (& $col $r.Net.Loss 1 3) 'vers Internet' } else { New-StatTile 'PAQUETS PERDUS' '—' '#8B93A7' 'non mesuré' })
+        $col = { param($v, $warn, $bad) if ($v -ge $bad) { $Pal.Bad } elseif ($v -ge $warn) { $Pal.Warn } else { $Pal.Ok } }
+        $tiles += $(if ($r.Gw.Ok) { New-StatTile 'PC ↔ BOX' ("{0} ms" -f [math]::Round($r.Gw.Avg)) (& $col $r.Gw.Avg 10 30) ("±{0} ms · {1} % perdus" -f $r.Gw.Jitter, $r.Gw.Loss) } else { New-StatTile 'PC ↔ BOX' '—' $Pal.Muted 'la box ne répond pas au ping' })
+        $tiles += $(if ($r.Net.Ok) { New-StatTile 'INTERNET' ("{0} ms" -f [math]::Round($r.Net.Avg)) (& $col $r.Net.Avg 50 80) ("variations ±{0} ms" -f $r.Net.Jitter) } else { New-StatTile 'INTERNET' '—' $Pal.Muted 'ping bloqué sur ce réseau' })
+        $tiles += $(if ($r.Net.Ok) { New-StatTile 'PAQUETS PERDUS' ("{0} %" -f $r.Net.Loss) (& $col $r.Net.Loss 1 3) 'vers Internet' } else { New-StatTile 'PAQUETS PERDUS' '—' $Pal.Muted 'non mesuré' })
     } else {
         $tiles += New-Meter 'PROCESSEUR' $r.Cpu ("pointe à {0} %" -f $r.CpuMax)
         $tiles += New-Meter 'MÉMOIRE (RAM)' $r.Ram ("sur {0}" -f (Format-Size $r.RamTotal))
@@ -3513,19 +3676,19 @@ function Show-SlowDialog {
     Add-Child $body $mg
 
     $fs = @($r.Findings | Where-Object { $_ })
-    $h = New-Text $(if ($fs.Count) { $(if ($mode -eq 'lag') { "CE QUI FAIT LAGUER ($($fs.Count))" } else { "CE QUI RALENTIT TON PC ($($fs.Count))" }) } else { 'RÉSULTAT' }) 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 16 0 8; Add-Child $body $h
+    $h = New-Text $(if ($fs.Count) { $(if ($mode -eq 'lag') { "CE QUI FAIT LAGUER ($($fs.Count))" } else { "CE QUI RALENTIT TON PC ($($fs.Count))" }) } else { 'RÉSULTAT' }) $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 16 0 8; Add-Child $body $h
     if (-not $fs.Count) {
         $msg = if ($mode -eq 'lag') { "Rien d'anormal pendant la mesure : la connexion est stable. Si ça lague seulement dans un jeu précis, c'est souvent le serveur du jeu (regarde le ping affiché dans le jeu) ou un autre appareil de la maison qui télécharge à ce moment-là." }
                else { "Rien d'anormal pendant la mesure : tout ce qui est listé plus bas a été vérifié. Dis-moi juste en dessous ce qui rame exactement : AEROX lance l'analyse qui correspond." }
-        $t = New-Text $msg 13 '#4ADE80'; $t.Margin = Th 2 0 0 6; Add-Child $body $t
+        $t = New-Text $msg $Typo.Body $Pal.Ok; $t.Margin = Th 2 0 0 6; Add-Child $body $t
     }
     foreach ($x in $fs) {
-        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush '#171A23'; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 14 12; $card.Margin = Th 0 0 0 8
-        $card.BorderThickness = Th 3 0 0 0; $card.BorderBrush = Brush $(if ($x.Sev -eq 'bad') { '#FF6B6B' } else { '#FFB547' })
+        $card = New-Object System.Windows.Controls.Border; $card.Background = Brush $Pal.Card; $card.CornerRadius = Corner 10; $card.Padding = Th 14 10 14 12; $card.Margin = Th 0 0 0 8
+        $card.BorderThickness = Th 3 0 0 0; $card.BorderBrush = Brush $(if ($x.Sev -eq 'bad') { $Pal.Bad } else { $Pal.Warn })
         $cs = New-Object System.Windows.Controls.StackPanel
-        Add-Child $cs (New-Text $x.Title 14 '#FFFFFF' 'SemiBold')
-        if ($x.Text) { $t = New-Text $x.Text 12.5 '#C3CAD9'; $t.Margin = Th 0 3 0 0; Add-Child $cs $t }
-        if ($x.Advice) { $t = New-Text ("→ " + $x.Advice) 12.5 '#A9B0C2'; $t.Margin = Th 0 5 0 0; Add-Child $cs $t }
+        Add-Child $cs (New-Text $x.Title $Typo.Strong $Pal.White 'SemiBold')
+        if ($x.Text) { $t = New-Text $x.Text $Typo.Body $Pal.Text2; $t.Margin = Th 0 3 0 0; Add-Child $cs $t }
+        if ($x.Advice) { $t = New-Text ("→ " + $x.Advice) $Typo.Body $Pal.Text3; $t.Margin = Th 0 5 0 0; Add-Child $cs $t }
         $lbl = switch ($x.Action) { 'taskmgr' { 'Ouvrir le Gestionnaire des tâches' } 'startup' { 'Choisir les programmes au démarrage' } 'balanced' { 'Passer en mode Équilibré' } 'cpumax' { 'Remettre à 100 %' }
                                     'space' { 'Voir ce qui prend de la place' } 'drivers' { 'Vérifier les pilotes' } 'pagefile' { 'Remettre en automatique' } 'netpower' { "Désactiver cette économie d'énergie" } default { '' } }
         if ($lbl) {
@@ -3538,17 +3701,17 @@ function Show-SlowDialog {
     # Ce qui a été vérifié, avec les valeurs mesurées (rien n'est « OK » sans avoir été regardé)
     $ck = @($r.Checked | Where-Object { $_ })
     if ($ck.Count) {
-        $h = New-Text "CE QUI A ÉTÉ VÉRIFIÉ" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
-        $cb = New-Object System.Windows.Controls.Border; $cb.Background = Brush '#13161E'; $cb.CornerRadius = Corner 10; $cb.Padding = Th 14 8 14 8
+        $h = New-Text "CE QUI A ÉTÉ VÉRIFIÉ" $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+        $cb = New-Object System.Windows.Controls.Border; $cb.Background = Brush $Pal.Sunken; $cb.CornerRadius = Corner 10; $cb.Padding = Th 14 8 14 8
         $cl = New-Object System.Windows.Controls.StackPanel
-        foreach ($c in $ck) { $t = New-Text ($(if ($c.Ok) { '✔  ' } else { '⚠  ' }) + $c.T) 12.5 $(if ($c.Ok) { '#9FE3B4' } else { '#FFC870' }); $t.Margin = Th 0 2 0 2; Add-Child $cl $t }
+        foreach ($c in $ck) { $t = New-Text ($(if ($c.Ok) { '✔  ' } else { '⚠  ' }) + $c.T) $Typo.Body $(if ($c.Ok) { $Pal.OkText } else { $Pal.Warn }); $t.Margin = Th 0 2 0 2; Add-Child $cl $t }
         $cb.Child = $cl; Add-Child $body $cb
     }
 
     $top = @($r.Top | Where-Object { $_ })
     if ($top.Count) {
-        $h = New-Text "CE QUI CONSOMME LE PLUS (MOYENNE SUR 20 S)" 11.5 '#7A8399' 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
-        $tb = New-Object System.Windows.Controls.Border; $tb.Background = Brush '#13161E'; $tb.CornerRadius = Corner 10; $tb.Padding = Th 14 6 14 8
+        $h = New-Text "CE QUI CONSOMME LE PLUS (MOYENNE SUR 20 S)" $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+        $tb = New-Object System.Windows.Controls.Border; $tb.Background = Brush $Pal.Sunken; $tb.CornerRadius = Corner 10; $tb.Padding = Th 14 6 14 8
         $tg = New-Object System.Windows.Controls.Grid
         $widths = if ($r.GpuOk) { @(5, 1.1, 1.1, 1.3, 1.3) } else { @(5, 1, 1.3, 1.3) }
         foreach ($wd in $widths) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = New-Object System.Windows.GridLength($wd, [System.Windows.GridUnitType]::Star); $tg.ColumnDefinitions.Add($cd) }
@@ -3556,25 +3719,25 @@ function Show-SlowDialog {
             param($cells, $color, $weight)
             $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = [System.Windows.GridLength]::Auto; $tg.RowDefinitions.Add($rd)
             for ($c = 0; $c -lt $cells.Count; $c++) {
-                $t = New-Text $cells[$c] 12.5 $color $weight; $t.Margin = Th 0 3 8 3
+                $t = New-Text $cells[$c] $Typo.Body $color $weight; $t.Margin = Th 0 3 8 3
                 if ($c -gt 0) { $t.TextAlignment = 'Right' }
                 [System.Windows.Controls.Grid]::SetRow($t, $script:SlowRow); [System.Windows.Controls.Grid]::SetColumn($t, $c); Add-Child $tg $t
             }
             $script:SlowRow++
         }
         $script:SlowRow = 0
-        if ($r.GpuOk) { & $addRow @('Programme', 'Processeur', 'Carte gr.', 'Mémoire', 'Lect./écrit.') '#7A8399' 'SemiBold' } else { & $addRow @('Programme', 'Processeur', 'Mémoire', 'Lect./écrit.') '#7A8399' 'SemiBold' }
+        if ($r.GpuOk) { & $addRow @('Programme', 'Processeur', 'Carte gr.', 'Mémoire', 'Lect./écrit.') $Pal.Faint 'SemiBold' } else { & $addRow @('Programme', 'Processeur', 'Mémoire', 'Lect./écrit.') $Pal.Faint 'SemiBold' }
         foreach ($x in $top) {
             $nm = if ($x.Label -and $x.Label -ne $x.Name) { "$($x.Label)  ($($x.Name))" } else { $x.Name }
             $io = $(if ($x.Io -ge 1KB) { (Format-Size $x.Io) + '/s' } else { '—' })
-            if ($r.GpuOk) { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), $(if ($x.Gpu -ge 1) { "{0} %" -f $x.Gpu } else { '—' }), (Format-Size $x.Mem), $io) '#E6E9F2' 'Normal' }
-            else { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $io) '#E6E9F2' 'Normal' }
+            if ($r.GpuOk) { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), $(if ($x.Gpu -ge 1) { "{0} %" -f $x.Gpu } else { '—' }), (Format-Size $x.Mem), $io) $Pal.Text 'Normal' }
+            else { & $addRow @($nm, ("{0} %" -f [math]::Round($x.Cpu)), (Format-Size $x.Mem), $io) $Pal.Text 'Normal' }
         }
         $tb.Child = $tg; Add-Child $body $tb
     }
 
     # Dis-moi ce qui rame
-    $h = New-Text $(if ($fs.Count) { "CE N'EST PAS ÇA ? DIS-MOI CE QUI RAME" } else { "DIS-MOI CE QUI RAME EXACTEMENT" }) 11.5 $(if ($fs.Count) { '#7A8399' } else { '#B9A8FF' }) 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+    $h = New-Text $(if ($fs.Count) { "CE N'EST PAS ÇA ? DIS-MOI CE QUI RAME" } else { "DIS-MOI CE QUI RAME EXACTEMENT" }) $Typo.Small $(if ($fs.Count) { $Pal.Faint } else { $Pal.AccentText }) 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
     $wp = New-Object System.Windows.Controls.WrapPanel
     foreach ($sy in $script:SlowSymptoms) {
         if (($mode -eq 'lag' -and $sy[0] -eq 'lag') -or ($mode -eq 'jeu' -and $sy[0] -eq 'fps')) { continue }
@@ -3632,26 +3795,26 @@ function Show-BgDialog($Issue) {
     $w = New-Dialog "$AppName : programmes cachés en fond" 760
     $script:BgWin = $w; $script:BgChoice = $null; $script:BgRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Programmes cachés en fond" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Ils se lancent tout seuls (tâches planifiées et services) sans apparaître dans les programmes au démarrage. Ceux qui ne servent à rien sont déjà cochés. Un service coupé passe en « manuel » : il redémarre si un logiciel en a vraiment besoin. Tout est annulable dans l'historique." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Programmes cachés en fond" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Ils se lancent tout seuls (tâches planifiées et services) sans apparaître dans les programmes au démarrage. Ceux qui ne servent à rien sont déjà cochés. Un service coupé passe en « manuel » : il redémarre si un logiciel en a vraiment besoin. Tout est annulable dans l'historique." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $list
     Add-Child $sp $sv
-    if (-not $items.Count) { $t = New-Text "Rien à signaler : aucune tâche ni aucun service en dehors de Windows ne tourne en fond." 13 '#4ADE80'; Add-Child $list $t }
-    foreach ($grp in @(@('off', 'INUTILES EN FOND (RECOMMANDÉ DE COUPER)', '#FFB547'), @('unknown', 'NON RECONNUS (GARDE-LES SI TU NE SAIS PAS)', '#8B93A7'), @('keep', 'À GARDER', '#4ADE80'))) {
+    if (-not $items.Count) { $t = New-Text "Rien à signaler : aucune tâche ni aucun service en dehors de Windows ne tourne en fond." $Typo.Body $Pal.Ok; Add-Child $list $t }
+    foreach ($grp in @(@('off', 'INUTILES EN FOND (RECOMMANDÉ DE COUPER)', $Pal.Warn), @('unknown', 'NON RECONNUS (GARDE-LES SI TU NE SAIS PAS)', $Pal.Muted), @('keep', 'À GARDER', $Pal.Ok))) {
         $sel = @($items | Where-Object { $_.Verdict -eq $grp[0] } | Sort-Object { if ($_.Label) { $_.Label } else { $_.Name } })
         if (-not $sel.Count) { continue }
-        $h = New-Text ("{0} · {1}" -f $grp[1], $sel.Count) 11.5 $grp[2] 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
+        $h = New-Text ("{0} · {1}" -f $grp[1], $sel.Count) $Typo.Small $grp[2] 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
         foreach ($x in $sel) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
             $title = if ($x.Label) { $x.Label } elseif ($x.Display) { $x.Display } else { $x.Name }
-            Add-Child $txt (New-Text $title 13.5 '#FFFFFF' 'SemiBold')
+            Add-Child $txt (New-Text $title $Typo.Body $Pal.White 'SemiBold')
             $meta = @($(if ($x.Kind -eq 'task') { 'Tâche planifiée' } else { 'Service' + $(if ($x.Running) { ' (en marche)' } else { '' }) }), $(if ($x.Display -and $x.Display -ne $title) { $x.Display } else { $x.Name }), $x.Company) | Where-Object { $_ }
-            Add-Child $txt (New-Text ($meta -join '  ·  ') 11.5 '#7A8399')
-            Add-Child $txt (New-Text $x.Why 12 '#A9B0C2')
+            Add-Child $txt (New-Text ($meta -join '  ·  ') $Typo.Small $Pal.Faint)
+            Add-Child $txt (New-Text $x.Why $Typo.Small $Pal.Text3)
             if ($x.Verdict -eq 'keep') {
-                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Sunken; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
                 $row.Child = $txt; Add-Child $list $row
             } else {
                 $r = New-CheckRow ($x.Verdict -eq 'off') $txt $null
@@ -3688,7 +3851,7 @@ function Start-BrowserCheck($Issue) {
     [void](Start-AeroxTask 'Get-BrowserReport' 'Analyse des navigateurs' 'browserdialog')
 }
 function New-BrowserRow($Content, $Right) {
-    $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#13161E'; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+    $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Sunken; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); $Right.VerticalAlignment = 'Center'; Add-Child $dp $Right }
     Add-Child $dp $Content; $row.Child = $dp
@@ -3699,13 +3862,13 @@ function Show-BrowserDialog($Issue) {
     $w = New-Dialog "$AppName : arnaques du navigateur" 780
     $script:BrWin = $w; $script:BrChoice = $null; $script:BrRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text "Pubs et fausses alertes du navigateur" 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Les fausses alertes de virus en bas de l'écran viennent presque toujours d'un site qui a obtenu le droit d'envoyer des notifications (« clique sur Autoriser pour prouver que tu n'es pas un robot »). Ce qui est suspect est déjà coché. Le navigateur sera fermé le temps de la modification." 13 '#A9B0C2'
+    Add-Child $sp (New-Text "Pubs et fausses alertes du navigateur" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Les fausses alertes de virus en bas de l'écran viennent presque toujours d'un site qui a obtenu le droit d'envoyer des notifications (« clique sur Autoriser pour prouver que tu n'es pas un robot »). Ce qui est suspect est déjà coché. Le navigateur sera fermé le temps de la modification." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 450; $sv.Content = $list
     Add-Child $sp $sv
-    if (-not $items.Count) { Add-Child $list (New-Text "Aucun navigateur Chrome, Edge, Brave ou Opera trouvé sur ce PC." 13 '#8B93A7') }
+    if (-not $items.Count) { Add-Child $list (New-Text "Aucun navigateur Chrome, Edge, Brave ou Opera trouvé sur ce PC." $Typo.Body $Pal.Muted) }
     $groups = @(
         @('notif', "NOTIFICATIONS AUTORISÉES (D'OÙ VIENNENT LES FAUSSES ALERTES)", "Aucun site ne peut t'envoyer de notifications. Rien à faire."),
         @('pol', "RÉGLAGES IMPOSÉS AU NAVIGATEUR (« GÉRÉ PAR TON ORGANISATION »)", ''),
@@ -3716,16 +3879,16 @@ function Show-BrowserDialog($Issue) {
     foreach ($grp in $groups) {
         $sel = @($items | Where-Object { $_.Type -eq $grp[0] } | Sort-Object @{ Expression = { -not $_.Bad } }, @{ Expression = { $_.Where } }, @{ Expression = { $_.Label } })
         if (-not $sel.Count) {
-            if ($grp[2] -and $anyBrowser) { $h = New-Text $grp[1] 11.5 '#4ADE80' 'Bold'; $h.Margin = Th 2 10 0 4; Add-Child $list $h; $t = New-Text $grp[2] 12.5 '#8B93A7'; $t.Margin = Th 2 0 0 8; Add-Child $list $t }
+            if ($grp[2] -and $anyBrowser) { $h = New-Text $grp[1] $Typo.Small $Pal.Ok 'Bold'; $h.Margin = Th 2 10 0 4; Add-Child $list $h; $t = New-Text $grp[2] $Typo.Body $Pal.Muted; $t.Margin = Th 2 0 0 8; Add-Child $list $t }
             continue
         }
         $nb = @($sel | Where-Object { $_.Bad }).Count
-        $h = New-Text ("{0} · {1}{2}" -f $grp[1], $sel.Count, $(if ($nb) { " (dont $nb suspect" + $(if ($nb -gt 1) { 's' } else { '' }) + ')' } else { '' })) 11.5 $(if ($nb) { '#FFB547' } else { '#4ADE80' }) 'Bold'
+        $h = New-Text ("{0} · {1}{2}" -f $grp[1], $sel.Count, $(if ($nb) { " (dont $nb suspect" + $(if ($nb -gt 1) { 's' } else { '' }) + ')' } else { '' })) $Typo.Small $(if ($nb) { $Pal.Warn } else { $Pal.Ok }) 'Bold'
         $h.Margin = Th 2 10 0 8; Add-Child $list $h
         foreach ($x in $sel) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-            Add-Child $txt (New-Text $x.Label 13.5 $(if ($x.Bad) { '#FFB547' } else { '#FFFFFF' }) 'SemiBold')
-            Add-Child $txt (New-Text ((@($x.Where, $x.Detail) | Where-Object { $_ }) -join '  ·  ') 11.5 '#8B93A7')
+            Add-Child $txt (New-Text $x.Label $Typo.Body $(if ($x.Bad) { $Pal.Warn } else { $Pal.White }) 'SemiBold')
+            Add-Child $txt (New-Text ((@($x.Where, $x.Detail) | Where-Object { $_ }) -join '  ·  ') $Typo.Small $Pal.Muted)
             if ($x.Type -in 'notif', 'pol' -and -not $x.Locked) {
                 $r = New-CheckRow ([bool]$x.Check) $txt $null
                 $r.Check.Add_Click({ & $script:CountBr })
@@ -3744,12 +3907,12 @@ function Show-BrowserDialog($Issue) {
                         Write-UiLog ("→ Si le navigateur ne s'ouvre pas sur la bonne page : clique dans sa barre d'adresse, fais Ctrl+V puis Entrée (l'adresse {0} est copiée)." -f $t[1])
                     })
                 }
-                if ($x.Locked) { Add-Child $txt (New-Text "PC d'entreprise ou d'école : ces réglages viennent sûrement de l'informaticien, AEROX n'y touche pas." 11.5 '#7A8399') }
+                if ($x.Locked) { Add-Child $txt (New-Text "PC d'entreprise ou d'école : ces réglages viennent sûrement de l'informaticien, AEROX n'y touche pas." $Typo.Small $Pal.Faint) }
                 Add-Child $list (New-BrowserRow $txt $btn)
             }
         }
         if ($grp[0] -eq 'ext') {
-            $t = New-Text "Retire toute extension que tu n'as pas installée toi-même ou que tu n'utilises pas : « Gérer », puis « Supprimer » dans le navigateur." 12 '#8B93A7'; $t.Margin = Th 2 2 0 8; Add-Child $list $t
+            $t = New-Text "Retire toute extension que tu n'as pas installée toi-même ou que tu n'utilises pas : « Gérer », puis « Supprimer » dans le navigateur." $Typo.Small $Pal.Muted; $t.Margin = Th 2 2 0 8; Add-Child $list $t
         }
     }
     $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
@@ -3791,8 +3954,8 @@ function Show-DuplicatesDialog {
     $script:DupWin = $w; $script:DupChoice = $null; $script:DupRows = New-Object System.Collections.ArrayList
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
     $gain = [double](($groups | ForEach-Object { $_[0].Size * ($_.Count - 1) } | Measure-Object -Sum).Sum)
-    Add-Child $sp (New-Text ("Fichiers en double · {0} récupérables" -f (Format-Size $gain)) 18 '#FFFFFF' 'Bold')
-    $p = New-Text "Ces fichiers sont identiques au contenu près. Pour chacun, AEROX garde un exemplaire (celui qui n'est pas dans Téléchargements, sinon le plus ancien) et coche les copies. Tu peux changer les cases ; au moins un exemplaire est toujours gardé. Les copies vont à la corbeille." 13 '#A9B0C2'
+    Add-Child $sp (New-Text ("Fichiers en double · {0} récupérables" -f (Format-Size $gain)) $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Ces fichiers sont identiques au contenu près. Pour chacun, AEROX garde un exemplaire (celui qui n'est pas dans Téléchargements, sinon le plus ancien) et coche les copies. Tu peux changer les cases ; au moins un exemplaire est toujours gardé. Les copies vont à la corbeille." $Typo.Body $Pal.Text3
     $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 470; $sv.Content = $list
@@ -3802,13 +3965,13 @@ function Show-DuplicatesDialog {
         $gi++
         # Exemplaire gardé : hors Téléchargements, sans « copie / copy / (1) », le plus ancien, le chemin le plus court
         $keep = @($g | Sort-Object @{ Expression = { $_.Path -match '(?i)\\(downloads|téléchargements)\\' } }, @{ Expression = { [IO.Path]::GetFileNameWithoutExtension($_.Path) -match '(?i)copie|copy|\(\d+\)$| - \d+$' } }, @{ Expression = { $_.Date } }, @{ Expression = { $_.Path.Length } })[0]
-        $h = New-Text ("{0}  ·  {1} exemplaires  ·  {2} chacun" -f [IO.Path]::GetFileName($keep.Path), $g.Count, (Format-Size $keep.Size)) 13 '#FFFFFF' 'SemiBold'
+        $h = New-Text ("{0}  ·  {1} exemplaires  ·  {2} chacun" -f [IO.Path]::GetFileName($keep.Path), $g.Count, (Format-Size $keep.Size)) $Typo.Body $Pal.White 'SemiBold'
         $h.Margin = Th 2 10 0 6; Add-Child $list $h
         foreach ($f in $g) {
             $isKeep = ($f.Path -eq $keep.Path)
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-            Add-Child $txt (New-Text ([IO.Path]::GetDirectoryName($f.Path)) 12.5 $(if ($isKeep) { '#4ADE80' } else { '#E6E9F2' }))
-            Add-Child $txt (New-Text (("{0}  ·  modifié le {1}" -f [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) + $(if ($isKeep) { '  ·  gardé' } else { '' })) 11.5 '#7A8399')
+            Add-Child $txt (New-Text ([IO.Path]::GetDirectoryName($f.Path)) $Typo.Body $(if ($isKeep) { $Pal.Ok } else { $Pal.Text }))
+            Add-Child $txt (New-Text (("{0}  ·  modifié le {1}" -f [IO.Path]::GetFileName($f.Path), (Format-Date $f.Date)) + $(if ($isKeep) { '  ·  gardé' } else { '' })) $Typo.Small $Pal.Faint)
             $b = New-DlgButton 'Afficher' 'TextBtn'; $b.Tag = $f.Path; $b.Add_Click({ Start-Process explorer.exe ('/select,"{0}"' -f [string]$this.Tag) })
             $r = New-CheckRow (-not $isKeep) $txt $b
             $r.Check.Add_Click({ & $script:CountDup })
@@ -4030,9 +4193,9 @@ function Update-LiveData {
 function Format-Val($v, [string]$fmt, [string]$unit) { if ($null -eq $v) { return '—' }; return ([string]::Format([Globalization.CultureInfo]::GetCultureInfo('fr-FR'), $fmt, [double]$v) + $unit) }
 function Get-TempLimit([string]$Part) { $o = $script:Settings.Overlay; if ($Part -eq 'gpu') { return [double]$o.AlertGpu } else { return [double]$o.AlertCpu } }
 function Get-TempColor($t, [string]$Part = 'cpu') {
-    if ($null -eq $t) { return '#FFFFFF' }
+    if ($null -eq $t) { return $Pal.White }
     $lim = Get-TempLimit $Part
-    if ($t -ge $lim) { return '#FF6B6B' }; if ($t -ge $lim - 10) { return '#FFB547' }; return '#FFFFFF'
+    if ($t -ge $lim) { return $Pal.Bad }; if ($t -ge $lim - 10) { return $Pal.Warn }; return $Pal.White
 }
 # Alerte surchauffe : vrai si la pièce dépasse le seuil choisi (et que l'alerte est activée)
 function Test-Overheat([string]$Part) {
@@ -4061,16 +4224,16 @@ function Update-OverheatAlert {
 function Get-OverlayRows {
     $m = @($script:Settings.Overlay.Metrics); $v = $script:Live
     $rows = New-Object System.Collections.ArrayList
-    if ($m -contains 'fps') { [void]$rows.Add(@('FPS', (Format-Val $v['fps'] '{0:N0}' ''), '#4ADE80', $true)) }
-    if ($m -contains 'low') { [void]$rows.Add(@('1% LOW', (Format-Val $v['low'] '{0:N0}' ''), '#C3CAD9', $false)) }
-    if ($m -contains 'frametime') { [void]$rows.Add(@('FRAME', (Format-Val $v['frametime'] '{0:N1}' ' ms'), '#C3CAD9', $false)) }
+    if ($m -contains 'fps') { [void]$rows.Add(@('FPS', (Format-Val $v['fps'] '{0:N0}' ''), $Pal.Ok, $true)) }
+    if ($m -contains 'low') { [void]$rows.Add(@('1% LOW', (Format-Val $v['low'] '{0:N0}' ''), $Pal.Text2, $false)) }
+    if ($m -contains 'frametime') { [void]$rows.Add(@('FRAME', (Format-Val $v['frametime'] '{0:N1}' ' ms'), $Pal.Text2, $false)) }
     $cp = @(); if ($m -contains 'cpu') { $cp += Format-Val $v['cpu.load'] '{0:N0}' ' %' }; if ($m -contains 'cputemp') { $cp += Format-Val $v['cpu.temp'] '{0:N0}' ' °C' }; if ($m -contains 'cpupower') { $cp += Format-Val $v['cpu.power'] '{0:N0}' ' W' }
-    if ($cp.Count) { $hot = Test-Overheat 'cpu'; [void]$rows.Add(@($(if ($hot) { '⚠ CPU' } else { 'CPU' }), ($cp -join '  '), $(if ($hot) { if ($script:Blink) { '#FF3B3B' } else { '#FFD0D0' } } else { Get-TempColor $(if ($m -contains 'cputemp') { $v['cpu.temp'] }) 'cpu' }), $false)) }
+    if ($cp.Count) { $hot = Test-Overheat 'cpu'; [void]$rows.Add(@($(if ($hot) { '⚠ CPU' } else { 'CPU' }), ($cp -join '  '), $(if ($hot) { if ($script:Blink) { $Pal.BadHot } else { $Pal.BadText } } else { Get-TempColor $(if ($m -contains 'cputemp') { $v['cpu.temp'] }) 'cpu' }), $false)) }
     $gp = @(); if ($m -contains 'gpu') { $gp += Format-Val $v['gpu.load'] '{0:N0}' ' %' }; if ($m -contains 'gputemp') { $gp += Format-Val $v['gpu.temp'] '{0:N0}' ' °C' }; if ($m -contains 'gpupower') { $gp += Format-Val $v['gpu.power'] '{0:N0}' ' W' }
-    if ($gp.Count) { $hot = Test-Overheat 'gpu'; [void]$rows.Add(@($(if ($hot) { '⚠ GPU' } else { 'GPU' }), ($gp -join '  '), $(if ($hot) { if ($script:Blink) { '#FF3B3B' } else { '#FFD0D0' } } else { Get-TempColor $(if ($m -contains 'gputemp') { $v['gpu.temp'] }) 'gpu' }), $false)) }
-    if ($m -contains 'vram') { $t = if ($null -ne $v['gpu.vram']) { "{0} / {1}" -f (Format-Val ($v['gpu.vram'] / 1024) '{0:N1}' ''), (Format-Val $(if ($v['gpu.vramtotal']) { $v['gpu.vramtotal'] / 1024 }) '{0:N0}' ' Go') } else { '—' }; [void]$rows.Add(@('VRAM', $t, '#FFFFFF', $false)) }
-    if ($m -contains 'ram') { $t = if ($null -ne $v['ram.used']) { "{0}  {1}" -f (Format-Val ($v['ram.used'] / 1GB) '{0:N1}' ' Go'), (Format-Val $v['ram.load'] '{0:N0}' ' %') } else { '—' }; [void]$rows.Add(@('RAM', $t, '#FFFFFF', $false)) }
-    if ($m -contains 'clock') { [void]$rows.Add(@('HEURE', (Get-Date -Format 'HH:mm'), '#FFFFFF', $false)) }
+    if ($gp.Count) { $hot = Test-Overheat 'gpu'; [void]$rows.Add(@($(if ($hot) { '⚠ GPU' } else { 'GPU' }), ($gp -join '  '), $(if ($hot) { if ($script:Blink) { $Pal.BadHot } else { $Pal.BadText } } else { Get-TempColor $(if ($m -contains 'gputemp') { $v['gpu.temp'] }) 'gpu' }), $false)) }
+    if ($m -contains 'vram') { $t = if ($null -ne $v['gpu.vram']) { "{0} / {1}" -f (Format-Val ($v['gpu.vram'] / 1024) '{0:N1}' ''), (Format-Val $(if ($v['gpu.vramtotal']) { $v['gpu.vramtotal'] / 1024 }) '{0:N0}' ' Go') } else { '—' }; [void]$rows.Add(@('VRAM', $t, $Pal.White, $false)) }
+    if ($m -contains 'ram') { $t = if ($null -ne $v['ram.used']) { "{0}  {1}" -f (Format-Val ($v['ram.used'] / 1GB) '{0:N1}' ' Go'), (Format-Val $v['ram.load'] '{0:N0}' ' %') } else { '—' }; [void]$rows.Add(@('RAM', $t, $Pal.White, $false)) }
+    if ($m -contains 'clock') { [void]$rows.Add(@('HEURE', (Get-Date -Format 'HH:mm'), $Pal.White, $false)) }
     return $rows
 }
 
@@ -4097,7 +4260,7 @@ function Build-OverlayContent {
     $k = [math]::Max([double]0.7, [math]::Min([double]3, [double]$o.Scale))
     $px = { param($v) [math]::Max([double]1, [math]::Round($v * $k)) }
     $border.CornerRadius = Corner (& $px 8); $border.Padding = Th (& $px 10) (& $px 7) (& $px 12) (& $px 7)
-    if ($script:OvEdit) { $border.BorderBrush = Brush '#7C5CFF'; $border.BorderThickness = Th 2 2 2 2 }
+    if ($script:OvEdit) { $border.BorderBrush = Brush $Pal.Accent; $border.BorderThickness = Th 2 2 2 2 }
     $border.UseLayoutRounding = $true; $border.SnapsToDevicePixels = $true
     [System.Windows.Media.TextOptions]::SetTextFormattingMode($border, $(if ($k -le 1.3) { 'Display' } else { 'Ideal' }))
     [System.Windows.Media.TextOptions]::SetTextHintingMode($border, 'Fixed')
@@ -4109,11 +4272,11 @@ function Build-OverlayContent {
     $grid.ColumnDefinitions.Add($c1); $grid.ColumnDefinitions.Add($c2)
     $script:OvRows = New-Object System.Collections.ArrayList
     $rows = Get-OverlayRows
-    if (-not $rows.Count) { $rows = @(, @('AEROX', 'aucune info cochée', '#8B93A7', $false)) }
+    if (-not $rows.Count) { $rows = @(, @('AEROX', 'aucune info cochée', $Pal.Muted, $false)) }
     $i = 0
     foreach ($r in $rows) {
         $grid.RowDefinitions.Add((New-Object System.Windows.Controls.RowDefinition))
-        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = (& $px 11); $l.FontWeight = 'Bold'; $l.Foreground = Brush '#9AA3B8'; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 (& $px 1) (& $px 12) (& $px 1)
+        $l = New-Object System.Windows.Controls.TextBlock; $l.Text = $r[0]; $l.FontSize = (& $px 11); $l.FontWeight = 'Bold'; $l.Foreground = Brush $Pal.Text3; $l.VerticalAlignment = 'Center'; $l.Margin = Th 0 (& $px 1) (& $px 12) (& $px 1)
         $l.FontFamily = 'Segoe UI'
         $val = New-Object System.Windows.Controls.TextBlock; $val.Text = $r[1]; $val.FontSize = $(if ($r[3]) { & $px 20 } else { & $px 14 }); $val.FontWeight = 'Bold'; $val.Foreground = Brush $r[2]; $val.VerticalAlignment = 'Center'
         $val.FontFamily = 'Segoe UI'
@@ -4125,7 +4288,7 @@ function Build-OverlayContent {
         $i++
     }
     Add-Child $sp $grid
-    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" (& $px 10) '#B9A8FF'; $h.Margin = Th 0 (& $px 4) 0 0; Add-Child $sp $h }
+    if ($script:OvEdit) { $h = New-Text "Glisse pour déplacer · molette : taille" (& $px 10) $Pal.AccentText; $h.Margin = Th 0 (& $px 4) 0 0; Add-Child $sp $h }
     $border.Child = $sp
     $script:Ov.Content = $border
 }
@@ -4136,7 +4299,7 @@ function Update-OverlayValues {
     if ($rows.Count -ne $script:OvRows.Count) { Build-OverlayContent; return }
     for ($i = 0; $i -lt $rows.Count; $i++) {
         $o = $script:OvRows[$i]; $o.Val.Text = $rows[$i][1]; $o.Val.Foreground = Brush $rows[$i][2]
-        $o.Lbl.Text = $rows[$i][0]; $o.Lbl.Foreground = Brush $(if ($rows[$i][0] -like '⚠*') { '#FF6B6B' } else { '#9AA3B8' })
+        $o.Lbl.Text = $rows[$i][0]; $o.Lbl.Foreground = Brush $(if ($rows[$i][0] -like '⚠*') { $Pal.Bad } else { $Pal.Text3 })
     }
 }
 
@@ -4186,13 +4349,13 @@ function Set-OverlayCorner([string]$Corner) {
 
 # ---------------------------------------------------------------- Page Moniteur
 function New-MonTile([string]$Label) {
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#171A23'; $b.CornerRadius = Corner 12; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 10
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 12; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 10
     $sp = New-Object System.Windows.Controls.StackPanel
-    Add-Child $sp (New-Text $Label 11 '#7A8399' 'Bold')
-    $name = New-Text '' 12 '#8B93A7'; $name.TextTrimming = 'CharacterEllipsis'; $name.TextWrapping = 'NoWrap'; $name.Margin = Th 0 2 0 0; Add-Child $sp $name
-    $big = New-Text '—' 26 '#FFFFFF' 'Bold'; $big.Margin = Th 0 6 0 0; Add-Child $sp $big
-    $l1 = New-Text '' 13 '#C3CAD9'; $l1.Margin = Th 0 2 0 0; Add-Child $sp $l1
-    $l2 = New-Text '' 12 '#8B93A7'; Add-Child $sp $l2
+    Add-Child $sp (New-Text $Label $Typo.Caption $Pal.Faint 'Bold')
+    $name = New-Text '' $Typo.Small $Pal.Muted; $name.TextTrimming = 'CharacterEllipsis'; $name.TextWrapping = 'NoWrap'; $name.Margin = Th 0 2 0 0; Add-Child $sp $name
+    $big = New-Text '—' $Typo.Page $Pal.White 'Bold'; $big.Margin = Th 0 6 0 0; Add-Child $sp $big
+    $l1 = New-Text '' $Typo.Body $Pal.Text2; $l1.Margin = Th 0 2 0 0; Add-Child $sp $l1
+    $l2 = New-Text '' $Typo.Small $Pal.Muted; Add-Child $sp $l2
     $b.Child = $sp
     return @{ Box = $b; Name = $name; Big = $big; L1 = $l1; L2 = $l2 }
 }
@@ -4235,19 +4398,19 @@ function New-ToolRow([string]$Title, [string]$Desc, [bool]$Ok, [string]$OkText, 
     if ($Ok) {
         # Installé : tu peux le retirer quand tu veux (rien n'est obligatoire)
         if ($UninstUi) { $ub = New-Button 'Désinstaller' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = $UninstUi } } $false; $ub.Margin = Th 8 0 0 0; $ub.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); Add-Child $row $ub }
-        $p = New-Pill $OkText '#4ADE80' '#173326'; $p.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p
+        $p = New-Pill $OkText $Pal.Ok $Pal.OkSoft; $p.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p
     }
     else { $b = New-Button 'Installer' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = $Ui } }; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b }
     $t = New-Object System.Windows.Controls.StackPanel
-    Add-Child $t (New-Text $Title 14 '#FFFFFF' 'SemiBold')
-    Add-Child $t (New-Text $Desc 12 '#8B93A7')
+    Add-Child $t (New-Text $Title $Typo.Strong $Pal.White 'SemiBold')
+    Add-Child $t (New-Text $Desc $Typo.Small $Pal.Muted)
     Add-Child $row $t
     return $row
 }
 
 $script:GameTab = 'jeux'
 function New-TabBar($Items, [string]$Cur, [string]$Ui) {
-    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush '#141720'; $b.CornerRadius = Corner 10; $b.Padding = Th 4 4 4 4; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 0 0 16
+    $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Side; $b.CornerRadius = Corner 10; $b.Padding = Th 4 4 4 4; $b.HorizontalAlignment = 'Left'; $b.Margin = Th 0 0 0 16
     $wp = New-Object System.Windows.Controls.StackPanel; $wp.Orientation = 'Horizontal'
     foreach ($it in $Items) {
         $on = ($it[0] -eq $Cur)
@@ -4273,11 +4436,11 @@ function Build-MonitorPage {
         return $sp
     }
     if ($script:GameTab -eq 'overlay') { Add-OverlaySection $sp $u; $script:MonUi = $u; return $sp }
-    if ($script:GameSess) { $c = New-CardBorder '#3B2F7A'; $u.Sess = New-Text '' 13 '#B9A8FF'; $cs = New-Object System.Windows.Controls.StackPanel; Add-Child $cs (New-Text ("🎮 Partie en cours : " + $script:GameSess.Name) 15 '#FFFFFF' 'SemiBold'); Add-Child $cs $u.Sess; $c.Child = $cs; Add-Child $sp $c }
+    if ($script:GameSess) { $c = New-CardBorder $Pal.AccentLine; $u.Sess = New-Text '' $Typo.Body $Pal.AccentText; $cs = New-Object System.Windows.Controls.StackPanel; Add-Child $cs (New-Text ("🎮 Partie en cours : " + $script:GameSess.Name) $Typo.Title $Pal.White 'SemiBold'); Add-Child $cs $u.Sess; $c.Child = $cs; Add-Child $sp $c }
     $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = 4
     foreach ($k in 'Cpu', 'Gpu', 'Ram', 'Fps') { Add-Child $ug $u[$k].Box }
     Add-Child $sp $ug
-    if ($sync.SensError) { $e = New-Text ("Capteurs : " + $sync.SensError) 12 '#FFB547'; $e.Margin = Th 0 0 0 8; Add-Child $sp $e }
+    if ($sync.SensError) { $e = New-Text ("Capteurs : " + $sync.SensError) $Typo.Small $Pal.Warn; $e.Margin = Th 0 0 0 8; Add-Child $sp $e }
 
     # Composants
     Add-Child $sp (New-Section 'Composants de mesure')
@@ -4286,7 +4449,7 @@ function Build-MonitorPage {
     Add-Child $cs (New-ToolRow "Températures et capteurs (LibreHardwareMonitor)" "Températures CPU / GPU, consommation, fréquences. Logiciel libre reconnu, téléchargé depuis nuget.org (~2 Mo)." $st.Lhm 'Installé' 'inst-lhm' 'uninst-lhm')
     Add-Child $cs (New-ToolRow "Température du processeur (pilote PawnIO)" "Pilote signé qui permet de lire la température du processeur en toute sécurité (remplace l'ancien WinRing0 bloqué par Windows)." $st.PawnIO 'Installé' 'inst-pawn' 'uninst-pawn')
     Add-Child $cs (New-ToolRow "Compteur de FPS (PresentMon d'Intel)" "Outil officiel d'Intel, installé avec winget (Microsoft). Rien n'est injecté dans les jeux : aucun risque avec les anti-triche." $st.PresentMon 'Installé' 'inst-pm' 'uninst-pm')
-    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer ». Tu peux les désinstaller quand tu veux." }) 12 '#7A8399'
+    $n = New-Text $(if ($st.Nvsmi -and -not $st.Lhm) { "Sans le module, la carte NVIDIA est quand même lue (température, utilisation) via son pilote." } else { "Téléchargés depuis les sources officielles, uniquement quand tu cliques sur « Installer ». Tu peux les désinstaller quand tu veux." }) $Typo.Small $Pal.Faint
     $n.Margin = Th 0 6 0 0; Add-Child $cs $n
     $c.Child = $cs; Add-Child $sp $c
     $script:MonUi = $u
@@ -4305,22 +4468,22 @@ function Add-OverlaySection($sp, $u) {
         $b = New-Button $pc[0] 'GhostBtn' @{ Kind = 'ui'; Def = @{ UI = 'ov-corner'; Corner = $pc[1] } } $false; $b.Margin = Th 0 0 6 8; Add-Child $top $b
     }
     Add-Child $os $top
-    $h = New-Text "Infos affichées" 12 '#C3CAD9' 'SemiBold'; $h.Margin = Th 0 6 0 6; Add-Child $os $h
+    $h = New-Text "Infos affichées" $Typo.Small $Pal.Text2 'SemiBold'; $h.Margin = Th 0 6 0 6; Add-Child $os $h
     $wp = New-Object System.Windows.Controls.WrapPanel
     foreach ($k in $script:OverlayMetrics.Keys) {
         $cb = New-Object System.Windows.Controls.CheckBox; $cb.Margin = Th 0 0 18 8; $cb.Cursor = 'Hand'; $cb.Tag = $k
-        $cb.Content = (New-Text $script:OverlayMetrics[$k] 13 '#E6E9F2'); $cb.IsChecked = (@($script:Settings.Overlay.Metrics) -contains $k)
+        $cb.Content = (New-Text $script:OverlayMetrics[$k] $Typo.Body $Pal.Text); $cb.IsChecked = (@($script:Settings.Overlay.Metrics) -contains $k)
         $cb.Add_Click({ $k = $this.Tag; $m = @($script:Settings.Overlay.Metrics | Where-Object { $_ -ne $k }); if ($this.IsChecked) { $m += $k }; $order = @($script:OverlayMetrics.Keys); $script:Settings.Overlay.Metrics = @($order | Where-Object { $m -contains $_ }); Save-Settings; Build-OverlayContent })
         Add-Child $wp $cb
     }
     Add-Child $os $wp
     $sl = New-Object System.Windows.Controls.Grid; $sl.Margin = Th 0 6 0 0
     foreach ($w in 0, 1, 2, 3) { $cd = New-Object System.Windows.Controls.ColumnDefinition; $cd.Width = $(if ($w % 2 -eq 0) { [System.Windows.GridLength]::Auto } else { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) }); $sl.ColumnDefinitions.Add($cd) }
-    $l1 = New-Text ("Taille  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Scale * 100)) 13 '#C3CAD9'; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; $l1.MinWidth = 92; Add-Child $sl $l1; $u.ScaleTxt = $l1
+    $l1 = New-Text ("Taille  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Scale * 100)) $Typo.Body $Pal.Text2; $l1.VerticalAlignment = 'Center'; $l1.Margin = Th 0 0 10 0; $l1.MinWidth = 92; Add-Child $sl $l1; $u.ScaleTxt = $l1
     $s1 = New-Object System.Windows.Controls.Slider; $s1.Minimum = 70; $s1.Maximum = 300; $s1.Value = [double]$script:Settings.Overlay.Scale * 100; $s1.Margin = Th 0 0 24 0; $s1.VerticalAlignment = 'Center'
     $s1.Add_ValueChanged({ $script:Settings.Overlay.Scale = [math]::Round($this.Value / 100, 2); if ($script:MonUi.ScaleTxt) { $script:MonUi.ScaleTxt.Text = "Taille  {0} %" -f [math]::Round($this.Value) }; Save-SettingsSoon; Build-OverlayContent })
     [System.Windows.Controls.Grid]::SetColumn($s1, 1); Add-Child $sl $s1
-    $l2 = New-Text ("Fond  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Opacity * 100)) 13 '#C3CAD9'; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; $l2.MinWidth = 82; $u.OpTxt = $l2; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
+    $l2 = New-Text ("Fond  {0} %" -f [math]::Round([double]$script:Settings.Overlay.Opacity * 100)) $Typo.Body $Pal.Text2; $l2.VerticalAlignment = 'Center'; $l2.Margin = Th 0 0 10 0; $l2.MinWidth = 82; $u.OpTxt = $l2; [System.Windows.Controls.Grid]::SetColumn($l2, 2); Add-Child $sl $l2
     $s2 = New-Object System.Windows.Controls.Slider; $s2.Minimum = 0; $s2.Maximum = 100; $s2.Value = [double]$script:Settings.Overlay.Opacity * 100; $s2.VerticalAlignment = 'Center'
     $s2.Add_ValueChanged({
         $script:Settings.Overlay.Opacity = [math]::Round($this.Value / 100, 2)
@@ -4336,12 +4499,12 @@ function Add-OverlaySection($sp, $u) {
     $ab = New-Button $(if ($script:Settings.Overlay.AlertOn) { 'Activée' } else { 'Désactivée' }) $(if ($script:Settings.Overlay.AlertOn) { 'FixBtn' } else { 'ActionBtn' }) @{ Kind = 'ui'; Def = @{ UI = 'ov-alert' } } $false
     [System.Windows.Controls.DockPanel]::SetDock($ab, 'Right'); Add-Child $ah $ab
     $at = New-Object System.Windows.Controls.StackPanel
-    Add-Child $at (New-Text "Alerte surchauffe" 12 '#C3CAD9' 'SemiBold')
-    Add-Child $at (New-Text "Au-dessus du seuil, la ligne clignote en rouge dans l'overlay (et c'est noté dans le journal)." 12 '#7A8399')
+    Add-Child $at (New-Text "Alerte surchauffe" $Typo.Small $Pal.Text2 'SemiBold')
+    Add-Child $at (New-Text "Au-dessus du seuil, la ligne clignote en rouge dans l'overlay (et c'est noté dans le journal)." $Typo.Small $Pal.Faint)
     Add-Child $ah $at; Add-Child $os $ah
     $ag = New-Object System.Windows.Controls.WrapPanel; $ag.Margin = Th 0 4 0 0
     foreach ($pt in @(@('CPU', 'AlertCpu', @(70, 75, 80, 85, 90, 95, 100)), @('GPU', 'AlertGpu', @(65, 70, 75, 80, 85, 90, 95)))) {
-        $lb = New-Text ("Seuil " + $pt[0]) 13 '#C3CAD9'; $lb.VerticalAlignment = 'Center'; $lb.Margin = Th 0 0 8 0; Add-Child $ag $lb
+        $lb = New-Text ("Seuil " + $pt[0]) $Typo.Body $Pal.Text2; $lb.VerticalAlignment = 'Center'; $lb.Margin = Th 0 0 8 0; Add-Child $ag $lb
         $cbx = New-Object System.Windows.Controls.ComboBox; $cbx.Width = 90; $cbx.Margin = Th 0 0 24 0; $cbx.Tag = $pt[1]
         foreach ($val in $pt[2]) { [void]$cbx.Items.Add("$val °C") }
         $cbx.SelectedItem = ("{0} °C" -f [int]$script:Settings.Overlay[$pt[1]])
@@ -4350,12 +4513,12 @@ function Add-OverlaySection($sp, $u) {
         Add-Child $ag $cbx
     }
     Add-Child $os $ag
-    $an = New-Text "Repères : un processeur en jeu tourne souvent entre 60 et 85 °C (certains Ryzen 7000 et Intel récents montent à 95 °C par conception). Une carte graphique entre 60 et 80 °C." 11.5 '#7A8399'
+    $an = New-Text "Repères : un processeur en jeu tourne souvent entre 60 et 85 °C (certains Ryzen 7000 et Intel récents montent à 95 °C par conception). Une carte graphique entre 60 et 80 °C." $Typo.Small $Pal.Faint
     $an.Margin = Th 0 6 0 0; Add-Child $os $an
     $hk = if ($script:HotkeyText) { "Raccourci : $($script:HotkeyText) pour afficher / masquer l'overlay, même en jeu." } else { "Raccourci clavier indisponible (déjà pris par d'autres logiciels) : utilise le bouton ci-dessus." }
     $tip = New-Text ($hk + "`n" +
         "Marche avec les jeux en mode « fenêtré sans bordure » (le réglage par défaut de la plupart des jeux) : en plein écran exclusif, Windows le cache.`n" +
-        "En mode placement, glisse l'overlay avec la souris et utilise la molette pour la taille. Sinon les clics passent au travers, il ne gêne pas.") 12 '#7A8399'
+        "En mode placement, glisse l'overlay avec la souris et utilise la molette pour la taille. Sinon les clics passent au travers, il ne gêne pas.") $Typo.Small $Pal.Faint
     $tip.Margin = Th 0 10 0 0; $tip.LineHeight = 19; Add-Child $os $tip
     $c.Child = $os; Add-Child $sp $c
     $u.Scale = $s1
@@ -4697,31 +4860,31 @@ function Get-GameAdvice($R) {
     $fps = Get-RecValue $R 'Fps'; $vd = "$(Get-RecValue $R 'Verdict')"
     # Plus d'images que l'écran n'en affiche : rien à gagner côté PC
     if ($null -ne $fps -and $hz -gt 0 -and [double]$fps -ge $hz * 0.97 -and $vd -in 'cpu', 'engine', 'mixed') {
-        [void]$out.Add(@{ C = '#4ADE80'; T = ("Déjà plus de FPS que ton écran n'en affiche"); D = ("{0} FPS en moyenne pour un écran à {1} Hz : l'écran ne montre que {1} images par seconde, le reste ne se voit pas. Rien à améliorer côté PC pour ce jeu." -f [int][math]::Round([double]$fps), $hz) })
+        [void]$out.Add(@{ C = $Pal.Ok; T = ("Déjà plus de FPS que ton écran n'en affiche"); D = ("{0} FPS en moyenne pour un écran à {1} Hz : l'écran ne montre que {1} images par seconde, le reste ne se voit pas. Rien à améliorer côté PC pour ce jeu." -f [int][math]::Round([double]$fps), $hz) })
     }
     switch ($vd) {
-        'gpu' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Limité par la carte graphique : c''est normal'; D = ("Ta carte graphique tourne à fond ({0} % en moyenne) : rien n'est gâché, c'est le cas idéal. Pour gagner des FPS : active DLSS, FSR ou XeSS en mode « Qualité », ou baisse les réglages les plus lourds (ombres, nuages, ray tracing). Un pilote graphique à jour aide aussi." -f $gl); B = 'Vérifier mon pilote graphique'; Ui = 'drivers' }) }
-        'cpu' { [void]$out.Add(@{ C = '#FFB547'; T = 'Limité par le processeur'; D = ("La carte graphique attend le processeur : elle n'est utilisée qu'à {0} %. Ferme ce qui tourne en fond pendant que tu joues (navigateur, enregistrement, logiciels de LED…) et vérifie le mode performances. Bonne nouvelle : tu peux monter la qualité graphique, ça ne coûtera presque pas de FPS. Certains jeux (stratégie, MMO, simulation) sont limités par le processeur quoi qu'il arrive." -f $gl); B = 'Voir ce qui tourne en fond'; Ui = 'bgitems'; B2 = 'Optimisations'; Ui2 = 'page-perf' }) }
+        'gpu' { [void]$out.Add(@{ C = $Pal.Ok; T = 'Limité par la carte graphique : c''est normal'; D = ("Ta carte graphique tourne à fond ({0} % en moyenne) : rien n'est gâché, c'est le cas idéal. Pour gagner des FPS : active DLSS, FSR ou XeSS en mode « Qualité », ou baisse les réglages les plus lourds (ombres, nuages, ray tracing). Un pilote graphique à jour aide aussi." -f $gl); B = 'Vérifier mon pilote graphique'; Ui = 'drivers' }) }
+        'cpu' { [void]$out.Add(@{ C = $Pal.Warn; T = 'Limité par le processeur'; D = ("La carte graphique attend le processeur : elle n'est utilisée qu'à {0} %. Ferme ce qui tourne en fond pendant que tu joues (navigateur, enregistrement, logiciels de LED…) et vérifie le mode performances. Bonne nouvelle : tu peux monter la qualité graphique, ça ne coûtera presque pas de FPS. Certains jeux (stratégie, MMO, simulation) sont limités par le processeur quoi qu'il arrive." -f $gl); B = 'Voir ce qui tourne en fond'; Ui = 'bgitems'; B2 = 'Optimisations'; Ui2 = 'page-perf' }) }
         'cap' {
             $cap = [int](Get-RecValue $R 'Cap')
-            if ($hz -gt 0 -and $cap -ge $hz - 12 -and $cap -le $hz + 2) { [void]$out.Add(@{ C = '#4ADE80'; T = ("Calé sur ton écran ({0} FPS)" -f $cap); D = ("Le jeu suit la fréquence de ton écran ({0} Hz) : c'est parfait, l'image est fluide et sans déchirure. Plus de FPS ne servirait à rien sur cet écran." -f $hz) }) }
-            elseif ($hz -gt 0 -and $cap -lt $hz - 12) { [void]$out.Add(@{ C = '#FFB547'; T = ("Bridé à {0} FPS" -f $cap); D = ("Le jeu reste bloqué à {0} FPS alors que ton écran monte à {1} Hz. Dans les options du jeu, cherche « Limite d'images / Max FPS » ou « V-Sync » et monte la limite à {1} pour profiter de ton écran." -f $cap, $hz) }) }
-            else { [void]$out.Add(@{ C = '#8B93A7'; T = ("Plafonné à {0} FPS" -f $cap); D = "Le jeu est limité par V-Sync ou une limite d'images : les FPS ne bougent presque pas. Si c'est voulu (moins de bruit et de chaleur), c'est très bien." }) }
+            if ($hz -gt 0 -and $cap -ge $hz - 12 -and $cap -le $hz + 2) { [void]$out.Add(@{ C = $Pal.Ok; T = ("Calé sur ton écran ({0} FPS)" -f $cap); D = ("Le jeu suit la fréquence de ton écran ({0} Hz) : c'est parfait, l'image est fluide et sans déchirure. Plus de FPS ne servirait à rien sur cet écran." -f $hz) }) }
+            elseif ($hz -gt 0 -and $cap -lt $hz - 12) { [void]$out.Add(@{ C = $Pal.Warn; T = ("Bridé à {0} FPS" -f $cap); D = ("Le jeu reste bloqué à {0} FPS alors que ton écran monte à {1} Hz. Dans les options du jeu, cherche « Limite d'images / Max FPS » ou « V-Sync » et monte la limite à {1} pour profiter de ton écran." -f $cap, $hz) }) }
+            else { [void]$out.Add(@{ C = $Pal.Muted; T = ("Plafonné à {0} FPS" -f $cap); D = "Le jeu est limité par V-Sync ou une limite d'images : les FPS ne bougent presque pas. Si c'est voulu (moins de bruit et de chaleur), c'est très bien." }) }
         }
-        'engine' { [void]$out.Add(@{ C = '#8B93A7'; T = 'Limité par le jeu lui-même'; D = ("Ni ton processeur ni ta carte graphique (utilisée à {0} %) ne sont à fond : c'est le jeu qui fixe le rythme. Son moteur n'utilise souvent qu'un ou deux cœurs du processeur, ou il a une limite d'images dans ses options (« Max FPS », « Fréquence d'images maximale »). Très courant avec Roblox, Minecraft, les jeux compétitifs ou anciens : ce n'est pas un défaut du PC." -f $gl) }) }
-        'mixed' { [void]$out.Add(@{ C = '#4ADE80'; T = 'Bien équilibré'; D = "Ni le processeur ni la carte graphique ne bloquent franchement : le PC est bien réglé pour ce jeu." }) }
+        'engine' { [void]$out.Add(@{ C = $Pal.Muted; T = 'Limité par le jeu lui-même'; D = ("Ni ton processeur ni ta carte graphique (utilisée à {0} %) ne sont à fond : c'est le jeu qui fixe le rythme. Son moteur n'utilise souvent qu'un ou deux cœurs du processeur, ou il a une limite d'images dans ses options (« Max FPS », « Fréquence d'images maximale »). Très courant avec Roblox, Minecraft, les jeux compétitifs ou anciens : ce n'est pas un défaut du PC." -f $gl) }) }
+        'mixed' { [void]$out.Add(@{ C = $Pal.Ok; T = 'Bien équilibré'; D = "Ni le processeur ni la carte graphique ne bloquent franchement : le PC est bien réglé pour ce jeu." }) }
         default {
-            if ($null -eq $gl) { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "L'utilisation de la carte graphique n'a pas pu être lue : installe le module de températures (onglet Gaming > En direct) pour savoir ce qui limite ce jeu. AEROX préfère ne rien affirmer sans mesure." }) }
-            else { [void]$out.Add(@{ C = '#8B93A7'; T = 'Pas de conclusion'; D = "Pas assez de mesures pendant que le jeu était au premier plan pour conclure sans risque de se tromper. La prochaine partie le dira." }) }
+            if ($null -eq $gl) { [void]$out.Add(@{ C = $Pal.Muted; T = 'Pas de conclusion'; D = "L'utilisation de la carte graphique n'a pas pu être lue : installe le module de températures (onglet Gaming > En direct) pour savoir ce qui limite ce jeu. AEROX préfère ne rien affirmer sans mesure." }) }
+            else { [void]$out.Add(@{ C = $Pal.Muted; T = 'Pas de conclusion'; D = "Pas assez de mesures pendant que le jeu était au premier plan pour conclure sans risque de se tromper. La prochaine partie le dira." }) }
         }
     }
     $flags = @(Get-RecValue $R 'Flags')
-    if ($flags -contains 'hot-gpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Carte graphique très chaude ({0} °C)" -f (Get-RecValue $R 'GpuT')); D = "Trop chaude, elle ralentit pour se protéger : moins de FPS. Dépoussière le PC (bombe d'air sec, PC éteint), dégage les grilles d'aération, et pour un portable pose-le sur une surface dure." }) }
-    if ($flags -contains 'hot-cpu') { [void]$out.Add(@{ C = '#FF6B6B'; T = ("Processeur très chaud ({0} °C)" -f (Get-RecValue $R 'CpuT')); D = "Trop chaud, il ralentit pour se protéger. Dépoussière le ventilateur et le radiateur ; si le PC a plusieurs années, la pâte thermique est peut-être sèche (à refaire par un réparateur)." }) }
-    if ($flags -contains 'vram') { [void]$out.Add(@{ C = '#FFB547'; T = ("Mémoire de la carte graphique pleine ({0} %)" -f (Get-RecValue $R 'Vram')); D = "Quand elle déborde, le jeu va chercher ses images dans la mémoire du PC : c'est la cause n°1 des saccades. Baisse la qualité des textures d'un cran." }) }
-    if ($flags -contains 'ram') { [void]$out.Add(@{ C = '#FFB547'; T = ("Mémoire vive presque pleine ({0} %)" -f (Get-RecValue $R 'Ram')); D = "Windows doit se servir du disque à la place : saccades et chargements lents. Ferme le navigateur et les logiciels inutiles avant de jouer."; B = 'Pourquoi mon PC rame ?'; Ui = 'slow' }) }
-    if ($flags -contains 'stutter') { [void]$out.Add(@{ C = '#FFB547'; T = ("Beaucoup de saccades ({0})" -f (Get-RecValue $R 'Stut')); D = "Une saccade, c'est une image qui met nettement plus de temps que les autres : un petit gel. Souvent normal sur les premières parties après une mise à jour (le jeu prépare ses « shaders »). Si ça continue : mémoire trop pleine, programme en fond qui se réveille ou pilote graphique ancien." }) }
-    if ($flags -contains 'hz') { [void]$out.Add(@{ C = '#FFB547'; T = ("Ton écran tourne à {0} Hz au lieu de {1} Hz" -f $hz, $mx); D = ("Tu ne vois que {0} images par seconde, même si le jeu en calcule plus." -f $hz); B = ("Passer à {0} Hz" -f $mx); Ui = 'display-fix' }) }
+    if ($flags -contains 'hot-gpu') { [void]$out.Add(@{ C = $Pal.Bad; T = ("Carte graphique très chaude ({0} °C)" -f (Get-RecValue $R 'GpuT')); D = "Trop chaude, elle ralentit pour se protéger : moins de FPS. Dépoussière le PC (bombe d'air sec, PC éteint), dégage les grilles d'aération, et pour un portable pose-le sur une surface dure." }) }
+    if ($flags -contains 'hot-cpu') { [void]$out.Add(@{ C = $Pal.Bad; T = ("Processeur très chaud ({0} °C)" -f (Get-RecValue $R 'CpuT')); D = "Trop chaud, il ralentit pour se protéger. Dépoussière le ventilateur et le radiateur ; si le PC a plusieurs années, la pâte thermique est peut-être sèche (à refaire par un réparateur)." }) }
+    if ($flags -contains 'vram') { [void]$out.Add(@{ C = $Pal.Warn; T = ("Mémoire de la carte graphique pleine ({0} %)" -f (Get-RecValue $R 'Vram')); D = "Quand elle déborde, le jeu va chercher ses images dans la mémoire du PC : c'est la cause n°1 des saccades. Baisse la qualité des textures d'un cran." }) }
+    if ($flags -contains 'ram') { [void]$out.Add(@{ C = $Pal.Warn; T = ("Mémoire vive presque pleine ({0} %)" -f (Get-RecValue $R 'Ram')); D = "Windows doit se servir du disque à la place : saccades et chargements lents. Ferme le navigateur et les logiciels inutiles avant de jouer."; B = 'Pourquoi mon PC rame ?'; Ui = 'slow' }) }
+    if ($flags -contains 'stutter') { [void]$out.Add(@{ C = $Pal.Warn; T = ("Beaucoup de saccades ({0})" -f (Get-RecValue $R 'Stut')); D = "Une saccade, c'est une image qui met nettement plus de temps que les autres : un petit gel. Souvent normal sur les premières parties après une mise à jour (le jeu prépare ses « shaders »). Si ça continue : mémoire trop pleine, programme en fond qui se réveille ou pilote graphique ancien." }) }
+    if ($flags -contains 'hz') { [void]$out.Add(@{ C = $Pal.Warn; T = ("Ton écran tourne à {0} Hz au lieu de {1} Hz" -f $hz, $mx); D = ("Tu ne vois que {0} images par seconde, même si le jeu en calcule plus." -f $hz); B = ("Passer à {0} Hz" -f $mx); Ui = 'display-fix' }) }
     return $out.ToArray()
 }
 # Pourquoi la pire partie a été moins bonne que la meilleure
@@ -4847,7 +5010,7 @@ function Set-GamingOption([string]$What) {
 # ---------------------------------------------------------------- Page Gaming : mes jeux
 function New-VerdictPill($R) {
     $id = "$(Get-RecValue $R 'Verdict')"
-    $t = switch ($id) { 'gpu' { @('carte graphique', '#9FE8B5', '#173326') } 'cpu' { @('processeur', '#FFD08A', '#3A2A12') } 'cap' { @(("plafonné {0}" -f (Get-RecValue $R 'Cap')), '#C3CAD9', '#232838') } 'engine' { @('moteur du jeu', '#C3CAD9', '#232838') } 'mixed' { @('équilibré', '#9FE8B5', '#173326') } default { $null } }
+    $t = switch ($id) { 'gpu' { @('carte graphique', $Pal.OkText, $Pal.OkSoft) } 'cpu' { @('processeur', $Pal.Warn, $Pal.WarnSoft) } 'cap' { @(("plafonné {0}" -f (Get-RecValue $R 'Cap')), $Pal.Text2, $Pal.Line) } 'engine' { @('moteur du jeu', $Pal.Text2, $Pal.Line) } 'mixed' { @('équilibré', $Pal.OkText, $Pal.OkSoft) } default { $null } }
     if (-not $t) { return $null }
     return (New-Pill $t[0] $t[1] $t[2])
 }
@@ -4866,28 +5029,28 @@ function New-GameRow($G) {
     $l = $G.Last
     $right = New-Object System.Windows.Controls.StackPanel; $right.Margin = Th 14 0 0 0; $right.VerticalAlignment = 'Center'; $right.MinWidth = 110
     if ($null -ne $l.Fps) {
-        $f = New-Text ("{0} FPS" -f [int][math]::Round([double]$l.Fps)) 20 '#FFFFFF' 'Bold'; $f.HorizontalAlignment = 'Right'; Add-Child $right $f
-        $lo = New-Text ("1 % low {0}" -f [int][math]::Round([double]$l.Low1)) 12 '#8B93A7'; $lo.HorizontalAlignment = 'Right'; Add-Child $right $lo
-    } else { $f = New-Text 'FPS non mesurés' 12 '#7A8399'; $f.HorizontalAlignment = 'Right'; Add-Child $right $f }
+        $f = New-Text ("{0} FPS" -f [int][math]::Round([double]$l.Fps)) $Typo.Stat $Pal.White 'Bold'; $f.HorizontalAlignment = 'Right'; Add-Child $right $f
+        $lo = New-Text ("1 % low {0}" -f [int][math]::Round([double]$l.Low1)) $Typo.Small $Pal.Muted; $lo.HorizontalAlignment = 'Right'; Add-Child $right $lo
+    } else { $f = New-Text 'FPS non mesurés' $Typo.Small $Pal.Faint; $f.HorizontalAlignment = 'Right'; Add-Child $right $f }
     [System.Windows.Controls.DockPanel]::SetDock($right, 'Right'); Add-Child $dp $right
     $left = New-Object System.Windows.Controls.StackPanel; $left.VerticalAlignment = 'Center'
     $h = New-Object System.Windows.Controls.WrapPanel
-    $n = New-Text $G.Name 15 '#FFFFFF' 'SemiBold'; $n.VerticalAlignment = 'Center'; Add-Child $h $n
+    $n = New-Text $G.Name $Typo.Title $Pal.White 'SemiBold'; $n.VerticalAlignment = 'Center'; Add-Child $h $n
     $p = New-VerdictPill $l; if ($p) { Add-Child $h $p }
     Add-Child $left $h
     $cnt = @($G.Sessions).Count
-    Add-Child $left (New-Text ("{0} partie{1} · {2} au total · dernière {3}" -f $cnt, $(if ($cnt -gt 1) { 's' } else { '' }), (Format-GameTime $G.TotalMin), (Format-GameDate $l.Start)) 12 '#8B93A7')
+    Add-Child $left (New-Text ("{0} partie{1} · {2} au total · dernière {3}" -f $cnt, $(if ($cnt -gt 1) { 's' } else { '' }), (Format-GameTime $G.TotalMin), (Format-GameDate $l.Start)) $Typo.Small $Pal.Muted)
     Add-Child $dp $left
     $card.Child = $dp
     return $card
 }
 function New-GamingToggle([string]$Title, [string]$Desc, [bool]$On, [string]$Ui, [string]$Block) {
     $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 6 0 6
-    if ($Block) { $p = New-Pill 'indisponible' '#8B93A7' '#232838'; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p }
+    if ($Block) { $p = New-Pill 'indisponible' $Pal.Muted $Pal.Line; [System.Windows.Controls.DockPanel]::SetDock($p, 'Right'); Add-Child $row $p }
     else { $b = New-Button $(if ($On) { 'Activé' } else { 'Désactivé' }) $(if ($On) { 'FixBtn' } else { 'ActionBtn' }) @{ Kind = 'ui'; Def = @{ UI = $Ui } } $false; $b.Margin = Th 12 0 0 0; $b.MinWidth = 110; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b }
     $t = New-Object System.Windows.Controls.StackPanel
-    Add-Child $t (New-Text $Title 14 '#FFFFFF' 'SemiBold')
-    Add-Child $t (New-Text $(if ($Block) { $Block } else { $Desc }) 12 '#8B93A7')
+    Add-Child $t (New-Text $Title $Typo.Strong $Pal.White 'SemiBold')
+    Add-Child $t (New-Text $(if ($Block) { $Block } else { $Desc }) $Typo.Small $Pal.Muted)
     Add-Child $row $t
     return $row
 }
@@ -4895,17 +5058,17 @@ function Add-GamingSections($Sp, $U) {
     $g = $script:Settings.Gaming
     # Partie en cours
     if ($script:GameSess) {
-        $c = New-CardBorder '#3B2F7A'; $cs = New-Object System.Windows.Controls.StackPanel
-        Add-Child $cs (New-Text ("🎮 Partie en cours : " + $script:GameSess.Name) 15 '#FFFFFF' 'SemiBold')
-        $U.Sess = New-Text '' 13 '#B9A8FF'; $U.Sess.Margin = Th 0 4 0 0; Add-Child $cs $U.Sess
-        Add-Child $cs (New-Text "Le résumé s'affichera quand tu quitteras le jeu (notification + fiche du jeu ci-dessous)." 12 '#8B93A7')
+        $c = New-CardBorder $Pal.AccentLine; $cs = New-Object System.Windows.Controls.StackPanel
+        Add-Child $cs (New-Text ("🎮 Partie en cours : " + $script:GameSess.Name) $Typo.Title $Pal.White 'SemiBold')
+        $U.Sess = New-Text '' $Typo.Body $Pal.AccentText; $U.Sess.Margin = Th 0 4 0 0; Add-Child $cs $U.Sess
+        Add-Child $cs (New-Text "Le résumé s'affichera quand tu quitteras le jeu (notification + fiche du jeu ci-dessous)." $Typo.Small $Pal.Muted)
         $c.Child = $cs; Add-Child $Sp $c
     } elseif ($script:LastGame -and ((Get-Date) - $script:LastGame.At).TotalHours -lt 12) {
         $c = New-CardBorder; $dp = New-Object System.Windows.Controls.DockPanel
         $b = New-Button 'Voir la fiche' 'ActionBtn' @{ Kind = 'ui'; Def = @{ UI = 'game-sheet'; Key = $script:LastGame.Key } } $false; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); $b.Margin = Th 12 0 0 0; Add-Child $dp $b
         $cs = New-Object System.Windows.Controls.StackPanel
-        Add-Child $cs (New-Text 'DERNIÈRE PARTIE' 11 '#7A8399' 'Bold')
-        $t = New-Text $script:LastGame.Text 14 '#E6E9F2'; $t.Margin = Th 0 4 0 0; Add-Child $cs $t
+        Add-Child $cs (New-Text 'DERNIÈRE PARTIE' $Typo.Caption $Pal.Faint 'Bold')
+        $t = New-Text $script:LastGame.Text $Typo.Strong $Pal.Text; $t.Margin = Th 0 4 0 0; Add-Child $cs $t
         Add-Child $dp $cs; $c.Child = $dp; Add-Child $Sp $c
     }
     # Mes jeux
@@ -4913,15 +5076,15 @@ function Add-GamingSections($Sp, $U) {
     $games = @(Get-GameList)
     if (-not $games.Count) {
         $c = New-CardBorder; $cs = New-Object System.Windows.Controls.StackPanel
-        Add-Child $cs (New-Text "Aucune partie notée pour l'instant" 15 '#FFFFFF' 'SemiBold')
-        $t = New-Text ("Lance un jeu : AEROX le reconnaît tout seul (Steam, Epic, Riot, Battle.net, EA, Ubisoft, GOG, Xbox ou n'importe quel jeu en plein écran) et note la partie quand tu le quittes, à partir de {0} minutes de jeu. AEROX doit rester ouvert pendant que tu joues : active « Garder AEROX près de l'horloge » plus bas pour qu'il ne gêne pas." -f $script:GameMinMinutes) 13 '#A9B0C2'
+        Add-Child $cs (New-Text "Aucune partie notée pour l'instant" $Typo.Title $Pal.White 'SemiBold')
+        $t = New-Text ("Lance un jeu : AEROX le reconnaît tout seul (Steam, Epic, Riot, Battle.net, EA, Ubisoft, GOG, Xbox ou n'importe quel jeu en plein écran) et note la partie quand tu le quittes, à partir de {0} minutes de jeu. AEROX doit rester ouvert pendant que tu joues : active « Garder AEROX près de l'horloge » plus bas pour qu'il ne gêne pas." -f $script:GameMinMinutes) $Typo.Body $Pal.Text3
         $t.Margin = Th 0 6 0 0; Add-Child $cs $t
-        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Installe d'abord le compteur de FPS (onglet « En direct » ci-dessus) : sans lui, seules la durée et les températures sont notées." 12.5 '#FFB547'; $w.Margin = Th 0 8 0 0; Add-Child $cs $w }
+        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Installe d'abord le compteur de FPS (onglet « En direct » ci-dessus) : sans lui, seules la durée et les températures sont notées." $Typo.Body $Pal.Warn; $w.Margin = Th 0 8 0 0; Add-Child $cs $w }
         $c.Child = $cs; Add-Child $Sp $c
     } else {
         foreach ($x in @($games | Select-Object -First 12)) { Add-Child $Sp (New-GameRow $x) }
-        if ($games.Count -gt 12) { $t = New-Text ("+ {0} autre(s) jeu(x) plus ancien(s), dans le dossier « jeux » des journaux." -f ($games.Count - 12)) 12 '#7A8399'; Add-Child $Sp $t }
-        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Le compteur de FPS n'est pas installé (onglet « En direct » ci-dessus) : seules la durée et les températures sont notées." 12.5 '#FFB547'; $w.Margin = Th 0 2 0 4; Add-Child $Sp $w }
+        if ($games.Count -gt 12) { $t = New-Text ("+ {0} autre(s) jeu(x) plus ancien(s), dans le dossier « jeux » des journaux." -f ($games.Count - 12)) $Typo.Small $Pal.Faint; Add-Child $Sp $t }
+        if (-not $script:ToolSt.PresentMon) { $w = New-Text "Le compteur de FPS n'est pas installé (onglet « En direct » ci-dessus) : seules la durée et les températures sont notées." $Typo.Body $Pal.Warn; $w.Margin = Th 0 2 0 4; Add-Child $Sp $w }
     }
     # Réglages du suivi
     Add-Child $Sp (New-Section 'Suivi automatique')
@@ -4940,12 +5103,12 @@ function New-LineChart($Series, [double]$W = 640, [double]$H = 120, [string]$Uni
     $mx = ($all | Measure-Object -Maximum).Maximum; $mn = ($all | Measure-Object -Minimum).Minimum
     $lo = [math]::Max([double]0, [math]::Floor($mn * 0.9 / 10) * 10); $hi = [math]::Ceiling($mx * 1.05 / 10) * 10; if ($hi -le $lo) { $hi = $lo + 10 }
     $ax = New-Object System.Windows.Controls.Grid; $ax.Width = 44; $ax.Height = $H
-    $t1 = New-Text ("{0}" -f $hi) 11 '#7A8399'; $t1.VerticalAlignment = 'Top'; Add-Child $ax $t1
-    $t2 = New-Text ("{0}" -f $lo) 11 '#7A8399'; $t2.VerticalAlignment = 'Bottom'; Add-Child $ax $t2
+    $t1 = New-Text ("{0}" -f $hi) $Typo.Caption $Pal.Faint; $t1.VerticalAlignment = 'Top'; Add-Child $ax $t1
+    $t2 = New-Text ("{0}" -f $lo) $Typo.Caption $Pal.Faint; $t2.VerticalAlignment = 'Bottom'; Add-Child $ax $t2
     [System.Windows.Controls.DockPanel]::SetDock($ax, 'Left'); Add-Child $dp $ax
-    $cv = New-Object System.Windows.Controls.Canvas; $cv.Width = $W; $cv.Height = $H; $cv.ClipToBounds = $true; $cv.Background = Brush '#10131A'
+    $cv = New-Object System.Windows.Controls.Canvas; $cv.Width = $W; $cv.Height = $H; $cv.ClipToBounds = $true; $cv.Background = Brush $Pal.Sunken
     foreach ($i in 1, 2, 3) {
-        $ln = New-Object System.Windows.Shapes.Line; $ln.X1 = 0; $ln.X2 = $W; $ln.Y1 = $H * $i / 4; $ln.Y2 = $ln.Y1; $ln.Stroke = Brush '#1E2230'; $ln.StrokeThickness = 1; [void]$cv.Children.Add($ln)
+        $ln = New-Object System.Windows.Shapes.Line; $ln.X1 = 0; $ln.X2 = $W; $ln.Y1 = $H * $i / 4; $ln.Y2 = $ln.Y1; $ln.Stroke = Brush $Pal.Line; $ln.StrokeThickness = 1; [void]$cv.Children.Add($ln)
     }
     foreach ($s in $Series) {
         $v = @($s.V); if ($v.Count -lt 1) { continue }
@@ -4967,7 +5130,7 @@ function New-LegendLine($Items) {
     $wp = New-Object System.Windows.Controls.WrapPanel; $wp.Margin = Th 44 6 0 0
     foreach ($it in $Items) {
         $r = New-Object System.Windows.Shapes.Rectangle; $r.Width = 14; $r.Height = 3; $r.Fill = Brush $it[1]; $r.Margin = Th 0 0 6 0; $r.VerticalAlignment = 'Center'; Add-Child $wp $r
-        $t = New-Text $it[0] 11.5 '#8B93A7'; $t.Margin = Th 0 0 16 0; Add-Child $wp $t
+        $t = New-Text $it[0] $Typo.Small $Pal.Muted; $t.Margin = Th 0 0 16 0; Add-Child $wp $t
     }
     return $wp
 }
@@ -4979,9 +5142,9 @@ function Show-GameDialog([string]$Key) {
     $script:GameWin = $w; $script:GameAction = $null
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
-    Add-Child $sp (New-Text $g.Name 20 '#FFFFFF' 'Bold')
+    Add-Child $sp (New-Text $g.Name $Typo.Stat $Pal.White 'Bold')
     $tot = ($ses | ForEach-Object { [double]$_.Min } | Measure-Object -Sum).Sum
-    $sub = New-Text ("{0} partie{1} notée{1} · {2} de jeu{3}" -f $ses.Count, $(if ($ses.Count -gt 1) { 's' } else { '' }), (Format-GameTime $tot), $(if ($g.Store) { " · " + $g.Store } else { '' })) 13 '#A9B0C2'
+    $sub = New-Text ("{0} partie{1} notée{1} · {2} de jeu{3}" -f $ses.Count, $(if ($ses.Count -gt 1) { 's' } else { '' }), (Format-GameTime $tot), $(if ($g.Store) { " · " + $g.Store } else { '' })) $Typo.Body $Pal.Text3
     $sub.Margin = Th 0 4 0 12; Add-Child $sp $sub
     $withFps = @($ses | Where-Object { $null -ne $_.Fps })
     # Chiffres clés
@@ -4997,17 +5160,17 @@ function Show-GameDialog([string]$Key) {
     Add-Child $sp $ug
     # Évolution partie après partie
     if ($withFps.Count -ge 2) {
-        $h = New-Text 'PARTIE APRÈS PARTIE' 11.5 '#7A8399' 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
+        $h = New-Text 'PARTIE APRÈS PARTIE' $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
         $lastN = @($withFps | Select-Object -Last 30)
-        Add-Child $sp (New-LineChart @(@{ V = @($lastN | ForEach-Object { [double]$_.Fps }); Color = '#7C5CFF' }, @{ V = @($lastN | ForEach-Object { [double]$_.Low1 }); Color = '#8B93A7' }) 640 120)
-        Add-Child $sp (New-LegendLine @(@('FPS moyen', '#7C5CFF'), @('1 % low', '#8B93A7')))
+        Add-Child $sp (New-LineChart @(@{ V = @($lastN | ForEach-Object { [double]$_.Fps }); Color = $Pal.Accent }, @{ V = @($lastN | ForEach-Object { [double]$_.Low1 }); Color = $Pal.Muted }) 640 120)
+        Add-Child $sp (New-LegendLine @(@('FPS moyen', $Pal.Accent), @('1 % low', $Pal.Muted)))
     }
     if (@($last.Curve).Count -ge 2) {
-        $h = New-Text 'DERNIÈRE PARTIE, MINUTE PAR MINUTE' 11.5 '#7A8399' 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
-        Add-Child $sp (New-LineChart @(@{ V = @($last.Curve); Color = '#4ADE80' }) 640 90)
+        $h = New-Text 'DERNIÈRE PARTIE, MINUTE PAR MINUTE' $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 0 14 0 8; Add-Child $sp $h
+        Add-Child $sp (New-LineChart @(@{ V = @($last.Curve); Color = $Pal.Ok }) 640 90)
     }
     # Ce qui limite ce jeu et quoi faire
-    $h = New-Text 'CE QUI LIMITE CE JEU ET QUOI FAIRE' 11.5 '#7A8399' 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
+    $h = New-Text 'CE QUI LIMITE CE JEU ET QUOI FAIRE' $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
     # Verdict le plus fréquent sur les 5 dernières parties (une partie isolée peut tromper)
     $ref = $last
     $vs = @($ses | Select-Object -Last 5 | Where-Object { $_.Verdict } | Group-Object { $_.Verdict } | Sort-Object Count -Descending)
@@ -5018,14 +5181,14 @@ function Show-GameDialog([string]$Key) {
     if ($null -ne $ref.CpuL) { $ev += ("processeur {0} %" -f $ref.CpuL) }
     if ($null -ne $ref.Core) { $ev += ("cœur le plus chargé {0} %" -f $ref.Core) }
     if ($null -ne $ref.Fps -and $ref.Hz) { $ev += ("{0} FPS pour un écran à {1} Hz" -f [int][math]::Round([double]$ref.Fps), $ref.Hz) }
-    if ($ev.Count) { $t = New-Text ("Utilisation moyenne mesurée pendant la partie : " + ($ev -join ' · ')) 12 '#8B93A7'; $t.Margin = Th 0 0 0 8; Add-Child $sp $t }
+    if ($ev.Count) { $t = New-Text ("Utilisation moyenne mesurée pendant la partie : " + ($ev -join ' · ')) $Typo.Small $Pal.Muted; $t.Margin = Th 0 0 0 8; Add-Child $sp $t }
     $adv = @(Get-GameAdvice $ref)
-    if ($ref -ne $last) { foreach ($a in @(Get-GameAdvice $last)) { if ($a.T -notin @($adv | ForEach-Object { $_.T }) -and $a.C -ne '#4ADE80') { $adv += $a } } }
+    if ($ref -ne $last) { foreach ($a in @(Get-GameAdvice $last)) { if ($a.T -notin @($adv | ForEach-Object { $_.T }) -and $a.C -ne $Pal.Ok) { $adv += $a } } }
     foreach ($a in $adv) {
-        $c = New-Object System.Windows.Controls.Border; $c.Background = Brush '#171A23'; $c.BorderBrush = Brush $a.C; $c.BorderThickness = Th 3 0 0 0; $c.CornerRadius = Corner 8; $c.Padding = Th 14 10 14 10; $c.Margin = Th 0 0 0 8
+        $c = New-Object System.Windows.Controls.Border; $c.Background = Brush $Pal.Card; $c.BorderBrush = Brush $a.C; $c.BorderThickness = Th 3 0 0 0; $c.CornerRadius = Corner 8; $c.Padding = Th 14 10 14 10; $c.Margin = Th 0 0 0 8
         $cs = New-Object System.Windows.Controls.StackPanel
-        Add-Child $cs (New-Text $a.T 14 '#FFFFFF' 'SemiBold')
-        $d = New-Text $a.D 12.5 '#A9B0C2'; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
+        Add-Child $cs (New-Text $a.T $Typo.Strong $Pal.White 'SemiBold')
+        $d = New-Text $a.D $Typo.Body $Pal.Text3; $d.Margin = Th 0 3 0 0; Add-Child $cs $d
         if ($a.B) {
             $bw = New-Object System.Windows.Controls.WrapPanel; $bw.Margin = Th 0 8 0 0
             foreach ($bb in @(@($a.B, $a.Ui), @($a.B2, $a.Ui2))) {
@@ -5043,26 +5206,26 @@ function Show-GameDialog([string]$Key) {
         $best = $long | Sort-Object { [double]$_.Fps } -Descending | Select-Object -First 1
         $worst = $long | Sort-Object { [double]$_.Fps } | Select-Object -First 1
         if ([double]$best.Fps -gt [double]$worst.Fps * 1.08) {
-            $h = New-Text 'MEILLEURE ET PIRE PARTIE' 11.5 '#7A8399' 'Bold'; $h.Margin = Th 0 8 0 8; Add-Child $sp $h
+            $h = New-Text 'MEILLEURE ET PIRE PARTIE' $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 0 8 0 8; Add-Child $sp $h
             Add-Child $sp (New-Rich 'Meilleure' ("{0} FPS, {1}" -f [int][math]::Round([double]$best.Fps), (Format-GameDate $best.Start)) '')
             Add-Child $sp (New-Rich 'Pire' ("{0} FPS, {1}" -f [int][math]::Round([double]$worst.Fps), (Format-GameDate $worst.Start)) '')
             Add-Child $sp (New-Rich 'Pourquoi' (Get-GameWhy $worst $best) '')
         }
     }
     # Dernières parties
-    $h = New-Text 'DERNIÈRES PARTIES' 11.5 '#7A8399' 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
+    $h = New-Text 'DERNIÈRES PARTIES' $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 0 16 0 8; Add-Child $sp $h
     $rl = @($ses | Select-Object -Last 10); [array]::Reverse($rl)
     foreach ($s in $rl) {
-        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush '#171A23'; $row.CornerRadius = Corner 8; $row.Padding = Th 12 7 12 7; $row.Margin = Th 0 0 0 4
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 8; $row.Padding = Th 12 7 12 7; $row.Margin = Th 0 0 0 4
         $dp = New-Object System.Windows.Controls.DockPanel
         $pl = New-VerdictPill $s; if ($pl) { [System.Windows.Controls.DockPanel]::SetDock($pl, 'Right'); Add-Child $dp $pl }
         $bits = @((Format-GameDate $s.Start), (Format-GameTime ([double]$s.Min)))
         if ($null -ne $s.Fps) { $bits += ("{0} FPS" -f [int][math]::Round([double]$s.Fps)); $bits += ("1 % low {0}" -f [int][math]::Round([double]$s.Low1)); $bits += ("{0} saccade{1}" -f [int]$s.Stut, $(if ([int]$s.Stut -gt 1) { 's' } else { '' })) }
         if ($null -ne $s.GpuT) { $bits += ("GPU {0} °C" -f $s.GpuT) }
-        Add-Child $dp (New-Text ($bits -join '  ·  ') 12.5 '#C3CAD9')
+        Add-Child $dp (New-Text ($bits -join '  ·  ') $Typo.Body $Pal.Text2)
         $row.Child = $dp; Add-Child $sp $row
     }
-    $tip = New-Text "FPS mesurés par PresentMon (outil d'Intel) sans rien injecter dans le jeu. 1 % low = les FPS des 1 % d'images les plus lentes : plus il est proche de la moyenne, plus c'est fluide." 11.5 '#7A8399'
+    $tip = New-Text "FPS mesurés par PresentMon (outil d'Intel) sans rien injecter dans le jeu. 1 % low = les FPS des 1 % d'images les plus lentes : plus il est proche de la moyenne, plus c'est fluide." $Typo.Small $Pal.Faint
     $tip.Margin = Th 0 10 0 0; Add-Child $sp $tip
     # Boutons
     $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 16 0 0
