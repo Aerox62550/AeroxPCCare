@@ -635,6 +635,24 @@ function Invoke-Smoke {
         foreach ($c in $ok) { if (-not (Test-SafeUndo $c)) { throw "refusé à tort : $c" } }
         foreach ($c in $ko) { if (Test-SafeUndo $c) { throw "accepté à tort : $c" } }
     }
+    Smoke 'Tailles lisibles (Format-Size)' {
+        $ci = [Threading.Thread]::CurrentThread.CurrentCulture; [Threading.Thread]::CurrentThread.CurrentCulture = 'fr-FR'
+        try {
+            $cases = @(@(16GB, '16 Go'), @(15.99GB, '15,99 Go'), @(931.51GB, '931,5 Go'), @(2TB, '2 To'), @(1.82TB, '1,82 To'), @(128GB, '128 Go'), @(291.2MB, '291,2 Mo'), @(545KB, '545 Ko'))
+            foreach ($c in $cases) { $r = (Format-Size $c[0]) -replace [char]0xA0, ' ' -replace [char]0x202F, ' '; if ($r -ne $c[1]) { throw "$($c[0]) octets : « $r » au lieu de « $($c[1]) »" } }
+        } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $ci }
+    }
+    Smoke 'Code : aucune fonction en double, aucune fonction jamais utilisée' {
+        $f = Join-Path (Split-Path $PSCommandPath) 'AeroxPCCare.ps1'
+        $src = [IO.File]::ReadAllText($f)
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
+        $fns = @($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $dup = @($fns | Group-Object Name | Where-Object { $_.Count -gt 1 } | ForEach-Object { "$($_.Name) ($($_.Count) fois)" })
+        if ($dup.Count) { throw ("fonction(s) en double : " + ($dup -join ', ')) }
+        $dead = @($fns | Where-Object { [regex]::Matches($src, '(?<![\w-])' + [regex]::Escape($_.Name) + '(?![\w-])').Count -le 1 } | ForEach-Object { $_.Name })
+        if ($dead.Count) { throw ("fonction(s) jamais utilisée(s) : " + ($dead -join ', ')) }
+        Write-Host ("        {0} fonctions, aucune en double ni inutilisée" -f $fns.Count)
+    }
     Smoke 'Fenêtre : quoi de neuf' { Show-WhatsNew '1.6.0'; Show-WhatsNew '' }
     Smoke 'Infos BIOS : vitesse prévue des barrettes, canaux, XMP / EXPO' {
         $cases = @{ 'CMK32GX5M2B6000C36' = 6000; 'F4-3600C16-8GVKC' = 3600; 'F5-6000J3038F16G' = 6000; 'KF560C36BBEK2-32' = 6000; 'KF432C16BB/8' = 3200; 'BL8G32C16U4B' = 3200; 'CP2K16G56C46U5' = 5600; 'TF3D416G3200HC16F' = 3200; 'M471A1K43DB1-CWE' = 0; 'HMA81GS6CJR8N-XN' = 0; '' = 0; 'AX5U6000C3016G-B' = 6000; 'PSD48G266681' = 0 }
@@ -650,6 +668,19 @@ function Invoke-Smoke {
         }
         if ((Get-XmpState 'DDR4' 3000 3600 1350 $false $false $true).Text -match 'Ryzen') { throw "conseil Ryzen DDR5 donné pour de la DDR4" }
         foreach ($b in 'ASUS', 'MSI', 'Gigabyte', 'ASRock', 'Dell', '') { foreach ($w in 'xmp', 'virt', 'rebar', 'fans') { if (-not (Get-BiosHowTo $b $w $true $false 'DDR5')) { throw "pas d'explication $b / $w" } } }
+    }
+    Smoke 'Infos matérielles lues une seule fois par diagnostic (même résultat)' {
+        $old = $script:CimCache
+        try {
+            $script:CimCache = $null
+            $a = Get-CimStatic Win32_ComputerSystem; $n0 = @(Get-CimStatic Win32_PhysicalMemory).Count
+            $script:CimCache = @{}
+            $b = Get-CimStatic Win32_ComputerSystem; $c = Get-CimStatic Win32_ComputerSystem; $n1 = @(Get-CimStatic Win32_PhysicalMemory).Count
+            if ("$($a.Model)|$($a.TotalPhysicalMemory)" -ne "$($c.Model)|$($c.TotalPhysicalMemory)" -or $n0 -ne $n1) { throw "résultat différent avec la mémoire" }
+            if (-not [object]::ReferenceEquals($b, $c)) { throw "relu au lieu d'être gardé" }
+            if ($null -ne (Get-CimStatic Win32_ClasseQuiNExistePas -Quiet)) { throw "-Quiet doit ne rien renvoyer" }
+            $ko = $false; try { Get-CimStatic Win32_ClasseQuiNExistePas | Out-Null } catch { $ko = $true }; if (-not $ko) { throw "sans -Quiet, l'erreur doit remonter" }
+        } finally { $script:CimCache = $old }
     }
     Smoke 'Infos BIOS : ce PC' {
         $si = $sync.SysInfo; if (-not $si) { Get-SystemInfo | Out-Null; $si = $sync.SysInfo }

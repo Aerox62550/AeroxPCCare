@@ -2,6 +2,20 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.5.0 : refonte 2.5.0 (nettoyage du code + visuel, demande de Sam)
+
+- Bug : New-StatTile définie deux fois (la 2e écrasait la 1re) → tuiles de « Pourquoi ça lague » avec « #8B93A7 » au lieu du détail et sans couleur d'état (depuis la 2.4.0). Une seule fonction pour les deux usages.
+- Code mort retiré : Open-AppsSettings, Open-SystemRestore, Show-Startup, Start-DeepClean, Open-BiosSupport. Test permanent : échec si une fonction est en double ou jamais utilisée.
+- Accueil : carte « Diagnostic complet » retirée (doublon du bouton du bandeau).
+- Diagnostic : Get-CimStatic garde les infos matérielles fixes (Win32_ComputerSystem, Processor, VideoController, PhysicalMemory, SystemEnclosure, BIOS, BaseBoard) le temps d'un diagnostic ; disque, mémoire utilisée et batterie toujours relus. Test : même résultat avec et sans.
+- Format-Size : « 16 Go », « 931,5 Go », « 2 To » (au lieu de « 16,00 Go », « 2 048,00 Go »). Testé en fr-FR.
+- Thème central : $Pal (36 couleurs nommées, au lieu de 54 en dur) et $Typo (8 tailles au lieu de 16), XAML compris (%%Nom%%). Pinceaux mis en cache et gelés.
+- Boutons : voile clair au survol, contour violet au clavier, hauteur fixe. Barres de défilement sombres (fenêtre + dialogues).
+- Pages rangées par groupes (G), petites actions en tuiles 2 par 2 (Tile, texte court S, description complète en info-bulle), badges en trop retirés, un seul bouton violet par groupe.
+- Diagnostic : « Ne plus signaler » à droite, catégorie en texte discret, « Ce qui va bien » replié (2 colonnes une fois ouvert).
+- Mon PC : textes raccourcis, étapes du BIOS derrière « Comment faire » (New-InfoRow), menu « Mon PC ».
+- Non fait volontairement : découpage des grosses fonctions de diagnostic (risque de fausses alertes, aucun gain pour les testeurs).
+
 ## Publié en 2.4.6 : corrections « Infos BIOS » (test de Sam)
 
 - Quantité de RAM affichée « 0 Ko » : la somme des barrettes (Measure-Object sur des tables) ne marche pas sous Windows PowerShell 5.1 → somme faite valeur par valeur. Test ajouté (quantité lue sur le PC de test ≥ 512 Mo).
