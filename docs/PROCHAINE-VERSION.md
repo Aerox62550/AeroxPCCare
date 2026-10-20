@@ -2,6 +2,13 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche prochaine-version : compteur « passé en version X » (demande de Sam)
+
+- Constat : le compteur « version:x » n'est envoyé qu'au 1er envoi du mois de chaque PC → il ne dit pas qui est à jour.
+- Send-Stats : la version du dernier envoi est notée dans stats-envoi.txt (date|mois|version) ; à la 1re ouverture d'une nouvelle version, un envoi « maj:2-5-3 » = 1 part, une seule fois par PC et par version (même avant les 6 h). Rien d'autre n'est ajouté (pas d'identifiant).
+- Relais inchangé (la clé passe le filtre existant). La tâche GitHub « Statistiques » affiche les compteurs maj:*.
+- Test (faux relais) : « maj:<version> » dans le 1er envoi, absent du 2e.
+
 ## Publié en 2.5.2 : préparer la mise à jour du BIOS (demande de Sam)
 
 - Mon PC > « Préparer la mise à jour du BIOS » (Show-BiosUpdateDialog), 4 étapes : télécharger (page officielle), choisir le fichier, préparer la clé USB, installer.

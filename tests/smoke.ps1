@@ -605,6 +605,13 @@ function Invoke-Smoke {
             foreach ($bad in @($env:COMPUTERNAME, $env:USERNAME, $AppInfo.LogDir) | Where-Object { "$_".Length -ge 3 }) { if ($g[1].B -like "*$bad*") { throw "donnée personnelle dans l'envoi" } }
             if ($AppInfo.StatsQueue.Count -or -not (Test-Path -LiteralPath $stamp)) { throw "file non vidée après l'envoi ($($AppInfo.StatsQueue.Count) restant(s), erreur : $($AppInfo.StatsLastError))" }
             Write-Host ("        envoyé ({0} compteur(s)) : {1}" -f $n0, $g[1].B)
+            # Compteur de version : une fois par PC et par version, pas à chaque envoi
+            $mk = 'maj:' + ($AppVersion -replace '\.', '-')
+            if ($b.ev.$mk -ne 1) { throw "compteur « $mk » absent du premier envoi" }
+            Add-StatsEvent 'lent:rien'
+            $g = & $run $false
+            if (@($g).Count -ne 2) { throw "2e envoi incorrect" }
+            if ($g[1].B -like "*maj:*") { throw "compteur de version renvoyé : $($g[1].B)" }
         } finally { $AppInfo.StatsOff = $oldOff; $sync.BugRelay = $oldRelay; $AppInfo.StatsQueue = $oldQ; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue }
     }
     Smoke 'Analyse du nettoyage' { Get-CleanupAnalysis }

@@ -2775,30 +2775,34 @@ function Send-Stats([switch]$Force) {
         $relay = "$($sync.BugRelay)".TrimEnd('/')
         if (-not $relay) { return }
         $stamp = Join-Path $AppInfo.LogDir 'stats-envoi.txt'
-        $last = $null; $lastMonth = ''
+        $last = $null; $lastMonth = ''; $lastVer = ''
         if (Test-Path -LiteralPath $stamp) {
             $p = ([IO.File]::ReadAllText($stamp)).Trim().Split('|')
             try { $last = [datetime]::ParseExact($p[0], 's', [Globalization.CultureInfo]::InvariantCulture) } catch {}
             if ($p.Count -gt 1) { $lastMonth = $p[1] }
+            if ($p.Count -gt 2) { $lastVer = $p[2] }
         }
         $month = (Get-Date).ToString('yyyy-MM')
         $newMonth = ($lastMonth -ne $month)
+        # Une fois par PC et par version : « maj:2-5-3 » (combien de PC ont reçu chaque version, rien d'autre)
+        $newVer = ("$lastVer" -ne "$($AppInfo.Version)")
         $q = $AppInfo.StatsQueue
         $keys = @()
         [System.Threading.Monitor]::Enter($q.SyncRoot); try { $keys = @($q.ToArray()) } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
-        if (-not $newMonth -and -not $keys.Count) { return }
-        if (-not $newMonth -and -not $Force -and $last -and ((Get-Date) - $last).TotalHours -lt 6) { return }
+        if (-not $newMonth -and -not $newVer -and -not $keys.Count) { return }
+        if (-not $newMonth -and -not $newVer -and -not $Force -and $last -and ((Get-Date) - $last).TotalHours -lt 6) { return }
         # Le relais sait-il recevoir les statistiques ? Sinon les compteurs attendent (rien n'est envoyé ailleurs)
         $cap = Invoke-RestMethod -Uri "$relay/stats" -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop
         if ($cap.aerox -ne 'stats' -or -not $cap.ok) { return }
         $ev = @{}
-        foreach ($k in $keys) { if ($ev.ContainsKey($k)) { if ($ev[$k] -lt 50) { $ev[$k]++ } } elseif ($ev.Count -lt 60) { $ev[$k] = 1 } }
+        foreach ($k in $keys) { if ($ev.ContainsKey($k)) { if ($ev[$k] -lt 50) { $ev[$k]++ } } elseif ($ev.Count -lt 59) { $ev[$k] = 1 } }
+        if ($newVer -and "$($AppInfo.Version)" -match '^\d+(\.\d+){1,3}\z') { $ev['maj:' + ("$($AppInfo.Version)" -replace '\.', '-')] = 1 }
         $body = @{ v = "$($AppInfo.Version)"; nouveau_mois = [bool]$newMonth; ev = $ev } | ConvertTo-Json -Compress
         $r = Invoke-RestMethod -Uri "$relay/stats" -Method Post -Body ([Text.Encoding]::UTF8.GetBytes($body)) -ContentType 'application/json; charset=utf-8' -Headers @{ 'X-Aerox' = '1' } -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
         if ($r.ok) {
             [System.Threading.Monitor]::Enter($q.SyncRoot)
             try { $q.RemoveRange(0, [math]::Min($keys.Count, $q.Count)); Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
-            [IO.File]::WriteAllText($stamp, ("{0}|{1}" -f (Get-Date).ToString('s'), $month))
+            [IO.File]::WriteAllText($stamp, ("{0}|{1}|{2}" -f (Get-Date).ToString('s'), $month, $AppInfo.Version))
             $AppInfo.StatsLastError = ''
         } else { $AppInfo.StatsLastError = "réponse du relais : $($r | ConvertTo-Json -Compress)" }
     } catch { $AppInfo.StatsLastError = $_.Exception.Message } finally { [System.Threading.Monitor]::Exit($AppInfo.StatsLock) }
