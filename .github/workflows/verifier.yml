@@ -78,7 +78,7 @@ jobs:
             # sauf si elle est plus longue que le bloc)
             $blocs = New-Object 'System.Collections.Generic.List[string]'; $cur = ''
             foreach ($l in ($Text -split "`r?`n")) {
-              if ($l.Length -gt $MaxChars) { $l = $l.Substring(0, $MaxChars - 1) + '…' }
+              if ($l.Length -gt $MaxChars) { $l = $l.Substring(0, $MaxChars - 1) + '...' }
               if ($cur.Length -gt 0 -and ($cur.Length + $l.Length + 1) -gt $MaxChars) { $blocs.Add($cur); $cur = '' }
               $cur = $(if ($cur.Length) { $cur + "`n" + $l } else { $l })
             }
@@ -106,14 +106,15 @@ jobs:
           Start-Sleep -Seconds 2
           function Read-Shared([string]$f) { try { $fs = [IO.File]::Open($f, 'Open', 'Read', 'ReadWrite'); $r = New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8); $t = $r.ReadToEnd(); $r.Close(); return $t } catch { return '' } }
           $out = (Read-Shared 'C:\aerox\progress.txt') + "`n---- sortie ----`n" + (Read-Shared 'C:\aerox\test.log') + "`n" + (Read-Shared 'C:\aerox\test.err')
-          if ($code -eq 9) { $out = "!!! TEST BLOQUÉ OU INTERROMPU (dernière étape commencée ci-dessous)`n" + $out }
+          if ($code -eq 9) { $out = "!!! TEST BLOQUE OU INTERROMPU (derniere etape commencee ci-dessous)`n" + $out }
           Write-Host $out
-          # Le résumé (échecs, bugs) d'abord, dans sa propre annotation : le détail est long et sa fin serait coupée
+          # Le resume (echecs, bugs) d'abord, dans sa propre annotation : le detail est long et sa fin serait coupee.
+          # Tout ce qui est cherche ou ecrit ici est en ASCII : ce script est lu par Windows PowerShell sans BOM (accents abimes).
           $log = Read-Shared 'C:\aerox\test.log'
-          $k = $log.IndexOf('== Bugs enregistrés par le logiciel')
-          $fin = if ($k -ge 0) { $log.Substring($k) } else { '(pas de résumé : le test s''est arrêté avant la fin)' }
-          $ko = (($out -split "`r?`n") | Where-Object { $_ -match '\[ÉCHEC\]|^!!!' }) -join "`n"
-          Send-Note 'Résumé' ("Code de sortie : $code`n$ko`n$fin") 3500 1
+          $m = [regex]::Match($log, '== Bugs enregistr\S* par le logiciel')
+          $fin = if ($m.Success) { $log.Substring($m.Index) } else { '(pas de resume : le test s''est arrete avant la fin)' }
+          $ko = (($out -split "`r?`n") | Where-Object { $_ -match '\[.CHEC\]|^!!!' }) -join "`n"
+          Send-Note 'Resume' ("Code de sortie : $code`n$ko`n$fin") 3500 1
           Send-Note 'Test' ($out + "`nCode de sortie : $code") 3000 9
           Write-Host "Code de sortie : $code"
           exit $code
@@ -125,7 +126,7 @@ jobs:
             # Même découpage que l'étape précédente (annotations GitHub : 10 au plus, coupées vers 4 000 octets)
             $blocs = New-Object 'System.Collections.Generic.List[string]'; $cur = ''
             foreach ($l in ($Text -split "`r?`n")) {
-              if ($l.Length -gt $MaxChars) { $l = $l.Substring(0, $MaxChars - 1) + '…' }
+              if ($l.Length -gt $MaxChars) { $l = $l.Substring(0, $MaxChars - 1) + '...' }
               if ($cur.Length -gt 0 -and ($cur.Length + $l.Length + 1) -gt $MaxChars) { $blocs.Add($cur); $cur = '' }
               $cur = $(if ($cur.Length) { $cur + "`n" + $l } else { $l })
             }
@@ -149,12 +150,12 @@ jobs:
           } catch { Write-Host "Lancement : $($_.Exception.Message)" }
           Start-Sleep -Seconds 2
           $out = (Read-Shared 'C:\aerox\portable.log') + "`n" + (Read-Shared 'C:\aerox\portable.err')
-          if ($code -eq 9) { $out = "!!! TEST PORTABLE BLOQUÉ OU INTERROMPU`n" + $out }
+          if ($code -eq 9) { $out = "!!! TEST PORTABLE BLOQUE OU INTERROMPU`n" + $out }
           Write-Host $out
           $lignes = @($out -split "`r?`n")
-          $ko = ($lignes | Where-Object { $_ -match '\[ÉCHEC\]|^!!!' }) -join "`n"
+          $ko = ($lignes | Where-Object { $_ -match '\[.CHEC\]|^!!!' }) -join "`n"
           $fin = ($lignes | Select-Object -Last 25) -join "`n"
-          Send-Note 'Portable résumé' ("Code de sortie : $code`n$ko`n--- fin du test ---`n$fin") 3500 1
+          Send-Note 'Portable resume' ("Code de sortie : $code`n$ko`n--- fin du test ---`n$fin") 3500 1
           Send-Note 'Portable' $out 3000 9
           exit $code
 
@@ -170,4 +171,4 @@ jobs:
           git init -q; git checkout -q -b captures
           git add -A; git -c user.name=aerox-ci -c user.email=ci@aerox.local commit -q -m "Captures $env:GITHUB_SHA"
           git push -q -f "https://x-access-token:$env:GH_TOKEN@github.com/$env:GITHUB_REPOSITORY.git" captures
-          Write-Host "Captures envoyées : $(@(Get-ChildItem *.png).Count)"
+          Write-Host "Captures envoyees : $(@(Get-ChildItem *.png).Count)"
