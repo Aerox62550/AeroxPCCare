@@ -244,12 +244,16 @@ Section "Installer"
   ; Lancement avec Windows (mode discret) : seulement quand on vient d'abandonner un ancien dossier. La tâche visait le logiciel
   ; qui y était : on la déplace vers l'installation actuelle ; si Windows refuse, on la supprime (la personne la réactive en un clic
   ; dans Gaming). Dans tous les autres cas (mise à jour, réinstallation) le programme est au même endroit : la tâche n'est pas touchée.
+  ; « schtasks /Change » réclame le mot de passe du compte (impossible en silence, vérifié sur Windows 11 et Windows Server) : on
+  ; passe par PowerShell, qui ne remplace que le programme lancé et garde tout le reste (compte, droits, délai, réglages).
   ${If} $OldDir != ""
     nsExec::Exec 'schtasks.exe /Query /TN "${TASKNAME}"'
     Pop $0
     ${If} $0 == 0
-      nsExec::Exec 'schtasks.exe /Change /TN "${TASKNAME}" /TR "\"$INSTDIR\${EXENAME}\" --discret"'
+      ${DisableX64FSRedirection}
+      nsExec::Exec /TIMEOUT=60000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { Set-ScheduledTask -TaskName '${TASKNAME}' -Action (New-ScheduledTaskAction -Execute '$INSTDIR\${EXENAME}' -Argument '--discret') -ErrorAction Stop | Out-Null; exit 0 } catch { exit 1 }"`
       Pop $0
+      ${EnableX64FSRedirection}
       ${If} $0 != 0
         nsExec::Exec 'schtasks.exe /Delete /TN "${TASKNAME}" /F'
         Pop $0

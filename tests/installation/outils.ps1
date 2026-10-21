@@ -163,9 +163,17 @@ function Register-TacheDiscret([string]$Exe, [string]$Nom) {
     Register-ScheduledTask -TaskName $Nom -Action $a -Trigger $t -Principal $p -Settings $s -Description 'Test AEROX' -Force -ErrorAction Stop | Out-Null
 }
 
-# Programme visé par la tâche (sans guillemets), ses paramètres, son niveau d'exécution
+# Programme visé par la tâche (sans guillemets), ses paramètres, son niveau d'exécution, et tous ses réglages (pour vérifier qu'un
+# déplacement de la tâche ne change que le programme)
 function Get-TacheInfo([string]$Nom) {
     $t = Get-ScheduledTask -TaskName $Nom -ErrorAction Stop
     $a = @($t.Actions)[0]
-    return @{ Cible = ("$($a.Execute)".Trim().Trim('"')); Arguments = "$($a.Arguments)"; Niveau = "$($t.Principal.RunLevel)"; Declencheurs = @($t.Triggers).Count }
+    $d = @($t.Triggers)[0]
+    return @{
+        Cible = ("$($a.Execute)".Trim().Trim('"')); Arguments = "$($a.Arguments)"; Niveau = "$($t.Principal.RunLevel)"; Declencheurs = @($t.Triggers).Count
+        Compte = "$($t.Principal.UserId)"; Ouverture = "$($t.Principal.LogonType)"
+        TypeDeclencheur = "$($d.CimClass.CimClassName)"; Delai = "$($d.Delay)"
+        Batterie = ("{0}/{1}" -f $t.Settings.DisallowStartIfOnBatteries, $t.Settings.StopIfGoingOnBatteries)
+        DureeMax = "$($t.Settings.ExecutionTimeLimit)"; Instances = "$($t.Settings.MultipleInstances)"
+    }
 }
