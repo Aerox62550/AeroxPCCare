@@ -74,6 +74,262 @@ function Invoke-Smoke {
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
     Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
+    # ---- Audit du 21/10/2026 : chaque défaut corrigé a son test (il échoue si le défaut revient)
+    Smoke 'Windows 11 : fin de support par version (audit M3)' {
+        function Assert-Sup([int]$Build, [string]$Caption, [string]$Today, [string]$State, [string]$Name = '') {
+            $r = Get-Win11Support $Build $Caption ([datetime]$Today)
+            if ($r.State -ne $State -or ($Name -and $r.Name -ne $Name)) { throw ("{0} / build {1} le {2} : attendu {3} {4}, obtenu {5} {6}" -f $Caption, $Build, $Today, $State, $Name, $r.State, $r.Name) }
+        }
+        $j = '2026-10-21'
+        Assert-Sup 26100 'Microsoft Windows 11 Famille' $j 'ended' '24H2'      # fin du support Famille / Pro : 13/10/2026
+        Assert-Sup 26100 'Microsoft Windows 11 Pro' $j 'ended'
+        Assert-Sup 26100 'Microsoft Windows 11 Professionnel' $j 'ended'
+        Assert-Sup 26100 'Microsoft Windows 11 Pro Education' $j 'ended'       # « Pro Education » : 24 mois, comme Pro
+        Assert-Sup 26100 'Microsoft Windows 11 Entreprise' $j 'ok'             # Entreprise / Éducation : 36 mois
+        Assert-Sup 26100 'Microsoft Windows 11 Enterprise' $j 'ok'
+        Assert-Sup 26100 'Microsoft Windows 11 Education' $j 'ok'
+        Assert-Sup 26100 'Microsoft Windows 11 Éducation' $j 'ok'
+        Assert-Sup 26200 'Microsoft Windows 11 Famille' $j 'ok' '25H2'
+        Assert-Sup 26200 'Microsoft Windows 11 Pro' '2027-10-12' 'ok'
+        Assert-Sup 26200 'Microsoft Windows 11 Pro' '2027-10-13' 'ended'
+        Assert-Sup 22631 'Microsoft Windows 11 Famille' $j 'ended' '23H2'
+        Assert-Sup 22631 'Microsoft Windows 11 Entreprise' $j 'ok'
+        Assert-Sup 22631 'Microsoft Windows 11 Entreprise' '2026-11-11' 'ended'
+        Assert-Sup 22621 'Microsoft Windows 11 Entreprise' $j 'ended' '22H2'
+        Assert-Sup 22000 'Microsoft Windows 11 Famille' $j 'ended' '21H2'
+        Assert-Sup 26100 'Microsoft Windows 11 Famille' '2026-10-13' 'ok'      # le jour même, la dernière mise à jour est encore livrée
+        Assert-Sup 26100 'Microsoft Windows 11 Famille' '2026-10-14' 'ended'
+        # Aucun avis (jamais de fausse alerte ni de fausse bonne nouvelle) : serveur, support long, version préliminaire ou trop récente
+        Assert-Sup 26100 'Microsoft Windows Server 2025 Datacenter' $j 'unknown'
+        Assert-Sup 26100 'Microsoft Windows 11 Enterprise LTSC' $j 'unknown'
+        Assert-Sup 25398 'Microsoft Windows 11 Famille' $j 'unknown'
+        Assert-Sup 28000 'Microsoft Windows 11 Famille' $j 'unknown'
+        # Sur le vrai système de cette machine : la fonction répond et le diagnostic ne plante pas
+        $os = Get-CimInstance Win32_OperatingSystem
+        $r = Get-Win11Support ([int]$os.BuildNumber) "$($os.Caption)"
+        Write-Host ("        cette machine : {0} (build {1}) -> {2} {3}" -f $os.Caption, $os.BuildNumber, $r.State, $r.Name)
+    }
+    Smoke 'Compteur de FPS : seule une copie signée par Intel entre dans le dossier protégé (audit M1)' {
+        # 1) Le nom d'organisation du certificat doit être exactement celui attendu
+        if (-not (Test-CertOrg 'CN=Intel Corporation, O=Intel Corporation, S=California, C=US' 'Intel Corporation')) { throw "vrai certificat d'Intel refusé" }
+        if (-not (Test-CertOrg 'O=Intel Corporation' 'Intel Corporation')) { throw "sujet réduit à l'organisation refusé" }
+        if (-not (Test-CertOrg 'CN=x, O=Intel Corporation' 'Intel Corporation')) { throw "organisation en dernier refusée" }
+        foreach ($bad in 'CN=Evil, O=Intel Corporation Fake, C=US', 'CN=Evil, O=Fake Intel Corporation, C=US', 'CN=Intel Corporation, O=Evil Inc, C=US', 'CN=Evil, OU=O=Intel Corporation, C=US', '') {
+            if (Test-CertOrg $bad 'Intel Corporation') { throw "faux certificat accepté : $bad" }
+        }
+        # 2) Vraies signatures Windows : un programme signé par Microsoft n'est pas « d'Intel », un fichier sans signature non plus
+        $psx = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-ToolSignature $psx 'Microsoft Corporation')) { throw "powershell.exe pas reconnu comme signé par Microsoft" }
+        if (Test-ToolSignature $psx 'Intel Corporation') { throw "programme signé Microsoft accepté comme étant d'Intel" }
+        $work = Join-Path $env:TEMP 'aerox-pm-test'; New-Item -ItemType Directory -Force -Path $work | Out-Null
+        $unsigned = Join-Path $work 'sans-signature.exe'; [IO.File]::WriteAllBytes($unsigned, [byte[]](0x4D, 0x5A, 0x90, 0, 3, 0, 0, 0))
+        if (Test-ToolSignature $unsigned 'Intel Corporation') { throw "fichier sans signature accepté" }
+        # 3) Faux PresentMon rangés au même endroit que celui de winget (dossier de l'utilisateur) : aucun ne doit être copié ni lancé
+        $safe = Join-Path (Get-ToolsDir) 'presentmon\PresentMon.exe'; $safeDir = Split-Path $safe -Parent
+        $wgRoot = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'; $fakeDir = Join-Path $wgRoot 'Intel.PresentMon.Console_AeroxTest'
+        if ((Test-Path -LiteralPath $safe) -or (Test-Path -LiteralPath $fakeDir)) { Write-Host '        (vrai PresentMon présent : test sauté)'; Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue; return }
+        try {
+            New-Item -ItemType Directory -Force -Path $fakeDir | Out-Null
+            Copy-Item -LiteralPath $unsigned -Destination (Join-Path $fakeDir 'PresentMon-fake1.exe') -Force
+            Copy-Item -LiteralPath $psx -Destination (Join-Path $fakeDir 'PresentMon-fake2.exe') -Force
+            (Get-Item -LiteralPath (Join-Path $fakeDir 'PresentMon-fake2.exe')).LastWriteTime = (Get-Date).AddMinutes(5)   # le plus récent : essayé en premier
+            if (@(Find-PresentMonInstalled -All).Count -lt 2) { throw "faux PresentMon pas trouvés par la recherche ($(@(Find-PresentMonInstalled -All).Count))" }
+            if (Find-PresentMon) { throw "un PresentMon qui n'est pas signé par Intel a été accepté" }
+            if (Test-Path -LiteralPath $safe) { throw "faux PresentMon copié dans le dossier protégé" }
+            if (Test-Path -LiteralPath (Join-Path $safeDir 'PresentMon-verif.exe')) { throw "copie de vérification laissée dans le dossier protégé" }
+            if ((Get-ToolStatus).PresentMon) { throw "l'état des outils annonce un compteur de FPS installé" }
+            # 4) Copie déjà rangée par une ancienne version d'AEROX (sans vérification) : retirée, jamais lancée
+            New-Item -ItemType Directory -Force -Path $safeDir | Out-Null
+            Copy-Item -LiteralPath $unsigned -Destination $safe -Force
+            if (Find-PresentMon) { throw "ancienne copie non signée toujours acceptée" }
+            if (Test-Path -LiteralPath $safe) { throw "ancienne copie non signée laissée dans le dossier protégé" }
+            Write-Host "        faux PresentMon (sans signature, signé par Microsoft, ancienne copie) : tous refusés"
+        } finally {
+            Remove-Item -LiteralPath $fakeDir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $safe -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath (Join-Path $safeDir 'PresentMon-verif.exe') -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Smoke 'Fenêtre principale : jamais plus grande que la zone utile de l''écran (audit M4)' {
+        # Zones utiles courantes (largeur, hauteur en pixels, barre des tâches exclue) : 1024×768, 1366×768, 1920×1080 à 150 %, 1366×768 à 125 %, 1080p, 4K, très petit écran
+        foreach ($a in @(@(1024, 720), @(1366, 720), @(1280, 672), @(1093, 566), @(1920, 1032), @(3840, 2080), @(800, 560))) {
+            $f = Get-WindowFit $a[0] $a[1]
+            if ($f.W -gt $a[0] - 16 -or $f.H -gt $a[1] - 16) { throw ("zone {0}×{1} : fenêtre {2}×{3} plus grande que la zone utile moins la marge" -f $a[0], $a[1], $f.W, $f.H) }
+            if ($f.MinW -gt $f.W -or $f.MinH -gt $f.H) { throw ("zone {0}×{1} : taille minimale {2}×{3} supérieure à la taille {4}×{5}" -f $a[0], $a[1], $f.MinW, $f.MinH, $f.W, $f.H) }
+            if ($f.W -gt 1120 -or $f.H -gt 780) { throw "fenêtre agrandie au-delà de la taille prévue" }
+        }
+        $g = Get-WindowFit 1920 1032; if ($g.W -ne 1120 -or $g.H -ne 780 -or $g.MinW -ne 960 -or $g.MinH -ne 660) { throw "grand écran : la taille prévue (1120×780, minimum 960×660) a changé" }
+        $p = Get-WindowFit 1024 720;  if ($p.W -ne 1008 -or $p.H -ne 704 -or $p.MinW -ne 960 -or $p.MinH -ne 660) { throw ("écran 1024×768 : {0}×{1} (minimum {2}×{3}) au lieu de 1008×704 (minimum 960×660)" -f $p.W, $p.H, $p.MinW, $p.MinH) }
+        # Sur cette machine : la vraie fenêtre créée tient dans la zone utile
+        $wa = [System.Windows.SystemParameters]::WorkArea
+        Write-Host ("        zone utile de cette machine : {0}×{1} ; fenêtre {2}×{3} (minimum {4}×{5})" -f $wa.Width, $wa.Height, $window.Width, $window.Height, $window.MinWidth, $window.MinHeight)
+        if ($window.Width -gt $wa.Width - 16 -or $window.Height -gt $wa.Height - 16) { throw "la fenêtre créée dépasse la zone utile de l'écran" }
+        # Fenêtres de dialogue : même limite
+        $dlg = New-Dialog 'Test' 600
+        if ($dlg.MaxHeight -gt $wa.Height - 16 -or $dlg.Width -gt $wa.Width - 16) { throw "dialogue plus grand que la zone utile ($($dlg.Width)×$($dlg.MaxHeight))" }
+        $dlg2 = New-Dialog 'Test large' 5000
+        if ($dlg2.Width -gt $wa.Width - 16) { throw "dialogue plus large que la zone utile" }
+    }
+    Smoke 'Lancement avec Windows : seulement depuis un dossier réservé aux administrateurs (audit M2)' {
+        $pf = $env:ProgramFiles; $dir = Join-Path $pf 'AeroxTestM2'; $outside = Join-Path $env:TEMP 'aerox-m2-test'
+        $link = Join-Path $dir 'lien'
+        try {
+            New-Item -ItemType Directory -Force -Path $outside | Out-Null
+            $out = Join-Path $outside 'AeroxPCCare.exe'; [IO.File]::WriteAllBytes($out, [byte[]](0x4D, 0x5A))
+            # 1) Hors de Program Files, chemin vide, fichier introuvable : refusés
+            if (Test-AdminOnlyPath $out) { throw "un fichier hors de Program Files est accepté" }
+            if (Test-AdminOnlyPath '') { throw "un chemin vide est accepté" }
+            if (Test-AdminOnlyPath (Join-Path $pf 'AeroxTestM2-absent\AeroxPCCare.exe')) { throw "un fichier introuvable est accepté" }
+            # 2) Dans Program Files, créé par un administrateur : accepté
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $exe = Join-Path $dir 'AeroxPCCare.exe'; [IO.File]::WriteAllBytes($exe, [byte[]](0x4D, 0x5A))
+            if (-not (Test-AdminOnlyPath $exe)) { throw ("fichier normal de Program Files refusé : dossier « {0} », fichier « {1} »" -f (Get-AclWeakness $dir), (Get-AclWeakness $exe)) }
+            # 3) Un autre compte peut le modifier : refusé (dossier ouvert aux utilisateurs, fichier ouvert à tout le monde, ou propriétaire ordinaire)
+            & icacls.exe $dir /grant '*S-1-5-32-545:(OI)(CI)M' | Out-Null
+            if (Test-AdminOnlyPath $exe) { throw "dossier modifiable par les utilisateurs accepté" }
+            & icacls.exe $dir /remove:g '*S-1-5-32-545' | Out-Null
+            if (-not (Test-AdminOnlyPath $exe)) { throw ("droits retirés, le chemin devrait être de nouveau accepté : « {0} » / « {1} »" -f (Get-AclWeakness $dir), (Get-AclWeakness $exe)) }
+            & icacls.exe $exe /grant '*S-1-1-0:(W)' | Out-Null
+            if (Test-AdminOnlyPath $exe) { throw "fichier modifiable par tout le monde accepté" }
+            & icacls.exe $exe /remove:g '*S-1-1-0' | Out-Null
+            if (-not (Test-AdminOnlyPath $exe)) { throw ("droits retirés, le fichier devrait être de nouveau accepté : « {0} »" -f (Get-AclWeakness $exe)) }
+            & icacls.exe $dir /setowner $env:USERNAME | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                if (Test-AdminOnlyPath $exe) { throw "dossier appartenant à un compte ordinaire accepté" }
+                & icacls.exe $dir /setowner '*S-1-5-32-544' | Out-Null
+                if ($LASTEXITCODE -ne 0 -or -not (Test-AdminOnlyPath $exe)) { throw "propriétaire d'origine non rétabli : « $(Get-AclWeakness $dir) »" }
+            } else { Write-Host '        (changement de propriétaire impossible ici : cas sauté)' }
+            # 4) Jonction : un chemin qui passe par un lien est refusé, même si le dossier visé est sain
+            $real = Join-Path $dir 'reel'; New-Item -ItemType Directory -Force -Path $real | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $real 'AeroxPCCare.exe'), [byte[]](0x4D, 0x5A))
+            if (-not (Test-AdminOnlyPath (Join-Path $real 'AeroxPCCare.exe'))) { throw "dossier normal refusé" }
+            New-Item -ItemType Junction -Path $link -Target $real | Out-Null
+            if (Test-AdminOnlyPath (Join-Path $link 'AeroxPCCare.exe')) { throw "fichier atteint par une jonction accepté" }
+            [IO.Directory]::Delete($link)
+            # 5) L'option « lancer avec Windows » : refusée hors de Program Files, créée dans Program Files, tâche douteuse retirée
+            $AeroxLauncher = $out
+            $b = Get-AutoStartBlock
+            if ($b -notlike '*Program Files*') { throw "lanceur hors de Program Files : blocage attendu, obtenu « $b »" }
+            $threw = $false; try { Set-AutoStart $true } catch { $threw = $true }
+            if (-not $threw -or (Test-AutoStart)) { throw "tâche créée alors que le lanceur est hors de Program Files" }
+            $AeroxLauncher = $exe
+            $b = Get-AutoStartBlock; if ($b) { throw "lanceur de Program Files bloqué : « $b »" }
+            Set-AutoStart $true
+            $t = Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop
+            if ("$(@($t.Actions)[0].Arguments)" -ne '--discret' -or "$($t.Principal.RunLevel)" -ne 'Highest') { throw "tâche mal créée : $(@($t.Actions)[0].Arguments) / $($t.Principal.RunLevel)" }
+            if ((Get-AutoStartTarget) -ne $exe) { throw "programme visé par la tâche : « $(Get-AutoStartTarget) » au lieu de « $exe »" }
+            if (Repair-AutoStartTask) { throw "tâche saine retirée" }
+            if (-not (Test-AutoStart)) { throw "tâche saine disparue" }
+            Set-AutoStart $false
+            foreach ($cible in @($out, (Join-Path $dir 'disparu.exe'))) {
+                $a = New-ScheduledTaskAction -Execute $cible -Argument '--discret'
+                Register-ScheduledTask -TaskName $script:AutoTaskName -Action $a -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Force -ErrorAction Stop | Out-Null
+                if (-not (Repair-AutoStartTask)) { throw "tâche visant « $cible » non retirée" }
+                if (Test-AutoStart) { throw "tâche visant « $cible » toujours là" }
+            }
+            Write-Host '        Program Files : accepté ; dossier libre, droits ouverts, autre propriétaire, jonction, fichier absent : refusés ; tâche douteuse retirée'
+        } finally {
+            Unregister-ScheduledTask -TaskName $script:AutoTaskName -Confirm:$false -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $link) { try { [IO.Directory]::Delete($link) } catch {} }
+            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Smoke 'Diagnostic : seuils du disque, de la mémoire, des températures et de l''antivirus (audit D1 à D5)' {
+        function Assert-Is([string]$Name, $Got, $Want) { if ("$Got" -ne "$Want") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $Name, $Got, $Want) } }
+        # D1 : un disque se juge sur le pourcentage ET sur l'espace réellement libre (2 To à 14 % libres ne sont pas « presque pleins »)
+        Assert-Is 'D1 2 To, 280 Go libres' (Get-SystemDiskLevel 280GB 2000GB) ''
+        Assert-Is 'D1 2 To, 180 Go libres' (Get-SystemDiskLevel 180GB 2000GB) ''
+        Assert-Is 'D1 500 Go, 70 Go libres' (Get-SystemDiskLevel 70GB 500GB) ''
+        Assert-Is 'D1 500 Go, 45 Go libres' (Get-SystemDiskLevel 45GB 500GB) 'warn'
+        Assert-Is 'D1 256 Go, 21 Go libres' (Get-SystemDiskLevel 21GB 256GB) 'warn'
+        Assert-Is 'D1 256 Go, 17 Go libres' (Get-SystemDiskLevel 17GB 256GB) 'crit'
+        Assert-Is 'D1 128 Go, 25 Go libres' (Get-SystemDiskLevel 25GB 128GB) ''
+        Assert-Is 'D1 128 Go, 6 Go libres' (Get-SystemDiskLevel 6GB 128GB) 'crit'
+        Assert-Is 'D1 taille inconnue' (Get-SystemDiskLevel 0 0) ''
+        Assert-Is 'D1 autre disque 4 To, 160 Go libres' (Test-OtherDiskFull 160GB 4000GB) $false
+        Assert-Is 'D1 autre disque 1 To, 10 Go libres' (Test-OtherDiskFull 10GB 1000GB) $true
+        Assert-Is 'D1 autre disque 64 Go, 2 Go libres' (Test-OtherDiskFull 2GB 64GB) $true
+        # D2 : « peu de mémoire » se juge sur la mémoire INSTALLÉE (Windows en réserve une part pour le circuit graphique intégré)
+        Assert-Is 'D2 8 Go installés, 7,4 utilisables' (Test-LowRam 8GB 7.4GB) $false
+        Assert-Is 'D2 8 Go installés, 6 utilisables' (Test-LowRam 8GB 6GB) $false
+        Assert-Is 'D2 4 Go installés' (Test-LowRam 4GB 3.9GB) $true
+        Assert-Is 'D2 6 Go installés' (Test-LowRam 6GB 5.9GB) $true
+        Assert-Is 'D2 installé inconnu, 7 utilisables' (Test-LowRam 0 7GB) $false
+        Assert-Is 'D2 installé inconnu, 3,9 utilisables' (Test-LowRam 0 3.9GB) $true
+        Assert-Is 'D2 tout inconnu' (Test-LowRam 0 0) $false
+        $ram = Get-InstalledRam; $sys = (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+        Write-Host ("        cette machine : {0} installés, {1} utilisables" -f $(if ($ram) { Format-Size $ram } else { 'inconnu' }), (Format-Size $sys))
+        # D3 : seuils de température par type de disque
+        Assert-Is 'D3 NVMe' (Get-DiskTempLimit 'SSD' 'NVMe') 80
+        Assert-Is 'D3 SSD SATA' (Get-DiskTempLimit 'SSD' 'SATA') 70
+        Assert-Is 'D3 disque dur' (Get-DiskTempLimit 'HDD' 'SATA') 60
+        Assert-Is 'D3 inconnu' (Get-DiskTempLimit 'Unspecified' '') 70
+        # D4 : processeur (les Ryzen récents visent 95 °C en charge : normal ; un Intel à 95 °C en charge ne l'est pas)
+        $ryzen = 'AMD Ryzen 9 7950X 16-Core Processor'; $intel = '12th Gen Intel(R) Core(TM) i7-12700K'; $vieux = 'AMD Ryzen 5 5600X 6-Core Processor'
+        Assert-Is 'D4 Ryzen 7000 reconnu' (Test-RyzenTarget95 $ryzen) $true
+        Assert-Is 'D4 Ryzen 7800X3D reconnu' (Test-RyzenTarget95 'AMD Ryzen 7 7800X3D 8-Core Processor') $true
+        Assert-Is 'D4 Ryzen 5000 non concerné' (Test-RyzenTarget95 $vieux) $false
+        Assert-Is 'D4 Intel non concerné' (Test-RyzenTarget95 $intel) $false
+        Assert-Is 'D4 Ryzen 7000 à 95 °C en charge' (Get-CpuTempVerdict 95 80 $ryzen) ''
+        Assert-Is 'D4 Ryzen 7000 à 100 °C' (Get-CpuTempVerdict 100 80 $ryzen) 'crit'
+        Assert-Is 'D4 Ryzen 7000 à 82 °C au repos' (Get-CpuTempVerdict 82 10 $ryzen) 'warn'
+        Assert-Is 'D4 Intel à 94 °C en charge' (Get-CpuTempVerdict 94 90 $intel) ''
+        Assert-Is 'D4 Intel à 95 °C en charge' (Get-CpuTempVerdict 95 90 $intel) 'warn'
+        Assert-Is 'D4 Intel à 100 °C' (Get-CpuTempVerdict 100 90 $intel) 'crit'
+        Assert-Is 'D4 Intel à 79 °C au repos' (Get-CpuTempVerdict 79 5 $intel) ''
+        Assert-Is 'D4 Intel à 80 °C au repos' (Get-CpuTempVerdict 80 5 $intel) 'warn'
+        Assert-Is 'D4 Ryzen 5000 à 95 °C en charge' (Get-CpuTempVerdict 95 90 $vieux) 'warn'
+        # D4 : plusieurs relevés (valeur du milieu) avant de conclure
+        Assert-Is 'D4 milieu de 5 relevés' (Get-Median @(90, 60, 91, 92, 88)) 90
+        Assert-Is 'D4 milieu d''un seul relevé' (Get-Median @(97)) 97
+        Assert-Is 'D4 aucun relevé' ($null -eq (Get-Median @())) $true
+        $sync = @{ Sens = @{ 'cpu.temp' = 91.0; 'cpu.load' = 55.0 } }     # capteurs fabriqués (cette copie de $sync ne sort pas du test)
+        $m = Get-SensorMedian @('cpu.temp', 'cpu.load', 'gpu.temp') 3 1
+        Assert-Is 'D4 température relevée' $m['cpu.temp'] 91
+        Assert-Is 'D4 charge relevée' $m['cpu.load'] 55
+        Assert-Is 'D4 capteur absent' $m.ContainsKey('gpu.temp') $false
+        # D5 : une seule alerte quand Defender est le seul antivirus et que sa protection permanente est coupée ; jamais de faux « aucun antivirus »
+        Assert-Is 'D5 un antivirus actif' (Test-NoAvIssue 1 0 $true $true) $false
+        Assert-Is 'D5 Defender seul, protection permanente coupée' (Test-NoAvIssue 0 0 $true $false) $false
+        Assert-Is 'D5 aucun antivirus ne répond' (Test-NoAvIssue 0 0 $false $false) $true
+        Assert-Is 'D5 antivirus tiers inactif, Defender coupé' (Test-NoAvIssue 0 1 $true $false) $true
+        Assert-Is 'D5 Centre de sécurité en retard, Defender protège' (Test-NoAvIssue 0 0 $true $true) $false
+    }
+    Smoke 'Réglages : écriture tout ou rien et copie de secours (audit S3-1)' {
+        $d = Join-Path $env:TEMP 'aerox-reglages-test'; New-Item -ItemType Directory -Force -Path $d | Out-Null
+        $f = Join-Path $d 'reglages.json'
+        try {
+            Write-FileAtomic $f '{"InstallId":"un","Launches":1}'
+            Write-FileAtomic $f '{"InstallId":"deux","Launches":2}'
+            if ((Get-Content -LiteralPath $f -Raw -Encoding UTF8) -notlike '*"deux"*') { throw "le fichier n'a pas la dernière version" }
+            if ((Get-Content -LiteralPath "$f.bak" -Raw -Encoding UTF8) -notlike '*"un"*') { throw "la copie de secours n'a pas la version précédente" }
+            if (Test-Path -LiteralPath "$f.tmp") { throw "fichier temporaire laissé à côté" }
+            $SettingsFile = $f     # les fonctions appelées d'ici lisent ce fichier-là
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'deux') { throw "lecture normale : « $($h.InstallId) » au lieu de « deux »" }
+            # Fichier principal tronqué (coupure de courant avec l'ancienne méthode d'écriture) : la copie de secours est lue
+            [IO.File]::WriteAllText($f, '{"InstallId":"deu')
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'un') { throw "fichier abîmé : copie de secours non lue (« $($h.InstallId) »)" }
+            # Fichier principal vide : idem
+            [IO.File]::WriteAllText($f, '')
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'un') { throw "fichier vide : copie de secours non lue" }
+            # Réécriture par-dessus un fichier abîmé : l'enregistrement redevient normal
+            Write-FileAtomic $f '{"InstallId":"trois"}'
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'trois') { throw "réécriture après abîmage : « $($h.InstallId) »" }
+            # Un fichier .tmp oublié par un plantage ne gêne pas
+            [IO.File]::WriteAllText("$f.tmp", 'reste')
+            Write-FileAtomic $f '{"InstallId":"quatre"}'
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'quatre' -or (Test-Path -LiteralPath "$f.tmp")) { throw "fichier .tmp oublié : « $($h.InstallId) »" }
+            # Première écriture (fichier absent)
+            Remove-Item -LiteralPath $f, "$f.bak" -Force
+            Write-FileAtomic $f '{"InstallId":"neuf"}'
+            $h = Read-SettingsFile; if ($h.InstallId -ne 'neuf') { throw "première écriture : « $($h.InstallId) »" }
+            # Rien de lisible : pas d'erreur, juste $null (réglages par défaut)
+            Remove-Item -LiteralPath $f, "$f.bak" -Force -ErrorAction SilentlyContinue
+            if ($null -ne (Read-SettingsFile)) { throw "aucun fichier : une valeur a été renvoyée" }
+        } finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     # ---- Gaming : carnet de performances par jeu (pas de vrai jeu sur la machine de test : parties simulées)
     Smoke 'Gaming : reconnaissance des jeux' {
         $ok = @{ 'C:\Program Files\Epic Games\Fortnite\FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe' = 'Fortnite'; 'C:\Riot Games\VALORANT\live\ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe' = 'VALORANT'; 'D:\SteamLibrary\steamapps\common\Call of Duty HQ\cod.exe' = 'Call of Duty HQ'; 'C:\Program Files (x86)\Overwatch\_retail_\Overwatch.exe' = 'Overwatch' }
@@ -208,11 +464,39 @@ function Invoke-Smoke {
         Write-Host "        dossier protégé : $t"
     }
     Smoke 'Sécurité : annulations scellées' {
+        # Dossiers d'essai à part : ces fausses annulations ne doivent pas rester dans le vrai historique
+        # (le test « Annulations depuis l historique » plus bas exécute celles qu'il y trouve)
+        $iso = Join-Path $env:TEMP ('AeroxSceaux-' + [guid]::NewGuid().ToString('N'))
+        $copie = @{}; foreach ($k in @($AppInfo.Keys)) { $copie[$k] = $AppInfo[$k] }
+        $copie.LogDir = Join-Path $iso 'journal'; $copie.Secure = Join-Path $iso 'protege'
+        New-Item -ItemType Directory -Force -Path $copie.LogDir, $copie.Secure | Out-Null
+        $AppInfo = $copie
+        try {
         Add-Change -Title 'Test sceau' -Undo 'Set-CpuMaxState 100'
         $c = @(Get-Changes 5 | Where-Object { $_.Title -eq 'Test sceau' })[0]
         if (-not (Test-UndoAuthorized $c.Id $c.Undo)) { throw "annulation notée par AEROX refusée" }
         if (Test-UndoAuthorized 'faux123' "Set-BgItem 'service' '' 'RemoteRegistry' 'auto'") { throw "annulation trafiquée acceptée" }
         if (Test-UndoAuthorized $c.Id "Set-BgItem 'task' '\X\' 'Y' 'on'") { throw "annulation remplacée dans l'historique acceptée" }
+        # Audit S1 : le sceau est obligatoire pour les 18 actions (avant : 15 sur 18 acceptées sans sceau, par exemple un changement de DNS)
+        $exemples = @(
+            "Set-UserProxy 0 '' ''", "Restore-HostsBackup 'C:\x\hosts.bak'", "Set-StartupApps -Enable @('a')", "Set-PowerScheme 'guid' 'nom'",
+            'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', "Set-DisplayHz '\\.\DISPLAY1' 60", 'Set-NetAdapterSleep ''Ethernet'' $true',
+            "Restore-Dns '{00000000-0000-0000-0000-000000000000}' '9.9.9.9'", 'Set-CpuMaxState 100', "Set-BgItem 'service' '' 'X' 'auto'", "Restore-RegBackup 'C:\x.reg'",
+            "Set-ReservedStorage 'Enabled'", "Set-HiberType 'full'", "Set-RestoreSpace '10'", "Set-CompactOS 'on'", 'Resume-BitLockerOs')
+        if ($exemples.Count -ne 18) { throw "il devait y avoir 18 exemples, il y en a $($exemples.Count)" }
+        $n = 0
+        foreach ($u in $exemples) {
+            $n++
+            if (-not (Test-SafeUndo $u)) { throw "exemple d'annulation non reconnu comme sûr : $u" }
+            if (Test-UndoAuthorized "sans-sceau-$n" $u) { throw "annulation SANS sceau acceptée : $u" }
+            Add-Change -Title 'Test sceau (toutes les actions)' -Undo $u
+            $e = @(Get-Changes 100 | Where-Object { $_.Title -eq 'Test sceau (toutes les actions)' -and $_.Undo -eq $u })[0]
+            if (-not $e) { throw "changement de test non retrouvé dans l'historique : $u" }
+            if (-not (Test-UndoAuthorized $e.Id $e.Undo)) { throw "annulation notée par AEROX refusée : $u" }
+            if (Test-UndoAuthorized "$($e.Id)x" $e.Undo) { throw "sceau accepté pour un autre identifiant : $u" }
+        }
+        Write-Host "        18 actions : sceau obligatoire pour chacune"
+        } finally { Remove-Item -LiteralPath $iso -Recurse -Force -ErrorAction SilentlyContinue }
     }
     Smoke 'Mises à jour : doublons et logiciels déjà désinstallés' {
         $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AeroxTestFantome'
@@ -605,6 +889,13 @@ function Invoke-Smoke {
             foreach ($bad in @($env:COMPUTERNAME, $env:USERNAME, $AppInfo.LogDir) | Where-Object { "$_".Length -ge 3 }) { if ($g[1].B -like "*$bad*") { throw "donnée personnelle dans l'envoi" } }
             if ($AppInfo.StatsQueue.Count -or -not (Test-Path -LiteralPath $stamp)) { throw "file non vidée après l'envoi ($($AppInfo.StatsQueue.Count) restant(s), erreur : $($AppInfo.StatsLastError))" }
             Write-Host ("        envoyé ({0} compteur(s)) : {1}" -f $n0, $g[1].B)
+            # Compteur de version : une fois par PC et par version, pas à chaque envoi
+            $mk = 'maj:' + ($AppVersion -replace '\.', '-')
+            if ($b.ev.$mk -ne 1) { throw "compteur « $mk » absent du premier envoi" }
+            Add-StatsEvent 'lent:rien'
+            $g = & $run $false
+            if (@($g).Count -ne 2) { throw "2e envoi incorrect" }
+            if ($g[1].B -like "*maj:*") { throw "compteur de version renvoyé : $($g[1].B)" }
         } finally { $AppInfo.StatsOff = $oldOff; $sync.BugRelay = $oldRelay; $AppInfo.StatsQueue = $oldQ; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue }
     }
     Smoke 'Analyse du nettoyage' { Get-CleanupAnalysis }
@@ -843,14 +1134,15 @@ function Invoke-SmokeActions {
         Write-Host "        éléments : $($ids -join ', ')"
         if ($ids.Count) { Invoke-WindowsSpace -Items $ids }
     }
-    Smoke 'Gaming : lancement avec Windows' {
-        $AeroxLauncher = Join-Path $AppRoot 'AeroxPCCare.exe'   # le test tourne sans le lanceur
-        Set-AutoStart $true
-        $t = Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop
-        if ("$(@($t.Actions)[0].Arguments)" -ne '--discret' -or "$($t.Principal.RunLevel)" -ne 'Highest') { throw "tâche mal créée : $(@($t.Actions)[0].Arguments) / $($t.Principal.RunLevel)" }
-        Set-AutoStart $false
-        if (Test-AutoStart) { throw "tâche toujours là" }
-        Write-Host '        créée puis retirée : OK'
+    Smoke 'Gaming : lancement avec Windows (refusé hors de Program Files)' {
+        # Le test tourne sans le lanceur, depuis un dossier libre : l'option est refusée avec une explication, sans rien créer.
+        # (La création de la tâche depuis Program Files est testée plus haut : audit M2.)
+        $AeroxLauncher = Join-Path $AppRoot 'AeroxPCCare.exe'
+        if (-not (Get-AutoStartBlock)) { throw "option permise depuis un dossier libre ($AppRoot)" }
+        $threw = $false; try { Set-AutoStart $true } catch { $threw = $true }
+        if (-not $threw) { throw "Set-AutoStart n'a pas refusé" }
+        if (Test-AutoStart) { throw "tâche créée malgré le refus" }
+        Write-Host '        refusé, rien créé : OK'
     }
     Smoke 'Mode performances' { Set-HighPerformance; Set-BalancedPower }
     Smoke 'Assistant stockage' { Enable-StorageSense; if (-not (Get-StorageSenseOn)) { throw 'pas activé' }; Disable-StorageSense }

@@ -22,11 +22,14 @@ RequestExecutionLevel admin
 !define PUBLISHER "AEROX"
 !define WEBSITE   "https://github.com/Aerox62550/AeroxPCCare"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AeroxPCCare"
+!define TASKNAME  "AEROX PC Care (mode discret)"
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
+; Dossier d'installation IMPOSÉ (pas de page de choix, /D= ignoré, voir .onInit) : Program Files, que seuls les
+; administrateurs peuvent modifier. AEROX est lancé avec les droits admin (et peut l'être à chaque démarrage de Windows) :
+; dans un dossier libre, n'importe quel programme du compte pourrait remplacer le lanceur et se faire exécuter en administrateur.
 InstallDir "$PROGRAMFILES64\AeroxPCCare"
-; Le dossier choisi lors d'une installation précédente est relu dans .onInit (registre 64 bits)
 BrandingText "${APPNAME} ${VERSION}"
 
 VIProductVersion "${VERSION}.0"
@@ -49,7 +52,7 @@ ${UnStrStr}
 !define MUI_UNICON "${SRC}\aerox.ico"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Bienvenue dans l'installation d'${APPNAME} ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "${APPNAME} analyse ton PC, t'explique chaque problème et le répare en un clic : nettoyage, mises à jour, réparations, performances, températures et FPS.$\r$\n$\r$\nRien n'est modifié sur ton PC sans ton accord.$\r$\n$\r$\nClique sur Suivant pour continuer."
+!define MUI_WELCOMEPAGE_TEXT "${APPNAME} analyse ton PC, t'explique chaque problème et le répare en un clic : nettoyage, mises à jour, réparations, performances, températures et FPS.$\r$\n$\r$\nRien n'est modifié sur ton PC sans ton accord.$\r$\n$\r$\nIl s'installe dans le dossier protégé de Windows (Program Files) : personne d'autre que toi ne peut le modifier.$\r$\n$\r$\nClique sur Suivant pour continuer."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${EXENAME}"
 !define MUI_FINISHPAGE_RUN_TEXT "Lancer ${APPNAME}"
 !define MUI_FINISHPAGE_SHOWREADME "$INSTDIR\LISEZMOI.txt"
@@ -59,6 +62,8 @@ ${UnStrStr}
 ; Mode mise à jour (/UPDATE, lancé par le logiciel) : pas de questions, juste la barre de progression,
 ; puis le logiciel se relance tout seul.
 Var IsUpdate
+; Dossier d'une installation précédente faite ailleurs que dans Program Files (ancien choix libre) : reprise en fin d'installation
+Var OldDir
 Function SkipIfUpdate
   ${If} $IsUpdate == 1
     Abort
@@ -67,8 +72,6 @@ FunctionEnd
 
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
 !insertmacro MUI_PAGE_WELCOME
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfUpdate
 !insertmacro MUI_PAGE_FINISH
@@ -140,12 +143,27 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
-  ; Mise à jour / réinstallation : on garde le dossier déjà utilisé (sauf si /D= est donné)
-  ${If} "$INSTDIR" == "$PROGRAMFILES64\AeroxPCCare"
-    ReadRegStr $R2 HKLM "${UNINSTKEY}" "Dossier"
-    ${If} $R2 != ""
-    ${AndIf} ${FileExists} "$R2\*.*"
-      StrCpy $INSTDIR $R2
+  ; Dossier imposé : Program Files, quoi qu'il y ait dans la ligne de commande (/D=…) ou dans une installation précédente
+  StrCpy $INSTDIR "$PROGRAMFILES64\AeroxPCCare"
+  ; Installation précédente dans un autre dossier (les versions d'avant laissaient choisir) : ses fichiers sont repris en fin d'installation
+  StrCpy $OldDir ""
+  ReadRegStr $R2 HKLM "${UNINSTKEY}" "Dossier"
+  ${If} $R2 == ""
+    ReadRegStr $R2 HKLM "${UNINSTKEY}" "InstallLocation"
+  ${EndIf}
+  ; sans « \ » final
+  StrCpy $R3 $R2 1 -1
+  ${If} $R3 == "\"
+    StrCpy $R2 $R2 -1
+  ${EndIf}
+  ; Jamais le dossier d'installation actuel ni l'un de ses dossiers parents (sinon on effacerait ce qu'on vient d'installer).
+  ; Comparaison sans tenir compte des majuscules : « $INSTDIR\ » commence-t-il par « $R2\ » ? (Une dernière vérification, sur le
+  ; disque, est faite avant tout nettoyage : voir la section d'installation.)
+  ${If} $R2 != ""
+    StrLen $R4 "$R2\"
+    StrCpy $R3 "$INSTDIR\" $R4
+    ${If} $R3 != "$R2\"
+      StrCpy $OldDir $R2
     ${EndIf}
   ${EndIf}
 FunctionEnd
@@ -153,8 +171,12 @@ FunctionEnd
 ; Mise à jour automatique ratée : on relance quand même le logiciel (ancienne version) pour ne pas laisser l'utilisateur sans rien
 Function .onInstFailed
   ${If} $IsUpdate == 1
-  ${AndIf} ${FileExists} "$INSTDIR\${EXENAME}"
-    Exec '"$INSTDIR\${EXENAME}"'
+    ${If} ${FileExists} "$INSTDIR\${EXENAME}"
+      Exec '"$INSTDIR\${EXENAME}"'
+    ${ElseIf} $OldDir != ""
+    ${AndIf} ${FileExists} "$OldDir\${EXENAME}"
+      Exec '"$OldDir\${EXENAME}"'
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
@@ -176,7 +198,7 @@ Section "Installer"
   File /nonfatal "${SRC}\aerox.ico"
   File /nonfatal "${SRC}\LISEZMOI.txt"
   ${If} ${Errors}
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Windows ou ton antivirus empêche de copier les fichiers d'${APPNAME} dans :$\r$\n$INSTDIR$\r$\n$\r$\nCe qu'il faut faire :$\r$\n1. Ouvre ton antivirus, va dans la Quarantaine et restaure (ou supprime) les éléments « AEROX ».$\r$\n2. Ajoute ce dossier aux exceptions de l'antivirus.$\r$\n3. Clique sur Réessayer.$\r$\n$\r$\nTu peux aussi Annuler et relancer l'installation en choisissant un autre dossier." /SD IDCANCEL IDRETRY copie
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Windows ou ton antivirus empêche de copier les fichiers d'${APPNAME} dans :$\r$\n$INSTDIR$\r$\n$\r$\nCe qu'il faut faire :$\r$\n1. Ouvre ton antivirus, va dans la Quarantaine et restaure (ou supprime) les éléments « AEROX ».$\r$\n2. Ajoute ce dossier aux exceptions de l'antivirus.$\r$\n3. Clique sur Réessayer." /SD IDCANCEL IDRETRY copie
     Abort "Installation annulée : les fichiers n'ont pas pu être copiés."
   ${EndIf}
 
@@ -191,6 +213,52 @@ Section "Installer"
     Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\LISEZMOI.txt"
     Delete /REBOOTOK "$PROGRAMFILES64\${APPNAME}\Desinstaller.exe"
     RMDir /r /REBOOTOK "$PROGRAMFILES64\${APPNAME}"
+  ${EndIf}
+
+  ; Installation précédente faite dans un autre dossier (les versions d'avant laissaient choisir) : on retire UNIQUEMENT les
+  ; fichiers d'AEROX qui y étaient (jamais le dossier entier : la personne y gardait peut-être autre chose). Le dossier est
+  ; supprimé seulement s'il est devenu vide. Les copies installées ci-dessus sont déjà en place, donc rien n'est perdu si ça échoue.
+  ; Vérification sur le disque : un fichier-témoin posé dans le nouveau dossier ne doit PAS apparaître dans l'ancien. S'il y apparaît,
+  ; c'est le même dossier écrit autrement (nom court 8.3, lien, majuscules…) : on n'y touche surtout pas.
+  ${If} $OldDir != ""
+    FileOpen $R5 "$INSTDIR\.aerox-temoin" w
+    FileClose $R5
+    ${If} ${FileExists} "$OldDir\.aerox-temoin"
+      StrCpy $OldDir ""
+    ${EndIf}
+    Delete "$INSTDIR\.aerox-temoin"
+  ${EndIf}
+  ${If} $OldDir != ""
+    Delete /REBOOTOK "$OldDir\${EXENAME}"
+    Delete /REBOOTOK "$OldDir\${OLDEXE}"
+    Delete /REBOOTOK "$OldDir\AeroxPCCare.ps1"
+    Delete /REBOOTOK "$OldDir\AeroxPCCare.Native.dll"
+    Delete /REBOOTOK "$OldDir\aerox.ico"
+    Delete /REBOOTOK "$OldDir\LISEZMOI.txt"
+    Delete /REBOOTOK "$OldDir\Desinstaller.exe"
+    Delete "$OldDir\maj\AeroxPCCare_Setup_*.exe"
+    RMDir "$OldDir\maj"
+    RMDir "$OldDir"
+  ${EndIf}
+
+  ; Lancement avec Windows (mode discret) : seulement quand on vient d'abandonner un ancien dossier. La tâche visait le logiciel
+  ; qui y était : on la déplace vers l'installation actuelle ; si Windows refuse, on la supprime (la personne la réactive en un clic
+  ; dans Gaming). Dans tous les autres cas (mise à jour, réinstallation) le programme est au même endroit : la tâche n'est pas touchée.
+  ; « schtasks /Change » réclame le mot de passe du compte (impossible en silence, vérifié sur Windows 11 et Windows Server) : on
+  ; passe par PowerShell, qui ne remplace que le programme lancé et garde tout le reste (compte, droits, délai, réglages).
+  ${If} $OldDir != ""
+    nsExec::Exec 'schtasks.exe /Query /TN "${TASKNAME}"'
+    Pop $0
+    ${If} $0 == 0
+      ${DisableX64FSRedirection}
+      nsExec::Exec /TIMEOUT=60000 `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { Set-ScheduledTask -TaskName '${TASKNAME}' -Action (New-ScheduledTaskAction -Execute '$INSTDIR\${EXENAME}' -Argument '--discret') -ErrorAction Stop | Out-Null; exit 0 } catch { exit 1 }"`
+      Pop $0
+      ${EnableX64FSRedirection}
+      ${If} $0 != 0
+        nsExec::Exec 'schtasks.exe /Delete /TN "${TASKNAME}" /F'
+        Pop $0
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   WriteUninstaller "$INSTDIR\Desinstaller.exe"
@@ -242,7 +310,7 @@ Section "Uninstall"
   RMDir /r "$PROGRAMFILES64\AeroxPCCare\protege\module"
   DeleteRegKey HKLM "${UNINSTKEY}"
   ; Lancement avec Windows en mode discret (option de l'onglet Gaming)
-  nsExec::Exec 'schtasks.exe /Delete /TN "AEROX PC Care (mode discret)" /F'
+  nsExec::Exec 'schtasks.exe /Delete /TN "${TASKNAME}" /F'
   Pop $0
 
   ; Journaux, réglages et outils téléchargés (températures, FPS) : au choix

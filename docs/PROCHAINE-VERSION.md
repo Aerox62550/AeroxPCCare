@@ -2,6 +2,45 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.5.3 : corrections de l'audit du 21/10/2026 (demande de Sam : une seule mise à jour)
+
+Audit complet du code par Claude (détail privé dans le projet « Aerox PcCare »). Chaque défaut corrigé a son test permanent dans tests/smoke.ps1.
+
+Sécurité (AEROX tourne en administrateur) :
+- M1 Compteur de FPS : PresentMon n'entre dans le dossier protégé et n'est lancé que s'il est signé par Intel (Test-ToolSignature : signature Windows valide ET organisation du certificat exactement « Intel Corporation », Test-CertOrg), vérifié sur la copie rangée dans le dossier protégé. Une copie rangée par une version précédente est recontrôlée, et retirée si elle n'est pas d'Intel. Vérifié sur de vrais Windows : le vrai PresentMon 2.6.0 est signé Intel (Windows 11 ARM, Windows Server 2025, copie winget comprise).
+- M2 Lancement avec Windows (tâche « mode discret », droits les plus élevés) : l'installateur s'installe TOUJOURS dans C:\Program Files\AeroxPCCare (plus de page de choix du dossier, /D= ignoré) ; une ancienne installation faite ailleurs est reprise (seuls les fichiers d'AEROX y sont retirés, jamais le dossier entier, avec un fichier-témoin qui empêche de toucher au dossier neuf) et la tâche « lancer avec Windows » est déplacée vers le nouveau programme avec tous ses réglages (par PowerShell : l'outil « schtasks /Change » réclame le mot de passe du compte ; la tâche est supprimée si Windows refuse). Une mise à jour ou une réinstallation dans Program Files ne touche pas à la tâche. Au lancement : Test-AdminOnlyPath (dans Program Files, aucun lien/jonction en chemin, propriétaire et droits réservés à SYSTEM / administrateurs / TrustedInstaller) conditionne l'option (Get-AutoStartBlock) ; Repair-AutoStartTask retire au démarrage une tâche qui vise un programme modifiable par d'autres.
+- S1 Annulations : seules les modifications notées par AEROX lui-même (sceau dans le dossier protégé) peuvent être annulées depuis l'historique.
+- S2 Lanceur : ne retire plus la marque « téléchargé » de tout le dossier, seulement des fichiers d'AEROX (script, DLL, outils du dossier protégé).
+- S3-1 Réglages : écrits « tout ou rien » (Write-FileAtomic : fichier .tmp puis échange, l'ancien devient .bak) et relus depuis le .bak s'ils sont abîmés (Read-SettingsFile).
+
+Fausses informations (jamais d'alerte à tort) :
+- M3 Windows 11 : fin de support par version ET par édition ($script:Win11Versions : 24H2 Famille / Pro terminée le 13/10/2026, Entreprise / Éducation 36 mois). Serveur, LTSC et versions inconnues : aucun avis. À mettre à jour chaque automne (nouvelle version de Windows 11).
+- M4 Fenêtre principale et dialogues : jamais plus grands que la zone utile de l'écran (Get-WindowFit : 1008×704 sur un écran 1024×768, 1120×780 sur grand écran).
+- D1 Disque : pourcentage ET espace libre (Get-SystemDiskLevel : alerte sous 15 % ET 50 Go, critique sous 10 % ET 20 Go ; autres disques sous 5 % ET 20 Go).
+- D2 Mémoire : « peu de mémoire » jugé sur la mémoire installée (somme des barrettes, Test-LowRam), plus sur ce que Windows peut utiliser.
+- D3 Température du disque par type (Get-DiskTempLimit : NVMe 80, SSD 70, disque dur 60 °C).
+- D4 Processeur : quelques relevés avant de conclure (Get-SensorMedian), critique seulement dès 100 °C, Ryzen 7000 / 8000 / 9000 à 95 °C en charge = normal (Get-CpuTempVerdict).
+- D5 Antivirus : une seule alerte quand Defender est seul et coupé (Test-NoAvIssue) ; jamais « aucun antivirus » si Defender dit protéger en temps réel.
+- D6 Pilote graphique ancien : texte nuancé (une version plus récente existe peut-être, AEROX ne l'a pas vérifié).
+
+Visible par les testeurs : l'installateur ne propose plus de choisir le dossier ; l'option « lancer avec Windows » est refusée (avec explication) si AEROX n'est pas dans Program Files.
+
+Relais Cloudflare (**à redéployer par Sam** : copier `relais/worker.js` dans Cloudflare, voir docs/RELAIS-RAPPORTS.md § 8 ; l'ancien relais continue de fonctionner avec cette version du logiciel) :
+- Textes des rapports et des avis nettoyés avant publication (mentions, liens, images, balises, commentaires cachés, renvois vers d'autres tickets) ; adresses inconnues refusées (404).
+- Requête invalide ou trop grosse, GitHub ou stockage KV en panne : réponse propre (400 / 413 / 502 / 503) au lieu d'une erreur 500 ; rapports et avis passent même si le quota d'écritures KV du jour est épuisé.
+- Adresse IP jamais écrite (empreinte secrète d'une heure) ; plafonds d'envoi par adresse et au total, avec message Discord « Plafond d'envois atteint » (au plus un par heure).
+- Statistiques : compteurs connus seulement (liste commune logiciel / relais : `$script:StatsPrefixes` et `STATS_FROM_APP`), 400 compteurs différents par mois, 300 envois par jour, 20 par adresse ; un refus est une erreur HTTP (le logiciel garde ses compteurs et les renvoie), un fichier du mois abîmé est réparé à la lecture.
+- Tâche « Statistiques » : affiche aussi les plafonds du jour.
+
+Tests permanents ajoutés : relais (Node, `tests/relais/`), installateur / lanceur / tâche « lancer avec Windows » / mise à jour / désinstallation / vrai PresentMon (`tests/installation/`, Windows Server 2025 et Windows 11 ARM), et le résumé des échecs de la CI est toujours la première annotation.
+
+## Publié en 2.5.3 : compteur « passé en version X » (demande de Sam)
+
+- Constat : le compteur « version:x » n'est envoyé qu'au 1er envoi du mois de chaque PC → il ne dit pas qui est à jour.
+- Send-Stats : la version du dernier envoi est notée dans stats-envoi.txt (date|mois|version) ; à la 1re ouverture d'une nouvelle version, un envoi « maj:2-5-3 » = 1 part, une seule fois par PC et par version (même avant les 6 h). Rien d'autre n'est ajouté (pas d'identifiant).
+- Relais inchangé (la clé passe le filtre existant). La tâche GitHub « Statistiques » affiche les compteurs maj:*.
+- Test (faux relais) : « maj:<version> » dans le 1er envoi, absent du 2e.
+
 ## Publié en 2.5.2 : préparer la mise à jour du BIOS (demande de Sam)
 
 - Mon PC > « Préparer la mise à jour du BIOS » (Show-BiosUpdateDialog), 4 étapes : télécharger (page officielle), choisir le fichier, préparer la clé USB, installer.

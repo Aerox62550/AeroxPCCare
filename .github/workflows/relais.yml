@@ -1,0 +1,33 @@
+# Tests du relais Cloudflare (relais/worker.js) : nettoyage des textes publiés, limites d'envoi, statistiques, pannes du stockage.
+# Aucun réseau et aucun compte Cloudflare : le stockage KV, GitHub et Discord sont simulés. Ne publie rien. Dure environ 15 secondes.
+# Vérifie aussi que la liste des compteurs de statistiques du logiciel (src/2_lib.ps1) est la même que celle du relais.
+name: Tester le relais
+
+on:
+  push:
+    branches: [prochaine-version]
+    paths: ['relais/**', 'tests/relais/**', 'src/**', '.github/workflows/relais.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relais:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tests du relais
+        run: |
+          set +e
+          node tests/relais/relais.test.mjs > relais.log 2>&1
+          code=$?
+          cat relais.log
+          # Résumé lisible via l'API GitHub (annotation) : les échecs, puis le total
+          txt=$( { grep -E 'ECHEC|^  - ' relais.log | head -30; tail -n 3 relais.log; } | sed 's/%/%25/g' | awk 'BEGIN { ORS = "%0A" } { print }')
+          echo "::notice title=Relais (code $code)::$txt"
+          exit $code

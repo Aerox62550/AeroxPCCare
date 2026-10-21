@@ -50,13 +50,21 @@ static class Program {
         } catch { }
         return true;
     }
-    static System.Threading.Mutex instance;
+#pragma warning disable 414
+    static System.Threading.Mutex instance;   // gardé en vie pour toute la durée du programme (verrou « une seule fenêtre »)
+#pragma warning restore 414
 
     // Retire la marque « téléchargé depuis Internet » (Zone.Identifier) des fichiers du logiciel,
     // comme le bouton « Débloquer » des propriétés d'un fichier : sinon .NET refuse de charger la DLL.
+    // Uniquement les fichiers d'AEROX : jamais tout un dossier (si AEROX est posé dans « Téléchargements », les autres fichiers
+    // téléchargés doivent garder leur marque, c'est elle qui déclenche les avertissements de Windows).
+    static void UnblockFile(string file) {
+        try { DeleteFileW(file + ":Zone.Identifier"); } catch { }
+    }
+    // Dossier des outils d'AEROX (dossier protégé, réservé aux administrateurs) : tous ses fichiers sont ceux qu'AEROX y a mis
     static void UnblockFolder(string dir) {
         try {
-            foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) { try { DeleteFileW(f + ":Zone.Identifier"); } catch { } }
+            foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) UnblockFile(f);
         } catch { }
     }
 
@@ -111,7 +119,8 @@ static class Program {
             }
             string code;
             using (StreamReader sr = new StreamReader(new MemoryStream(raw), Encoding.UTF8, true)) code = sr.ReadToEnd();
-            UnblockFolder(dir);
+            UnblockFile(script);
+            UnblockFile(Path.Combine(dir, "AeroxPCCare.Native.dll"));
             UnblockFolder(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"AeroxPCCare\protege\outils"));
 
             splash.SetProgress(15, "Démarrage du moteur…");

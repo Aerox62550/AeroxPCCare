@@ -30,6 +30,10 @@ jobs:
           d = json.load(open('stats.json'))
           for k in ('DISCORD_BUGS', 'DISCORD_AVIS'): d.pop(k, None)
           lines = []
+          plafonds = d.pop('plafonds', None)
+          if isinstance(plafonds, dict):
+              lines.append("== Plafonds du jour (protection du relais contre les envois en masse)")
+              for nom, v in plafonds.items(): lines.append(f"{nom} : {v}")
           for mois in sorted(d, reverse=True):
               v = d[mois]
               if not isinstance(v, dict): continue
