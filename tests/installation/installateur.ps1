@@ -127,6 +127,25 @@ Verifier 'Lancement réel : la fenêtre principale apparaît et tient dans la zo
         Exiger ($lw -le $zone.Width -and $lh -le $zone.Height) ("fenêtre {0}x{1} plus grande que la zone utile {2}x{3}" -f $lw, $lh, $zone.Width, $zone.Height)
     } finally { Stop-Aerox }
 }
+Verifier 'Lanceur : la marque « téléchargé depuis Internet » n''est retirée que des fichiers d''AEROX, jamais d''un fichier voisin (S2)' {
+    Stop-Aerox; Preparer-Reglages
+    $marque = "[ZoneTransfer]`r`nZoneId=3`r`n"
+    $voisin = Join-Path $Dir 'voisin-telecharge.txt'
+    $siens = @((Join-Path $Dir 'AeroxPCCare.ps1'), (Join-Path $Dir 'AeroxPCCare.Native.dll'))
+    function Test-Marque([string]$Fichier) { return [bool](Get-Item -LiteralPath $Fichier -Stream 'Zone.Identifier' -ErrorAction SilentlyContinue) }
+    try {
+        Set-Content -LiteralPath $voisin -Value 'un autre fichier telecharge'
+        foreach ($f in @($voisin) + $siens) { Set-Content -LiteralPath $f -Stream 'Zone.Identifier' -Value $marque }
+        foreach ($f in @($voisin) + $siens) { Exiger (Test-Marque $f) "marque de départ non posée sur $f" }
+        $p = Start-Exe $Exe
+        try {
+            $r = Wait-Fenetre $p '^visible \| HwndWrapper.*\| AEROX PC Care \|' 150
+            Exiger (-not $r.Sorti -and -not $r.Delai) 'la fenêtre principale n''est pas apparue'
+        } finally { Stop-Aerox }
+        foreach ($f in $siens) { Exiger (-not (Test-Marque $f)) ("marque « téléchargé » pas retirée de " + (Split-Path $f -Leaf)) }
+        Exiger (Test-Marque $voisin) 'le fichier voisin a perdu sa marque « téléchargé » : le lanceur débloque aussi ce qui n''est pas à lui'
+    } finally { Remove-Item -LiteralPath $voisin -Force -ErrorAction SilentlyContinue }
+}
 Verifier 'Script modifié : le lanceur refuse de le lancer en administrateur' {
     Stop-Aerox
     $ps1 = Join-Path $Dir 'AeroxPCCare.ps1'
