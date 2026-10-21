@@ -25,6 +25,15 @@ Fausses informations (jamais d'alerte à tort) :
 
 Visible par les testeurs : l'installateur ne propose plus de choisir le dossier ; l'option « lancer avec Windows » est refusée (avec explication) si AEROX n'est pas dans Program Files.
 
+Relais Cloudflare (**à redéployer par Sam** : copier `relais/worker.js` dans Cloudflare, voir docs/RELAIS-RAPPORTS.md § 8 ; l'ancien relais continue de fonctionner avec cette version du logiciel) :
+- Textes des rapports et des avis nettoyés avant publication (mentions, liens, images, balises, commentaires cachés, renvois vers d'autres tickets) ; adresses inconnues refusées (404).
+- Requête invalide ou trop grosse, GitHub ou stockage KV en panne : réponse propre (400 / 413 / 502 / 503) au lieu d'une erreur 500 ; rapports et avis passent même si le quota d'écritures KV du jour est épuisé.
+- Adresse IP jamais écrite (empreinte secrète d'une heure) ; plafonds d'envoi par adresse et au total, avec message Discord « Plafond d'envois atteint » (au plus un par heure).
+- Statistiques : compteurs connus seulement (liste commune logiciel / relais : `$script:StatsPrefixes` et `STATS_FROM_APP`), 400 compteurs différents par mois, 300 envois par jour, 20 par adresse ; un refus est une erreur HTTP (le logiciel garde ses compteurs et les renvoie), un fichier du mois abîmé est réparé à la lecture.
+- Tâche « Statistiques » : affiche aussi les plafonds du jour.
+
+Tests permanents ajoutés : relais (Node, `tests/relais/`), installateur / lanceur / tâche « lancer avec Windows » / mise à jour / désinstallation / vrai PresentMon (`tests/installation/`, Windows Server 2025 et Windows 11 ARM), et le résumé des échecs de la CI est toujours la première annotation.
+
 ## Prêt sur la branche prochaine-version : compteur « passé en version X » (demande de Sam)
 
 - Constat : le compteur « version:x » n'est envoyé qu'au 1er envoi du mois de chaque PC → il ne dit pas qui est à jour.
