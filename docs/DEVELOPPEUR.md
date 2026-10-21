@@ -28,7 +28,8 @@ la dernière version **publique**. Numérotation : `1.2.1` pour une correction, 
 
 ## 1. Les rapports de bug
 
-Chaque PC garde un journal des bugs dans `%LOCALAPPDATA%\AeroxPCCare\bugs.jsonl` :
+Chaque PC garde un journal des bugs dans `bugs.jsonl`, dans le dossier de données d'AEROX
+(`C:\Program Files\AeroxPCCare\protege\donnees\<compte Windows>`, ou `donnees\<nom du PC>` sur la clé en version portable) :
 - `bug` : une vraie erreur du logiciel (exception imprévue), à corriger dans le code ;
 - `erreur` : un problème du PC rencontré pendant une action (ex. : Edge ouvert, MAJ Windows en échec).
 
@@ -85,12 +86,14 @@ ou `Add-Ok`, puis ajoute-la dans la liste `$checks` de `Invoke-Diagnostic`.
 |---|---|---|---|
 | LibreHardwareMonitorLib 0.9.6 (+ dépendances NuGet) | Températures, consommation, fréquences | nuget.org | MPL-2.0 |
 | PawnIO | Pilote signé pour lire la température du processeur | winget `namazso.PawnIO` ou GitHub namazso/PawnIO.Setup | voir le projet |
-| PresentMon (console) | Compteur de FPS (traces ETW de Windows, aucune injection) | GitHub GameTechDev/PresentMon, signature Intel vérifiée | MIT |
+| PresentMon (console) | Compteur de FPS (traces ETW de Windows, aucune injection) | winget `Intel.PresentMon.Console` (GitHub GameTechDev/PresentMon) ; copie rangée dans le dossier protégé seulement si signée « Intel Corporation » (vérifiée à chaque lancement) | MIT |
 
-Ils sont rangés dans `%LOCALAPPDATA%\AeroxPCCare\outils`. Si tu publies le logiciel, cite ces projets
-et leurs licences dans la page GitHub.
+Ils sont rangés dans `C:\Program Files\AeroxPCCare\protege\outils` (dossier protégé : seuls les administrateurs
+peuvent y écrire), même en version portable. Si tu publies le logiciel, cite ces projets et leurs licences dans la page GitHub.
 
 ## Réglages mémorisés
 
-`%LOCALAPPDATA%\AeroxPCCare\reglages.json` : journal ouvert/fermé, logiciels ignorés, position,
+`reglages.json`, dans le dossier de données (voir plus haut) : journal ouvert/fermé, logiciels ignorés, position,
 taille, transparence et infos de l'overlay, seuils d'alerte surchauffe, programmes au démarrage validés.
+Il est écrit « tout ou rien » (`Write-FileAtomic` : fichier `.tmp` puis échange, l'ancien devient `reglages.json.bak`) ;
+`Read-SettingsFile` relit le `.bak` si le fichier principal est abîmé.

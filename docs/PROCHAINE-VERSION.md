@@ -2,6 +2,29 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt sur la branche prochaine-version : corrections de l'audit du 21/10/2026 (demande de Sam : une seule mise à jour)
+
+Audit complet du code par Claude (détail privé dans le projet « Aerox PcCare »). Chaque défaut corrigé a son test permanent dans tests/smoke.ps1.
+
+Sécurité (AEROX tourne en administrateur) :
+- M1 Compteur de FPS : PresentMon n'entre dans le dossier protégé et n'est lancé que s'il est signé par Intel (Test-ToolSignature : signature Windows valide ET organisation du certificat exactement « Intel Corporation », Test-CertOrg), vérifié sur la copie rangée dans le dossier protégé. Une copie rangée par une version précédente est recontrôlée, et retirée si elle n'est pas d'Intel. Vérifié sur de vrais Windows : le vrai PresentMon 2.6.0 est signé Intel (Windows 11 ARM, Windows Server 2025, copie winget comprise).
+- M2 Lancement avec Windows (tâche « mode discret », droits les plus élevés) : l'installateur s'installe TOUJOURS dans C:\Program Files\AeroxPCCare (plus de page de choix du dossier, /D= ignoré) ; une ancienne installation faite ailleurs est reprise (seuls les fichiers d'AEROX y sont retirés, jamais le dossier entier, avec un fichier-témoin qui empêche de toucher au dossier neuf) et la tâche existante est repointée vers le nouveau programme (supprimée si Windows refuse). Au lancement : Test-AdminOnlyPath (dans Program Files, aucun lien/jonction en chemin, propriétaire et droits réservés à SYSTEM / administrateurs / TrustedInstaller) conditionne l'option (Get-AutoStartBlock) ; Repair-AutoStartTask retire au démarrage une tâche qui vise un programme modifiable par d'autres.
+- S1 Annulations : seules les modifications notées par AEROX lui-même (sceau dans le dossier protégé) peuvent être annulées depuis l'historique.
+- S2 Lanceur : ne retire plus la marque « téléchargé » de tout le dossier, seulement des fichiers d'AEROX (script, DLL, outils du dossier protégé).
+- S3-1 Réglages : écrits « tout ou rien » (Write-FileAtomic : fichier .tmp puis échange, l'ancien devient .bak) et relus depuis le .bak s'ils sont abîmés (Read-SettingsFile).
+
+Fausses informations (jamais d'alerte à tort) :
+- M3 Windows 11 : fin de support par version ET par édition ($script:Win11Versions : 24H2 Famille / Pro terminée le 13/10/2026, Entreprise / Éducation 36 mois). Serveur, LTSC et versions inconnues : aucun avis. À mettre à jour chaque automne (nouvelle version de Windows 11).
+- M4 Fenêtre principale et dialogues : jamais plus grands que la zone utile de l'écran (Get-WindowFit : 1008×704 sur un écran 1024×768, 1120×780 sur grand écran).
+- D1 Disque : pourcentage ET espace libre (Get-SystemDiskLevel : alerte sous 15 % ET 50 Go, critique sous 10 % ET 20 Go ; autres disques sous 5 % ET 20 Go).
+- D2 Mémoire : « peu de mémoire » jugé sur la mémoire installée (somme des barrettes, Test-LowRam), plus sur ce que Windows peut utiliser.
+- D3 Température du disque par type (Get-DiskTempLimit : NVMe 80, SSD 70, disque dur 60 °C).
+- D4 Processeur : quelques relevés avant de conclure (Get-SensorMedian), critique seulement dès 100 °C, Ryzen 7000 / 8000 / 9000 à 95 °C en charge = normal (Get-CpuTempVerdict).
+- D5 Antivirus : une seule alerte quand Defender est seul et coupé (Test-NoAvIssue) ; jamais « aucun antivirus » si Defender dit protéger en temps réel.
+- D6 Pilote graphique ancien : texte nuancé (une version plus récente existe peut-être, AEROX ne l'a pas vérifié).
+
+Visible par les testeurs : l'installateur ne propose plus de choisir le dossier ; l'option « lancer avec Windows » est refusée (avec explication) si AEROX n'est pas dans Program Files.
+
 ## Prêt sur la branche prochaine-version : compteur « passé en version X » (demande de Sam)
 
 - Constat : le compteur « version:x » n'est envoyé qu'au 1er envoi du mois de chaque PC → il ne dit pas qui est à jour.

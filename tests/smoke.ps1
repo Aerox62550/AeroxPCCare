@@ -464,6 +464,14 @@ function Invoke-Smoke {
         Write-Host "        dossier protégé : $t"
     }
     Smoke 'Sécurité : annulations scellées' {
+        # Dossiers d'essai à part : ces fausses annulations ne doivent pas rester dans le vrai historique
+        # (le test « Annulations depuis l historique » plus bas exécute celles qu'il y trouve)
+        $iso = Join-Path $env:TEMP ('AeroxSceaux-' + [guid]::NewGuid().ToString('N'))
+        $copie = @{}; foreach ($k in @($AppInfo.Keys)) { $copie[$k] = $AppInfo[$k] }
+        $copie.LogDir = Join-Path $iso 'journal'; $copie.Secure = Join-Path $iso 'protege'
+        New-Item -ItemType Directory -Force -Path $copie.LogDir, $copie.Secure | Out-Null
+        $AppInfo = $copie
+        try {
         Add-Change -Title 'Test sceau' -Undo 'Set-CpuMaxState 100'
         $c = @(Get-Changes 5 | Where-Object { $_.Title -eq 'Test sceau' })[0]
         if (-not (Test-UndoAuthorized $c.Id $c.Undo)) { throw "annulation notée par AEROX refusée" }
@@ -488,6 +496,7 @@ function Invoke-Smoke {
             if (Test-UndoAuthorized "$($e.Id)x" $e.Undo) { throw "sceau accepté pour un autre identifiant : $u" }
         }
         Write-Host "        18 actions : sceau obligatoire pour chacune"
+        } finally { Remove-Item -LiteralPath $iso -Recurse -Force -ErrorAction SilentlyContinue }
     }
     Smoke 'Mises à jour : doublons et logiciels déjà désinstallés' {
         $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AeroxTestFantome'

@@ -1,30 +1,72 @@
 # Tests sur un vrai Windows de ce qui n'est PAS couvert par « Vérifier sur Windows » (qui lance une copie du script) :
-# l'installateur, le dossier protégé, la mise à jour, la désinstallation, le lanceur, la fenêtre sur un petit écran.
+# l'installateur, le dossier protégé, la reprise d'une ancienne installation, la mise à jour, la désinstallation, le lanceur,
+# la tâche « lancer avec Windows », la taille de la vraie fenêtre, et le compteur de FPS avec le vrai PresentMon d'Intel.
 # Ne publie rien. Se lance à chaque envoi sur la branche de travail qui touche l'un de ces éléments.
 name: Tester l'installation
 
 on:
   push:
     branches: [prochaine-version]
-    paths: ['installer/**', 'launcher/**', 'tests/installation/**', '.github/workflows/installation.yml']
+    paths: ['installer/**', 'launcher/**', 'src/**', 'native/**', 'build.sh', 'tests/installation/**', '.github/workflows/installation.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  presentmon-reel:
-    name: PresentMon d'Intel (signature) — ${{ matrix.os }}
+  construire:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils de construction
+        run: sudo apt-get update -o Acquire::Retries=3 && sudo apt-get install -y --no-install-recommends mono-devel nsis zip
+      - name: Construire
+        run: ./build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aerox-installation
+          path: build
+          retention-days: 1
+
+  installateur:
+    name: Installateur, lanceur, mise à jour, désinstallation — ${{ matrix.os }}
+    needs: construire
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: aerox-installation
+          path: art
+      - name: Installation, lanceur, tâche planifiée, mise à jour, désinstallation
+        shell: powershell
+        run: ./tests/installation/installateur.ps1 -Build "$env:GITHUB_WORKSPACE\art"
+
+  presentmon-reel:
+    name: PresentMon d'Intel (signature et compteur de FPS d'AEROX) — ${{ matrix.os }}
+    needs: construire
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: aerox-installation
+          path: art
       - name: Signature du vrai PresentMon
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./tests/installation/presentmon-reel.ps1
+      - name: Compteur de FPS d'AEROX avec le vrai PresentMon
+        shell: powershell
+        run: ./tests/installation/presentmon-integre.ps1 -Build "$env:GITHUB_WORKSPACE\art"

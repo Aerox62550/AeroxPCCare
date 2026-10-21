@@ -635,9 +635,7 @@ function Get-UndoSeal([string]$Id, [string]$Undo) {
     try { return (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id|$Undo")) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $sha.Dispose() }
 }
 # Annulation autorisée ? Action connue et sans danger, ET notée par AEROX lui-même (sceau dans le dossier protégé).
-# Sans sceau : refusée, quelle que soit l'action. (Avant, les changements d'avant la 2.1.3 étaient acceptés pour 15 des 18 actions :
-# un historique repris d'un ancien dossier, que n'importe quel programme du compte peut écrire, pouvait alors faire
-# exécuter par exemple un changement de DNS en administrateur.)
+# Sans sceau : refusée, quelle que soit l'action.
 function Test-UndoAuthorized([string]$Id, [string]$Undo) {
     if (-not (Test-SafeUndo $Undo)) { return $false }
     $f = Join-Path $AppInfo.Secure 'annulations.txt'
@@ -2819,10 +2817,16 @@ function Get-LagReport([int]$Seconds = 60) {
 # Clés vérifiées en respectant la casse (comme le relais) : minuscules, chiffres et tirets seulement.
 # Envoi en un seul petit paquet, au plus toutes les 6 heures (et une fois par mois pour compter les PC actifs).
 function ConvertTo-StatsId([string]$Id) { return (("$Id".ToLower() -replace '[^a-z0-9-]', '-') -replace '-+', '-').Trim('-') }
+# Familles de compteurs que le relais accepte (le test tests/relais/relais.test.mjs vérifie que sa liste est identique à celle-ci
+# et que chaque appel de Add-StatsEvent du logiciel en fait partie). Une nouvelle famille s'ajoute ici ET dans relais/worker.js.
+$script:StatsPrefixes = @('probleme', 'lent', 'jeu', 'lag', 'diag', 'erreur', 'pascorrige', 'corrige', 'echec', 'inconnu', 'symptome', 'partage', 'maj')
+function Test-StatsKey([string]$Key) {
+    return ($Key -cmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') -and ($script:StatsPrefixes -ccontains $Key.Split(':')[0])
+}
 function Add-StatsEvent([string]$Key) {
     try {
         $q = $AppInfo.StatsQueue
-        if ($AppInfo.StatsOff -or $null -eq $q -or $Key -cnotmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { return }
+        if ($AppInfo.StatsOff -or $null -eq $q -or -not (Test-StatsKey $Key)) { return }
         [System.Threading.Monitor]::Enter($q.SyncRoot)
         try { if ($q.Count -lt 300) { [void]$q.Add($Key) }; Save-StatsQueue } finally { [System.Threading.Monitor]::Exit($q.SyncRoot) }
     } catch {}
@@ -2834,7 +2838,7 @@ function Read-StatsQueue {
     $q = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
     try {
         $p = Join-Path $AppInfo.LogDir 'stats-attente.txt'
-        if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($q.Count -lt 300 -and $l -cmatch '^[a-z]+(:[a-z0-9][a-z0-9-]{0,39})?$') { [void]$q.Add($l) } } }
+        if (Test-Path -LiteralPath $p) { foreach ($l in [IO.File]::ReadAllLines($p)) { if ($q.Count -lt 300 -and (Test-StatsKey $l)) { [void]$q.Add($l) } } }
     } catch {}
     return ,$q
 }
