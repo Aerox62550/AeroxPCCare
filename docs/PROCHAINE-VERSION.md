@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt sur la branche prochaine-version : corrections de l'audit du 21/10/2026 (demande de Sam : une seule mise à jour)
+## Publié en 2.5.3 : corrections de l'audit du 21/10/2026 (demande de Sam : une seule mise à jour)
 
 Audit complet du code par Claude (détail privé dans le projet « Aerox PcCare »). Chaque défaut corrigé a son test permanent dans tests/smoke.ps1.
 
@@ -34,7 +34,7 @@ Relais Cloudflare (**à redéployer par Sam** : copier `relais/worker.js` dans C
 
 Tests permanents ajoutés : relais (Node, `tests/relais/`), installateur / lanceur / tâche « lancer avec Windows » / mise à jour / désinstallation / vrai PresentMon (`tests/installation/`, Windows Server 2025 et Windows 11 ARM), et le résumé des échecs de la CI est toujours la première annotation.
 
-## Prêt sur la branche prochaine-version : compteur « passé en version X » (demande de Sam)
+## Publié en 2.5.3 : compteur « passé en version X » (demande de Sam)
 
 - Constat : le compteur « version:x » n'est envoyé qu'au 1er envoi du mois de chaque PC → il ne dit pas qui est à jour.
 - Send-Stats : la version du dernier envoi est notée dans stats-envoi.txt (date|mois|version) ; à la 1re ouverture d'une nouvelle version, un envoi « maj:2-5-3 » = 1 part, une seule fois par PC et par version (même avant les 6 h). Rien d'autre n'est ajouté (pas d'identifiant).
