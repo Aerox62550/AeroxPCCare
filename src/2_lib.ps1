@@ -204,12 +204,79 @@ function Get-SecureDir([string]$Sub) {
     if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Force -Path $d -ErrorAction Stop | Out-Null }
     return $d
 }
-# Programme signé par l'éditeur attendu (signature Windows valide) ?
+# Le nom d'organisation du certificat (« O=… » dans son sujet) est-il EXACTEMENT celui attendu ?
+# « O=Intel Corporation » oui ; « O=Intel Corporation Fake » ou « O=Fake Intel Corporation » non.
+function Test-CertOrg([string]$Subject, [string]$Org) {
+    return ("$Subject" -match ('(?i)(^|,\s*)O=' + [regex]::Escape($Org) + '\s*(,|$)'))
+}
+# Programme signé par l'éditeur attendu (signature Windows valide + organisation du certificat exacte) ?
 function Test-ToolSignature([string]$Path, [string]$Publisher) {
     try {
-        $sig = Get-AuthenticodeSignature -FilePath $Path -ErrorAction Stop
-        return ($sig.Status -eq 'Valid' -and "$($sig.SignerCertificate.Subject)" -match ('O=' + [regex]::Escape($Publisher)))
+        $sig = Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+        return ($sig.Status -eq 'Valid' -and (Test-CertOrg $sig.SignerCertificate.Subject $Publisher))
     } catch { return $false }
+}
+
+# ---------------------------------------------------------------- Dossiers réservés aux administrateurs
+# Un lancement automatique avec les droits admin (tâche « mode discret ») n'est permis que pour un programme que PERSONNE d'autre
+# que SYSTEM, les administrateurs et TrustedInstaller ne peut modifier, supprimer ou remplacer : sinon n'importe quel programme du
+# compte pourrait remplacer le fichier et se faire exécuter en administrateur au prochain démarrage de Windows.
+$script:AutoTaskName = 'AEROX PC Care (mode discret)'
+$script:AdminSids = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')   # SYSTEM, Administrateurs, TrustedInstaller
+# '' si seuls ces comptes peuvent modifier ce fichier ou dossier (et en changer les droits) ; sinon une phrase qui dit pourquoi
+function Get-AclWeakness([string]$Path) {
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $own = "$($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value)"
+    if ($own -notin $script:AdminSids) { return "propriétaire $own" }
+    # Écrire, ajouter, supprimer (lui ou son contenu), changer les droits, devenir propriétaire (+ droits génériques d'écriture / contrôle total)
+    $mask = 0x2 -bor 0x4 -bor 0x40 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000
+    foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($r.AccessControlType -ne 'Allow') { continue }
+        if ($r.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }   # ne vaut que pour ce qu'il y a dedans
+        $sid = "$($r.IdentityReference.Value)"
+        if ($sid -in $script:AdminSids -or $sid -eq 'S-1-3-0') { continue }                                   # S-1-3-0 : CREATOR OWNER
+        if (([int]$r.FileSystemRights) -band $mask) { return "$sid : $($r.FileSystemRights)" }
+    }
+    return ''
+}
+# Dans Program Files, sans lien (jonction, lien symbolique) en chemin, et ni le fichier ni aucun dossier jusqu'à Program Files
+# ne peut être modifié par un autre compte que SYSTEM / administrateurs / TrustedInstaller
+function Test-AdminOnlyPath([string]$Path) {
+    try {
+        if (-not $Path) { return $false }
+        $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+        $root = $null
+        foreach ($pf in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if ($pf -and $full.StartsWith($pf.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { $root = $pf.TrimEnd('\'); break }
+        }
+        if (-not $root) { return $false }
+        $p = $full
+        while ($p.Length -gt $root.Length) {
+            $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+            if (Get-AclWeakness $p) { return $false }
+            $p = Split-Path $p -Parent
+        }
+        return $true
+    } catch { return $false }
+}
+# Programme visé par la tâche « mode discret » (vide si la tâche n'existe pas)
+function Get-AutoStartTarget {
+    try {
+        $t = Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop
+        return [Environment]::ExpandEnvironmentVariables("$(@($t.Actions)[0].Execute)".Trim().Trim('"'))
+    } catch { return '' }
+}
+# Tâche « mode discret » qui vise un programme que d'autres comptes pourraient remplacer (ancienne installation dans un dossier libre,
+# fichier disparu) : retirée. Mieux vaut un lancement à la main qu'un programme inconnu lancé en administrateur à chaque démarrage.
+function Repair-AutoStartTask {
+    $target = Get-AutoStartTarget
+    $exists = $false; try { $exists = [bool](Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop) } catch {}
+    if (-not $exists) { return $false }
+    if ($target -and (Test-AdminOnlyPath $target)) { return $false }
+    Unregister-ScheduledTask -TaskName $script:AutoTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Log "⚠ Le lancement d'AEROX avec Windows a été désactivé par sécurité : il visait un programme que d'autres logiciels du PC pourraient remplacer ($target). Réinstalle AEROX avec son installateur (il se range tout seul dans Program Files), puis réactive l'option dans Gaming."
+    return $true
 }
 
 function Clear-Location([string]$Path, [string]$Label) {
@@ -568,12 +635,13 @@ function Get-UndoSeal([string]$Id, [string]$Undo) {
     try { return (($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("$Id|$Undo")) | ForEach-Object { $_.ToString('x2') }) -join '') } finally { $sha.Dispose() }
 }
 # Annulation autorisée ? Action connue et sans danger, ET notée par AEROX lui-même (sceau dans le dossier protégé).
-# Changements notés avant la 2.1.3 (sans sceau) : seulement les réglages sans risque.
+# Sans sceau : refusée, quelle que soit l'action. (Avant, les changements d'avant la 2.1.3 étaient acceptés pour 15 des 18 actions :
+# un historique repris d'un ancien dossier, que n'importe quel programme du compte peut écrire, pouvait alors faire
+# exécuter par exemple un changement de DNS en administrateur.)
 function Test-UndoAuthorized([string]$Id, [string]$Undo) {
     if (-not (Test-SafeUndo $Undo)) { return $false }
     $f = Join-Path $AppInfo.Secure 'annulations.txt'
-    if ((Test-Path -LiteralPath $f) -and (@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -contains (Get-UndoSeal $Id $Undo))) { return $true }
-    return (($Undo.Trim() -split '\s+')[0] -notin 'Set-BgItem', 'Restore-RegBackup', 'Set-StartupApps')
+    return ((Test-Path -LiteralPath $f) -and (@(Get-Content -LiteralPath $f -ErrorAction SilentlyContinue) -contains (Get-UndoSeal $Id $Undo)))
 }
 function Get-Changes([int]$Max = 300) {
     $f = Join-Path $AppInfo.LogDir 'changements.jsonl'
@@ -2644,10 +2712,13 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
     try {
         $cd = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'" -ErrorAction Stop
         $fr = [double]$cd.FreeSpace; $pc = [math]::Round(100 * $fr / [math]::Max([double]1, [double]$cd.Size))
-        if ($pc -lt 10 -or $fr -lt 10GB) {
-            [void]$f.Add(@{ Id = 'disque-plein'; Sev = $(if ($pc -lt 5) { 'bad' } else { 'warn' }); Title = "Le disque $env:SystemDrive est presque plein ($(Format-Size $fr) libres)"; Text = "Sous 10 % d'espace libre, Windows ralentit et les mises à jour échouent."; Advice = "Regarde ce qui prend de la place et supprime ce qui ne sert plus (jeux finis, vieux téléchargements)."; Action = 'space' })
+        # Peu de place en proportion ET en valeur absolue (voir Get-SystemDiskLevel), ou moins de 10 Go quelle que soit la taille du disque
+        $lvl = Get-SystemDiskLevel $fr ([double]$cd.Size)
+        $full = [bool]($lvl -or $fr -lt 10GB)
+        if ($full) {
+            [void]$f.Add(@{ Id = 'disque-plein'; Sev = $(if ($lvl -eq 'crit' -or $fr -lt 5GB) { 'bad' } else { 'warn' }); Title = "Le disque $env:SystemDrive est presque plein ($(Format-Size $fr) libres)"; Text = "Avec si peu de place libre, Windows ralentit et les mises à jour peuvent échouer."; Advice = "Regarde ce qui prend de la place et supprime ce qui ne sert plus (jeux finis, vieux téléchargements)."; Action = 'space' })
         }
-        [void]$chk.Add(@{ Ok = -not ($pc -lt 10 -or $fr -lt 10GB); T = "Place libre sur $($env:SystemDrive) : $(Format-Size $fr) ($pc %)" })
+        [void]$chk.Add(@{ Ok = -not $full; T = "Place libre sur $($env:SystemDrive) : $(Format-Size $fr) ($pc %)" })
     } catch {}
     # Causes de fond (réglages)
     try {
@@ -2891,11 +2962,27 @@ function Get-DriveList {
         @{ Id = $_.DeviceID; Name = "$($_.VolumeName)".Trim(); Free = [double]$_.FreeSpace; Size = [double]$_.Size; Pct = [math]::Round([double]$_.FreeSpace / [double]$_.Size * 100); Kind = $kind; Removable = ($_.DriveType -eq 2) }
     })
 }
+# Disque de Windows presque plein ? Le pourcentage seul trompe (14 % libres sur 2 To = 280 Go, ce n'est pas « presque plein »),
+# et l'espace seul aussi : il faut peu de place en proportion ET en valeur absolue.
+# 'crit' : moins de 10 % ET moins de 20 Go ; 'warn' : moins de 15 % ET moins de 50 Go ; sinon ''.
+function Get-SystemDiskLevel([double]$Free, [double]$Size) {
+    if ($Size -le 0) { return '' }
+    $pct = [math]::Round($Free / $Size * 100)
+    if ($pct -lt 10 -and $Free -lt 20GB) { return 'crit' }
+    if ($pct -lt 15 -and $Free -lt 50GB) { return 'warn' }
+    return ''
+}
+# Autres disques (jeux, fichiers) : plein si moins de 5 % ET moins de 20 Go
+function Test-OtherDiskFull([double]$Free, [double]$Size) {
+    if ($Size -le 0) { return $false }
+    return ([math]::Round($Free / $Size * 100) -lt 5 -and $Free -lt 20GB)
+}
 function Test-Storage {
     $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
     $pct = [math]::Round($d.FreeSpace / $d.Size * 100)
     $detail = "{0} libres sur {1} ({2} %)" -f (Format-Size $d.FreeSpace), (Format-Size $d.Size), $pct
-    if ($pct -lt 15) {
+    $level = Get-SystemDiskLevel ([double]$d.FreeSpace) ([double]$d.Size)
+    if ($level) {
         $tmp = [double]0; foreach ($loc in Get-TempLocations) { $tmp += Get-FolderSize $loc.Path }
         $wu  = Get-FolderSize "$env:SystemRoot\SoftwareDistribution\Download"
         $rb  = Get-FolderSize ("{0}\`$Recycle.Bin" -f $env:SystemDrive)
@@ -2904,8 +2991,8 @@ function Test-Storage {
         if ($wu  -gt 100MB) { $parts += "$(Format-Size $wu) de mises à jour déjà installées" }
         if ($rb  -gt 100MB) { $parts += "$(Format-Size $rb) dans la corbeille" }
         $cause = if ($parts) { ($parts -join ', ') + " prennent de la place pour rien." } else { "Le disque est rempli par tes fichiers, jeux et logiciels." }
-        Add-Issue -Id 'disk' -Sev $(if ($pct -lt 10) { 'crit' } else { 'warn' }) -Title "Le disque $env:SystemDrive est presque plein" -Detail $detail -Cause $cause `
-            -Effect "Windows ralentit fortement sous 10 % d'espace libre et les mises à jour peuvent échouer." `
+        Add-Issue -Id 'disk' -Sev $level -Title "Le disque $env:SystemDrive est presque plein" -Detail $detail -Cause $cause `
+            -Effect "Avec si peu de place libre, Windows ralentit et les mises à jour peuvent échouer." `
             -FixLabel "Nettoyer en profondeur" -UiFix 'clean' `
             -Steps @("Lance le nettoyage approfondi (bouton vert) : tu choisis quoi supprimer, avec la taille de chaque catégorie.", "Onglet Nettoyage > « Ce qui prend de la place » : trouve les plus gros dossiers (jeux, vidéos, téléchargements).", "Désinstalle les jeux et logiciels que tu n'utilises plus, déplace vidéos et photos sur un autre disque.")
     } else { Add-Ok "Disque $env:SystemDrive : $detail" }
@@ -2915,7 +3002,7 @@ function Test-Storage {
         $lbl = "{0}{1}{2}" -f $o.Id, $(if ($o.Name) { " ($($o.Name))" } else { '' }), $(if ($o.Removable) { ', amovible' } else { '' })
         $det = "{0} libres sur {1} ({2} %)" -f (Format-Size $o.Free), (Format-Size $o.Size), $o.Pct
         Log "   • Disque $lbl : $det"
-        if ($o.Pct -lt 5 -and -not $o.Removable) {
+        if (-not $o.Removable -and (Test-OtherDiskFull $o.Free $o.Size)) {
             Add-Issue -Id "disk$($o.Id)" -Sev 'warn' -Title "Le disque $($o.Id) est plein" -Detail $det `
                 -Cause "Ce disque n'a presque plus de place." -Effect "Les jeux ou fichiers dessus ne pourront plus se mettre à jour ni s'enregistrer." `
                 -Steps @("Supprime ou déplace ce dont tu n'as plus besoin sur ce disque.", "Pour les jeux : désinstalle ceux auxquels tu ne joues plus depuis Steam / Epic.")
@@ -2923,9 +3010,27 @@ function Test-Storage {
     }
 }
 
+# Mémoire vive INSTALLÉE (somme des barrettes) ; 0 si Windows ne la donne pas. « TotalPhysicalMemory » est ce que Windows peut
+# UTILISER : il en retire la mémoire réservée au matériel (mémoire vidéo d'un processeur graphique intégré, par exemple).
+# Un PC avec 8 Go installés peut y afficher 7,4 Go, voire 6 Go.
+function Get-InstalledRam {
+    try {
+        $sum = [double]0
+        foreach ($m in @(Get-CimStatic Win32_PhysicalMemory -Quiet)) { $sum += [double]$m.Capacity }
+        return $sum
+    } catch { return [double]0 }
+}
+# Peu de mémoire vive ? Mémoire installée sous 7,5 Go. Si Windows ne donne pas les barrettes (machine virtuelle, certains PC) :
+# seulement si ce que Windows peut utiliser est sous 5,5 Go (jamais pour un PC de 8 Go dont une partie est réservée au matériel).
+function Test-LowRam([double]$Installed, [double]$Usable) {
+    if ($Installed -gt 0) { return ($Installed -lt 7.5GB) }
+    return ($Usable -gt 0 -and $Usable -lt 5.5GB)
+}
 function Test-Memory {
     $os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimStatic Win32_ComputerSystem -Quiet
     $total = [double]$cs.TotalPhysicalMemory
+    $installed = Get-InstalledRam
+    $shown = if ($installed -gt 0) { $installed } else { $total }
     $pct = [math]::Round((1 - ([double]$os.FreePhysicalMemory * 1KB) / $total) * 100)
     $issue = $false
     if ($pct -ge 85) {
@@ -2937,29 +3042,58 @@ function Test-Memory {
             -Steps @("Ferme les logiciels et onglets de navigateur dont tu n'as pas besoin.", "Redémarre le PC si ça fait longtemps.", "Désactive les programmes inutiles au démarrage (onglet Performances).")
         $issue = $true
     }
-    if ($total -lt 7.5GB) {
-        Add-Issue -Id 'ramsize' -Sev 'warn' -Title "Peu de mémoire vive (moins de 8 Go)" -Detail ("{0} installés" -f (Format-Size $total)) `
+    if (Test-LowRam $installed $total) {
+        Add-Issue -Id 'ramsize' -Sev 'warn' -Title "Peu de mémoire vive (moins de 8 Go)" -Detail ("{0} installés" -f (Format-Size $shown)) `
             -Cause "Windows 11 et les logiciels actuels ont besoin d'au moins 8 Go pour être à l'aise." -Effect "Le PC sera vite lent dès que plusieurs logiciels sont ouverts." `
             -Steps @("Évite d'ouvrir trop de logiciels en même temps.", "Si le PC le permet, ajoute une barrette de RAM (c'est souvent peu cher).")
         $issue = $true
     }
-    if (-not $issue) { Add-Ok ("Mémoire : {0}, utilisation normale ({1} %)" -f (Format-Size $total), $pct) }
+    if (-not $issue) { Add-Ok ("Mémoire : {0}, utilisation normale ({1} %)" -f (Format-Size $shown), $pct) }
+}
+
+# Fin de support de Windows 11, version par version (Microsoft Lifecycle) : Famille / Pro = 24 mois, Entreprise / Éducation = 36 mois.
+# Dates = « Patch Tuesday » de la fin du support (dernière mise à jour de sécurité ce jour-là). À compléter à chaque nouvelle version de Windows.
+$script:Win11Versions = @(
+    @{ Build = 22000; Name = '21H2'; Std = [datetime]'2023-10-10'; Long = [datetime]'2024-10-08' }
+    @{ Build = 22621; Name = '22H2'; Std = [datetime]'2024-10-08'; Long = [datetime]'2025-10-14' }
+    @{ Build = 22631; Name = '23H2'; Std = [datetime]'2025-11-11'; Long = [datetime]'2026-11-10' }
+    @{ Build = 26100; Name = '24H2'; Std = [datetime]'2026-10-13'; Long = [datetime]'2027-10-12' }
+    @{ Build = 26200; Name = '25H2'; Std = [datetime]'2027-10-12'; Long = [datetime]'2028-10-10' }
+)
+# Etat du support d'une version de Windows 11 : 'ok' (encore mise à jour), 'ended' (plus de correctifs de sécurité) ou 'unknown'
+# (serveur, édition à support long LTSC, version préliminaire ou plus récente que la table : aucun avis, jamais de fausse alerte).
+function Get-Win11Support([int]$Build, [string]$Caption, [datetime]$Today = (Get-Date)) {
+    $r = @{ State = 'unknown'; Name = ''; End = $null; Latest = $script:Win11Versions[$script:Win11Versions.Count - 1].Name }
+    if ("$Caption" -match '(?i)server|serveur|LTSC|LTSB') { return $r }
+    $v = @($script:Win11Versions | Where-Object { $_.Build -eq $Build }) | Select-Object -First 1
+    if (-not $v) { return $r }
+    # Entreprise / Éducation : 36 mois (« Pro Education » et « Pro for Workstations » restent à 24 mois)
+    $long = ("$Caption" -match '(?i)entreprise|enterprise') -or ("$Caption" -match '(?i)(?<!pro\s)(éducation|education)')
+    $r.Name = $v.Name
+    $r.End = if ($long) { $v.Long } else { $v.Std }
+    $r.State = if ($Today.Date -gt ([datetime]$r.End).Date) { 'ended' } else { 'ok' }
+    return $r
 }
 
 function Test-SystemState {
     $os = Get-CimInstance Win32_OperatingSystem
     $build = [int]$os.BuildNumber
-    if ($build -lt 22000) {
+    if ($build -lt 22000 -and "$($os.Caption)" -notmatch '(?i)server|serveur') {
         Add-Issue -Id 'win10' -Sev 'warn' -Title "Windows 10 n'a plus de mises à jour de sécurité" -Detail "$($os.Caption) (build $build)" `
             -Cause "Microsoft a arrêté le support de Windows 10 le 14 octobre 2025 (sauf abonnement aux mises à jour étendues ESU)." `
             -Effect "Les nouvelles failles de sécurité ne sont plus corrigées sur ce PC." -FixLabel "Ouvrir Windows Update" -FixAction 'Open-WindowsUpdate' -OpenOnly `
             -Steps @("Dans Windows Update, regarde si ton PC peut passer à Windows 11 : la mise à niveau est gratuite.", "Si le PC n'est pas compatible, Windows Update propose de s'inscrire aux mises à jour étendues (ESU).")
-    } elseif ($build -lt 26100 -and $os.Caption -notmatch '(?i)entreprise|enterprise|education|éducation') {
-        Add-Issue -Id 'win11old' -Sev 'warn' -Title "Ta version de Windows 11 n'est plus prise en charge" -Detail "$($os.Caption) (build $build)" `
-            -Cause "Les anciennes versions de Windows 11 Famille et Pro ne reçoivent plus de correctifs de sécurité." `
-            -Effect "Les nouvelles failles ne sont plus corrigées." -FixLabel "Ouvrir Windows Update" -FixAction 'Open-WindowsUpdate' -OpenOnly `
-            -Steps @("Dans Windows Update, installe la « mise à jour des fonctionnalités » proposée (version 24H2 ou plus récente).")
-    } else { Add-Ok "$($os.Caption) (build $build), version prise en charge" }
+    } else {
+        $sup = Get-Win11Support $build "$($os.Caption)"
+        if ($sup.State -eq 'ended') {
+            Add-Issue -Id 'win11old' -Sev 'warn' -Title "Ta version de Windows 11 n'est plus prise en charge" -Detail ("{0} : version {1} (build {2}), support terminé le {3}" -f $os.Caption, $sup.Name, $build, (Format-Date $sup.End)) `
+                -Cause ("Microsoft ne publie plus de correctifs de sécurité pour Windows 11 {0} (fin du support le {1})." -f $sup.Name, (Format-Date $sup.End)) `
+                -Effect "Les nouvelles failles de sécurité ne sont plus corrigées sur ce PC." -FixLabel "Ouvrir Windows Update" -FixAction 'Open-WindowsUpdate' -OpenOnly `
+                -Steps @(("Dans Windows Update, installe la « mise à jour des fonctionnalités » proposée (version {0} ou plus récente)." -f $sup.Latest), "Si Windows Update ne la propose pas, redémarre le PC puis clique sur « Rechercher des mises à jour ».")
+        } elseif ($sup.State -eq 'ok') {
+            Add-Ok ("{0} : version {1} (build {2}), prise en charge jusqu'au {3}" -f $os.Caption, $sup.Name, $build, (Format-Date $sup.End))
+        } else { Add-Ok "$($os.Caption) (build $build)" }
+    }
 
     $up = (Get-Date) - $os.LastBootUpTime
     $pending = (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
@@ -3670,7 +3804,8 @@ function Test-Drivers {
         if ($o.Status -eq 'old' -and $o.Date) {
             $steps = if ($o.Tool) { @("Télécharge « $($o.Tool) » sur la page officielle.", "Installe-le, ouvre-le et lance la mise à jour du pilote.", "Sur un PC portable, le site du fabricant du portable (rubrique Support) a parfois un pilote plus adapté.", "Redémarre le PC.", "Si l'outil officiel te dit que ton pilote est déjà le plus récent : ta carte n'a plus de mise à jour, clique sur « Ne plus signaler ».") } else { @("Ouvre Windows Update > Options avancées > Mises à jour facultatives > Pilotes.") }
             Add-Issue -Id ('gpu-' + ($o.Name -replace '[^A-Za-z0-9]', '')) -Sev 'warn' -Title ("Le pilote de la carte graphique date de {0}" -f (Format-Date $o.Date 'MMMM yyyy')) -Detail ("{0} (version {1})" -f $o.Name, $o.Version) `
-                -Cause "Un pilote graphique ancien cause des plantages en jeu, des bugs d'affichage et des performances plus faibles." -Effect "Jeux moins fluides, crashs possibles et écrans bleus." `
+                -Cause "Ce pilote a plus d'un an. Les fabricants publient régulièrement des versions qui corrigent des plantages et des bugs d'affichage en jeu : il en existe peut-être une plus récente pour ta carte (AEROX n'a pas pu vérifier la dernière version)." `
+                -Effect "Si une version plus récente existe : crashs ou bugs graphiques possibles dans certains jeux, performances un peu plus faibles." `
                 -FixLabel $(if ($fix) { "Télécharger le pilote officiel" } else { "Vérifier les pilotes" }) -FixAction $fix -UiFix $(if ($fix) { '' } else { 'drivers' }) -OpenOnly:([bool]$fix) -Steps $steps
         } else { Add-Ok ("Pilote graphique récent : {0}" -f $o.Name) }
     }
@@ -3693,13 +3828,24 @@ function Test-Drivers {
     } else { Add-Ok "Tous les périphériques ont un pilote qui fonctionne" }
 }
 
+# « Aucun antivirus actif » et « Protection en temps réel désactivée » décrivent la même cause quand Windows Defender est le seul
+# antivirus et que sa protection permanente est coupée : on ne garde alors que le second (avec son bouton « Réactiver »),
+# au lieu de deux alertes critiques pour un seul problème. Et si Defender lui-même affirme protéger en temps réel, on ne
+# prétend jamais « aucun antivirus » (le Centre de sécurité peut être en retard sur l'état réel).
+function Test-NoAvIssue([int]$ActiveCount, [int]$ThirdCount, $DefenderEnabled, $DefenderRealtime) {
+    if ($ActiveCount -gt 0) { return $false }
+    if ($DefenderEnabled -and $DefenderRealtime) { return $false }
+    if ($ThirdCount -eq 0 -and $DefenderEnabled -and -not $DefenderRealtime) { return $false }
+    return $true
+}
 function Test-Security {
     $thirdAv = @()
+    $mp = $null; try { $mp = Get-MpComputerStatus -ErrorAction Stop } catch {}
     try {
         $av = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop)
         $active = @($av | Where-Object { ($_.productState -band 0x1000) -ne 0 })
         $thirdAv = @($av | Where-Object { $_.displayName -notmatch 'Defender' } | ForEach-Object { $_.displayName } | Select-Object -Unique)
-        if ($active.Count -eq 0) {
+        if (Test-NoAvIssue $active.Count $thirdAv.Count ($mp -and $mp.AntivirusEnabled) ($mp -and $mp.RealTimeProtectionEnabled)) {
             Add-Issue -Id 'noav' -Sev 'crit' -Title "Aucun antivirus actif" -Detail "Protection désactivée" `
                 -Cause "Aucun antivirus n'est en marche : il a été désactivé, ou un antivirus tiers a expiré." -Effect "Le PC n'est pas protégé contre les virus et arnaques." `
                 -FixLabel "Ouvrir Sécurité Windows" -FixAction "Open-WinUri 'windowsdefender:'" -OpenOnly `
@@ -3712,7 +3858,7 @@ function Test-Security {
         }
     } catch {}
     try {
-        $mp = Get-MpComputerStatus -ErrorAction Stop
+        if (-not $mp) { throw 'Windows Defender ne répond pas' }
         if ($mp.AntivirusEnabled -and $thirdAv.Count -eq 0) {
             if (-not $mp.RealTimeProtectionEnabled) {
                 Add-Issue -Id 'rtp' -Sev 'crit' -Title "La protection en temps réel est désactivée" -Detail "Windows Defender" `
@@ -4099,6 +4245,13 @@ function Test-BootSpeed {
 function Select-DiskProblemEvents($Events) {
     return @(@($Events) | Where-Object { $_ -and [int]$_.Level -ge 1 -and [int]$_.Level -le 3 })
 }
+# Température à partir de laquelle un disque « chauffe » vraiment, selon son type : un SSD NVMe monte couramment à 65-75 °C en
+# charge (il ralentit de lui-même vers 80 °C et plus), un SSD SATA supporte 70 °C, un disque dur mécanique 60 °C au maximum.
+function Get-DiskTempLimit([string]$MediaType, [string]$BusType) {
+    if ("$BusType" -match '(?i)nvme') { return 80 }
+    if ("$MediaType" -match '(?i)^HDD$') { return 60 }
+    return 70
+}
 function Test-DiskHealth {
     try {
         $sysNum = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop | Get-Disk).Number
@@ -4121,8 +4274,8 @@ function Test-DiskHealth {
                 Add-Issue -Id "wear$($pd.DeviceId)" -Sev 'warn' -Title "Le SSD « $name » est usé à $wear %" -Detail "Durée de vie bientôt atteinte" `
                     -Cause "Un SSD supporte un nombre limité d'écritures, celui-ci approche de sa limite." -Effect "Il risque de passer en lecture seule ou de tomber en panne." `
                     -Steps @("Sauvegarde régulièrement tes fichiers importants.", "Prévois de le remplacer.")
-            } elseif ($temp -gt 65) {
-                Add-Issue -Id "temp$($pd.DeviceId)" -Sev 'warn' -Title "Le disque « $name » chauffe ($temp °C)" -Detail "Au-dessus de 65 °C" `
+            } elseif ($temp -gt (Get-DiskTempLimit "$($pd.MediaType)" "$($pd.BusType)")) {
+                Add-Issue -Id "temp$($pd.DeviceId)" -Sev 'warn' -Title "Le disque « $name » chauffe ($temp °C)" -Detail ("Au-dessus de {0} °C, la limite normale pour {1}" -f (Get-DiskTempLimit "$($pd.MediaType)" "$($pd.BusType)"), $(if ("$($pd.BusType)" -match '(?i)nvme') { 'un SSD NVMe' } elseif ("$($pd.MediaType)" -match '(?i)^HDD$') { 'un disque dur' } else { 'un SSD' })) `
                     -Cause "Le disque est mal ventilé ou très sollicité." -Effect "Il ralentit pour se protéger et s'use plus vite." `
                     -Steps @("Dépoussière le PC et vérifie que les ventilateurs tournent.", "Pour un SSD M.2 : un petit dissipateur règle souvent le problème.")
             } else {
@@ -4188,19 +4341,56 @@ function Test-DiskHealth {
     } catch {}
 }
 
+# AMD Ryzen 7000 / 8000 / 9000 : ces processeurs visent VOLONTAIREMENT 95 °C en charge (c'est leur réglage d'origine, pas une surchauffe)
+function Test-RyzenTarget95([string]$CpuName) { return ("$CpuName" -match '(?i)ryzen\s+(ai\s+)?([3579]\s+)?[789]\d{3}') }
+# Verdict de température du processeur : '' (normal) | 'warn' | 'crit'
+# - 100 °C et plus : au maximum du processeur (il ralentit déjà) -> critique
+# - presque au repos (moins de 30 % d'utilisation) : 80 °C et plus -> refroidissement à vérifier
+# - en charge : 95 °C et plus -> très chaud, sauf pour les Ryzen qui visent 95 °C
+function Get-CpuTempVerdict([double]$Temp, [double]$Load, [string]$CpuName) {
+    if ($Temp -ge 100) { return 'crit' }
+    if ($Load -lt 30) { if ($Temp -ge 80) { return 'warn' } else { return '' } }
+    if (Test-RyzenTarget95 $CpuName) { return '' }
+    if ($Temp -ge 95) { return 'warn' }
+    return ''
+}
+# Valeur du milieu d'une liste de mesures ($null si elle est vide)
+function Get-Median($Values) { $a = @($Values | Sort-Object); if (-not $a.Count) { return $null }; return [double]$a[[int][math]::Floor($a.Count / 2)] }
+# Valeur du milieu de plusieurs relevés de capteurs en direct, pris en même temps (un seul relevé peut tomber sur un pic passager).
+# Renvoie une table clé -> valeur ; une clé dont le capteur ne répond pas est absente.
+function Get-SensorMedian([string[]]$Keys, [int]$Count = 5, [int]$DelayMs = 800) {
+    $vals = @{}; foreach ($k in $Keys) { $vals[$k] = New-Object 'System.Collections.Generic.List[double]' }
+    for ($i = 0; $i -lt $Count; $i++) {
+        $s = $sync.Sens
+        if ($s) { foreach ($k in $Keys) { if ($null -ne $s[$k]) { $vals[$k].Add([double]$s[$k]) } } }
+        if ($i -lt $Count - 1) { Start-Sleep -Milliseconds $DelayMs }
+    }
+    $out = @{}
+    foreach ($k in $Keys) { if ($vals[$k].Count) { $out[$k] = Get-Median $vals[$k].ToArray() } }
+    return $out
+}
 function Test-Temperatures {
     $v = $sync.Sens
     $cpuLoad = [double]$v['cpu.load']
     $issue = $false
     if ($v['cpu.temp']) {
         $t = [math]::Round([double]$v['cpu.temp'])
-        $lim = if ($cpuLoad -lt 30) { 80 } else { 95 }
-        if ($t -ge $lim) {
-            Add-Issue -Id 'cputemp' -Sev $(if ($t -ge 95) { 'crit' } else { 'warn' }) -Title "Le processeur chauffe ($t °C)" -Detail ("Utilisation actuelle : {0} %" -f [math]::Round($cpuLoad)) `
+        $cpuName = "$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)"
+        # Un seul relevé peut tomber sur un pic passager : si le premier inquiète, on le confirme sur quelques secondes (valeur du milieu)
+        if (Get-CpuTempVerdict $t $cpuLoad $cpuName) {
+            $m = Get-SensorMedian @('cpu.temp', 'cpu.load')
+            if ($m.ContainsKey('cpu.temp')) { $t = [math]::Round($m['cpu.temp']) }
+            if ($m.ContainsKey('cpu.load')) { $cpuLoad = $m['cpu.load'] }
+        }
+        $verdict = Get-CpuTempVerdict $t $cpuLoad $cpuName
+        if ($verdict) {
+            Add-Issue -Id 'cputemp' -Sev $verdict -Title "Le processeur chauffe ($t °C)" -Detail ("Utilisation actuelle : {0} %" -f [math]::Round($cpuLoad)) `
                 -Cause $(if ($cpuLoad -lt 30) { "Il est chaud alors qu'il ne travaille presque pas : poussière, ventilateur, pâte thermique ou refroidissement mal monté." } else { "Il est très sollicité et le refroidissement a du mal à suivre." }) `
                 -Effect "Le processeur ralentit pour se protéger (perte de FPS) et s'use plus vite." `
                 -Steps @("Dépoussière le PC (bombe d'air sec), surtout le radiateur du processeur.", "Vérifie que tous les ventilateurs tournent.", "Si le PC a plus de 4-5 ans, changer la pâte thermique fait souvent gagner 10 °C.")
             $issue = $true
+        } elseif ((Test-RyzenTarget95 $cpuName) -and $cpuLoad -ge 30 -and $t -ge 90) {
+            Add-Ok "Processeur à $t °C en charge : normal pour ce Ryzen (il vise volontairement 95 °C)"
         } else { Add-Ok "Processeur à $t °C, température normale" }
     }
     if ($v['gpu.temp']) {
@@ -4906,30 +5096,54 @@ function Get-ToolStatus {
     return @{ PresentMon = [bool](Find-PresentMon); Lhm = (Test-Path (Join-Path $t 'lhm\LibreHardwareMonitorLib.dll')); PawnIO = (Test-PawnIO)
               Nvsmi = [bool](Get-NvidiaSmi) }
 }
-# Compteur de FPS : on ne lance que la copie rangée dans le dossier protégé. Elle n'y est copiée que si le programme
-# installé est signé par Intel (ou juste après son installation par AEROX lui-même, $Fresh)
-function Find-PresentMon([bool]$Fresh = $false) {
-    $safe = Join-Path (Get-ToolsDir) 'presentmon\PresentMon.exe'
-    if (Test-Path -LiteralPath $safe) { return $safe }
-    $src = Find-PresentMonInstalled
-    if (-not $src) { return $null }
-    if (-not $Fresh -and -not (Test-ToolSignature $src 'Intel Corporation')) { return $null }
+# Compteur de FPS (lancé avec les droits admin) : AEROX ne lance QUE la copie rangée dans le dossier protégé (écriture réservée
+# aux administrateurs), et cette copie n'y entre que si Windows la reconnaît comme signée par Intel. Aucune exception, même
+# juste après l'installation par winget. La signature est vérifiée sur la copie elle-même et non sur l'original, rangé dans
+# un dossier de l'utilisateur : un programme du même compte aurait pu le remplacer entre la vérification et la copie.
+# (Le vrai PresentMon d'Intel est signé « Intel Corporation » : vérifié sur Windows 11 et Windows Server par le test « Tester l'installation ».)
+$script:PmSigOk = @{}
+function Test-PresentMonCopy([string]$Path) {
     try {
-        New-Item -ItemType Directory -Force -Path (Split-Path $safe -Parent) | Out-Null
-        Copy-Item -LiteralPath $src -Destination $safe -Force -ErrorAction Stop
-        return $safe
-    } catch { return $null }
+        $fi = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        $k = '{0}|{1}|{2}' -f $fi.FullName, $fi.Length, $fi.LastWriteTimeUtc.Ticks
+        if ($script:PmSigOk.ContainsKey($k)) { return $true }
+        if (-not (Test-ToolSignature $Path 'Intel Corporation')) { return $false }
+        $script:PmSigOk = @{ $k = $true }
+        return $true
+    } catch { return $false }
 }
-function Find-PresentMonInstalled {
+function Find-PresentMon {
+    $safe = Join-Path (Get-ToolsDir) 'presentmon\PresentMon.exe'
+    if (Test-Path -LiteralPath $safe) {
+        if (Test-PresentMonCopy $safe) { return $safe }
+        # Copie qui n'est pas signée par Intel (fichier remplacé, ou rangée sans vérification par une ancienne version d'AEROX) : retirée
+        try { Remove-Item -LiteralPath $safe -Force -ErrorAction Stop } catch { return $null }
+    }
+    $tmp = Join-Path (Split-Path $safe -Parent) 'PresentMon-verif.exe'
+    foreach ($src in @(Find-PresentMonInstalled -All)) {
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path $safe -Parent) | Out-Null
+            Copy-Item -LiteralPath $src -Destination $tmp -Force -ErrorAction Stop
+            if (Test-PresentMonCopy $tmp) { Move-Item -LiteralPath $tmp -Destination $safe -Force -ErrorAction Stop; return $safe }
+        } catch {}
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+    return $null
+}
+# Les PresentMon installés par winget (le plus récent d'abord) ; -All : tous, sinon seulement le premier
+function Find-PresentMonInstalled([switch]$All) {
+    $found = New-Object 'System.Collections.Generic.List[string]'
     foreach ($root in @("$env:LOCALAPPDATA\Microsoft\WinGet\Packages", "$env:ProgramFiles\WinGet\Packages")) {
-        $f = Get-ChildItem -Path $root -Directory -Filter 'Intel.PresentMon.Console*' -ErrorAction SilentlyContinue |
-             ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'PresentMon*.exe' -Recurse -ErrorAction SilentlyContinue } |
-             Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($f) { return $f.FullName }
+        $files = @(Get-ChildItem -Path $root -Directory -Filter 'Intel.PresentMon.Console*' -ErrorAction SilentlyContinue |
+                   ForEach-Object { Get-ChildItem -LiteralPath $_.FullName -Filter 'PresentMon*.exe' -Recurse -ErrorAction SilentlyContinue } |
+                   Sort-Object LastWriteTime -Descending)
+        foreach ($f in $files) { [void]$found.Add($f.FullName) }
     }
     foreach ($l in @("$env:LOCALAPPDATA\Microsoft\WinGet\Links\presentmon.exe", "$env:ProgramFiles\WinGet\Links\presentmon.exe")) {
-        if (Test-Path -LiteralPath $l) { return $l }
+        if (Test-Path -LiteralPath $l) { [void]$found.Add($l) }
     }
+    if ($All) { return @($found) }
+    if ($found.Count) { return $found[0] }
     return $null
 }
 
@@ -4943,8 +5157,13 @@ function Install-WingetTool([string]$Id, [string]$Label) {
 function Install-PresentMon {
     Step "Installation du compteur de FPS (PresentMon, outil officiel d'Intel, via winget)"
     $null = Install-WingetTool 'Intel.PresentMon.Console' 'Le compteur de FPS'
-    $pm = Find-PresentMon $true
-    if ($pm) { Log "   ✔ PresentMon installé : $pm" }
+    $pm = Find-PresentMon
+    if ($pm) { Log "   ✔ PresentMon installé, signature d'Intel vérifiée : $pm" }
+    elseif (Find-PresentMonInstalled) {
+        Add-TaskError -Title "Le compteur de FPS n'a pas été activé" -Cause "PresentMon est bien présent sur le PC, mais Windows ne le reconnaît pas comme un programme signé par Intel (fichier remplacé ou abîmé, ou certificats de Windows pas à jour)." `
+            -Effect "Par sécurité, AEROX ne lance pas un programme dont il ne peut pas vérifier l'origine : les FPS ne seront pas affichés." `
+            -FixLabel "Réessayer" -FixAction 'Install-PresentMon' -Steps @("Mets Windows à jour (Paramètres > Windows Update), puis réessaie.", "Sinon, désinstalle le compteur dans Gaming > En direct puis réinstalle-le.", "Si le message revient, fais une analyse avec ton antivirus : le fichier a peut-être été modifié.")
+    }
     else {
         Add-TaskError -Title "Le compteur de FPS n'a pas pu être installé" -Cause "winget n'a pas réussi à installer PresentMon (connexion, ou catalogue winget pas à jour)." -Effect "Les FPS ne seront pas affichés." `
             -FixLabel "Réessayer" -FixAction 'Install-PresentMon' -Steps @("Vérifie ta connexion Internet.", "Mets à jour « Programme d'installation d'application » dans le Microsoft Store, puis réessaie.")

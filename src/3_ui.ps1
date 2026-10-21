@@ -249,10 +249,19 @@ $XamlText = @'
   </Grid>
 </Window>
 '@
+# Taille de la fenêtre principale : 1120×780 (au minimum 960×660), mais jamais plus grande que la zone utile de l'écran
+# (barre des tâches exclue) moins une marge. Sans cela, sur un écran 1024×768 ou un portable 1366×768, la barre de titre
+# et les boutons du bas sortaient de l'écran. Reçoit la taille de la zone utile en pixels (testable sans écran).
+function Get-WindowFit([double]$WorkW, [double]$WorkH) {
+    $w = [math]::Min([double]1120, [math]::Floor($WorkW - 16)); $h = [math]::Min([double]780, [math]::Floor($WorkH - 16))
+    return @{ W = $w; H = $h; MinW = [math]::Min([double]960, $w); MinH = [math]::Min([double]660, $h) }
+}
 # Couleurs du thème injectées dans la fenêtre (%%Nom%% → $Pal.Nom)
 foreach ($k in $Pal.Keys) { $XamlText = $XamlText.Replace("%%$k%%", $Pal[$k]) }
 [xml]$xaml = $XamlText
 $window = [Windows.Markup.XamlReader]::Load((New-Object System.Xml.XmlNodeReader $xaml))
+$wFit = Get-WindowFit ([System.Windows.SystemParameters]::WorkArea.Width) ([System.Windows.SystemParameters]::WorkArea.Height)
+$window.MinWidth = $wFit.MinW; $window.MinHeight = $wFit.MinH; $window.Width = $wFit.W; $window.Height = $wFit.H
 Set-SplashStep 78 'Création de l''interface…'
 foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','CancelBtn','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
                'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavPerf','NavMonitor','NavSystem','NavHelp') {
@@ -320,10 +329,32 @@ function ConvertTo-Hash($o) {
     if ($o -is [System.Collections.IEnumerable] -and $o -isnot [string]) { return ,@($o | ForEach-Object { ConvertTo-Hash $_ }) }
     return $o
 }
+# Écriture « tout ou rien » : le texte est d'abord écrit en entier dans un fichier voisin, puis échangé contre l'ancien fichier
+# (qui devient le .bak). Une coupure de courant en plein milieu laisse donc l'ancien fichier intact, au lieu d'un fichier tronqué
+# qui remettrait tous les réglages à zéro.
+function Write-FileAtomic([string]$Path, [string]$Text) {
+    $tmp = $Path + '.tmp'
+    [IO.File]::WriteAllText($tmp, $Text, (New-Object System.Text.UTF8Encoding($true)))
+    if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($tmp, $Path, ($Path + '.bak')) }
+    else { [IO.File]::Move($tmp, $Path) }
+}
+# Réglages enregistrés : le fichier principal, sinon la copie d'avant (.bak) s'il est abîmé ; $null si aucun des deux n'est lisible
+function Read-SettingsFile {
+    $err = $null
+    foreach ($f in @($SettingsFile, ($SettingsFile + '.bak'))) {
+        if (-not (Test-Path -LiteralPath $f)) { continue }
+        try {
+            $h = ConvertTo-Hash (Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json)
+            if ($h -is [hashtable]) { return $h }
+        } catch { if (-not $err) { $err = $_ } }
+    }
+    if ($err) { Write-Bug -Context 'Lecture des réglages' -ErrorRecord $err }   # signalé seulement si la copie de secours n'a pas pu servir
+    return $null
+}
 function Load-Settings {
     try {
-        if (Test-Path -LiteralPath $SettingsFile) {
-            $h = ConvertTo-Hash (Get-Content -LiteralPath $SettingsFile -Raw -Encoding UTF8 | ConvertFrom-Json)
+        $h = Read-SettingsFile
+        if ($h) {
             foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion', 'AutoUpdate', 'UpdSnoozeVer', 'UpdSnoozes') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
@@ -358,7 +389,7 @@ function Save-Settings {
     $AppInfo.StartupKept = @($script:Settings.StartupKept)
     $script:Settings.StartupOff = @($AppInfo.StartupOff | Where-Object { $_ })
     $AppInfo.StabilityFixAt = $script:Settings.StabilityFixAt
-    try { $script:Settings | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $SettingsFile -Encoding UTF8 } catch {}
+    try { Write-FileAtomic $SettingsFile ($script:Settings | ConvertTo-Json -Depth 5) } catch {}
 }
 
 # ---------------------------------------------------------------- Fabrique d'éléments
@@ -1049,7 +1080,7 @@ function Update-HomeStats([switch]$KeepDrives) {
             OS   = @{ L = 'Système'; V = ($os.Caption -replace '^Microsoft\s+', ''); S = "Build $($os.BuildNumber)"; C = $Pal.White }
             CPU  = @{ L = 'Processeur'; V = ($cpu.Name.Trim() -replace '\s+', ' ' -replace '\(R\)|\(TM\)|CPU|Processor|\d+-Core', '' -replace '\s+', ' ').Trim(); S = "$($cpu.NumberOfCores) cœurs / $($cpu.NumberOfLogicalProcessors) threads"; C = $Pal.White }
             RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { $Pal.Warn } else { $Pal.White }) }
-            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(if ($pct -lt 10) { $Pal.Bad } elseif ($pct -lt 15) { $Pal.Warn } else { $Pal.White }) }
+            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(switch (Get-SystemDiskLevel ([double]$c.FreeSpace) ([double]$c.Size)) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.White } }) }
         }
         # Les autres disques (internes et externes) sous celui de Windows : lus en arrière-plan (un disque USB en veille
         # peut mettre plusieurs secondes à répondre), affichés au rafraîchissement suivant
@@ -2852,7 +2883,9 @@ function Show-StartupDialog($Issue) {
 # ---------------------------------------------------------------- Fenêtre d'erreurs
 function New-Dialog([string]$Title, [double]$Width) {
     $w = New-Object System.Windows.Window
-    $w.Title = $Title; $w.Width = $Width; $w.SizeToContent = 'Height'; $w.MaxHeight = 720
+    # Jamais plus grande que la zone utile de l'écran (le contenu défile au-delà)
+    $wa = [System.Windows.SystemParameters]::WorkArea
+    $w.Title = $Title; $w.Width = [math]::Min($Width, [math]::Floor($wa.Width - 16)); $w.SizeToContent = 'Height'; $w.MaxHeight = [math]::Min([double]720, [math]::Floor($wa.Height - 16))
     $w.WindowStartupLocation = 'CenterOwner'; $w.Owner = $window; $w.ResizeMode = 'NoResize'
     $w.Background = Brush $Pal.Side; $w.FontFamily = 'Segoe UI'; $w.ShowInTaskbar = $false
     # Mêmes barres de défilement sombres que la fenêtre principale
@@ -3521,7 +3554,7 @@ function Start-SpaceScan {
         $lbl = "{0}  {1}" -f $d.DeviceID, $(if ($d.VolumeName) { $d.VolumeName } elseif ($d.DeviceID -eq $env:SystemDrive) { 'Windows' } else { 'Disque local' })
         $b = New-Object System.Windows.Controls.Button; $b.Style = $window.FindResource('ActionBtn'); $b.HorizontalContentAlignment = 'Stretch'; $b.Margin = Th 0 0 0 8; $b.Tag = "$($d.DeviceID)"
         $dp = New-Object System.Windows.Controls.DockPanel; $dp.LastChildFill = $true
-        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) $Typo.Body $(if ($pct -lt 10) { $Pal.Bad } elseif ($pct -lt 15) { $Pal.Warn } else { $Pal.Text3 }); $r.Margin = Th 16 0 0 0; $r.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
+        $r = New-Text ("{0} libres sur {1} ({2} %)" -f (Format-Size ([double]$d.FreeSpace)), (Format-Size ([double]$d.Size)), $pct) $Typo.Body $(switch (Get-SystemDiskLevel ([double]$d.FreeSpace) ([double]$d.Size)) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.Text3 } }); $r.Margin = Th 16 0 0 0; $r.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($r, 'Right'); Add-Child $dp $r
         Add-Child $dp (New-Text $lbl $Typo.Strong $Pal.White 'SemiBold')
         $b.Content = $dp
         $b.Add_Click({ $script:DrivePick = [string]$this.Tag; $script:DriveWin.Close() })
@@ -4806,7 +4839,6 @@ $script:GameMinMinutes = 3
 $script:LastGame = $null
 $script:PmCache = @{ Path = $null; At = [datetime]::MinValue }
 $script:Tray = $null; $script:InTray = $false; $script:QuitNow = $false; $script:BalloonKey = ''; $script:DeferredStart = $false; $script:TrimDue = $null; $script:LastTrim = $null
-$script:AutoTaskName = 'AEROX PC Care (mode discret)'
 # Dossiers des boutiques de jeux : le nom du jeu est le dossier juste après
 $script:GameRoots = @(
     @('\\steamapps\\common\\([^\\]+)\\', 'Steam'),
@@ -4956,7 +4988,6 @@ function Stop-GameSession {
     if ($script:Cur -eq 'monitor' -and -not $script:InTray) { Refresh-Page }
 }
 
-function Get-Median($Values) { $a = @($Values | Sort-Object); if (-not $a.Count) { return $null }; return [double]$a[[int][math]::Floor($a.Count / 2)] }
 # Résultat d'une partie, rangé dans la fiche du jeu
 function New-GameRecord($S, $St, $Mins, [datetime]$End, $Ctx) {
     $min = ($End - $S.Start).TotalMinutes
@@ -5209,10 +5240,13 @@ function Optimize-TrayMemory {
 function Exit-Aerox { $script:QuitNow = $true; if ($script:InTray) { Show-MainWindow '' }; $window.Close(); $script:QuitNow = $false }
 
 # ---------------------------------------------------------------- Lancement avec Windows (tâche planifiée, sans demande d'autorisation)
+# La tâche lance AEROX avec les droits admin à chaque démarrage, sans rien demander : elle n'est donc permise que si le
+# programme est dans Program Files, où seuls les administrateurs peuvent le modifier (voir Test-AdminOnlyPath).
 function Get-AutoStartBlock {
     if ($Portable) { return "Pas disponible en version portable (la clé USB n'est pas toujours branchée)." }
     if ((Get-SessionUser).Other) { return "Pas disponible quand AEROX est lancé avec le mot de passe d'un autre compte : Windows le redemanderait à chaque démarrage." }
     if (-not $AeroxLauncher -or -not (Test-Path -LiteralPath $AeroxLauncher)) { return "Lance AEROX avec son raccourci pour activer cette option." }
+    if (-not (Test-AdminOnlyPath $AeroxLauncher)) { return "Pas disponible : AEROX n'est pas dans le dossier protégé de Windows (Program Files). Sinon n'importe quel programme du PC pourrait remplacer AEROX et se faire lancer en administrateur à chaque démarrage. Réinstalle-le avec son installateur : il se range tout seul au bon endroit." }
     return ''
 }
 function Test-AutoStart { try { return [bool](Get-ScheduledTask -TaskName $script:AutoTaskName -ErrorAction Stop) } catch { return $false } }
@@ -5639,6 +5673,8 @@ Update-HomeStats
 $NavHome.IsChecked = $true
 $timer.Start()
 if ($GitHubRepo) { $script:LastUpdCheck = Get-Date; Start-Background 'Find-AppUpdate; Find-BugRelay; Find-DiscordLink; Send-Stats' }
+# Lancement avec Windows : une ancienne tâche qui vise un programme remplaçable par d'autres comptes est retirée (voir Repair-AutoStartTask)
+Start-Background 'Repair-AutoStartTask | Out-Null'
 Set-SplashStep 95 'Ouverture…'
 [void]$window.ShowDialog()
 $timer.Stop()
