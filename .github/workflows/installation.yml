@@ -1,0 +1,30 @@
+# Tests sur un vrai Windows de ce qui n'est PAS couvert par « Vérifier sur Windows » (qui lance une copie du script) :
+# l'installateur, le dossier protégé, la mise à jour, la désinstallation, le lanceur, la fenêtre sur un petit écran.
+# Ne publie rien. Se lance à chaque envoi sur la branche de travail qui touche l'un de ces éléments.
+name: Tester l'installation
+
+on:
+  push:
+    branches: [prochaine-version]
+    paths: ['installer/**', 'launcher/**', 'tests/installation/**', '.github/workflows/installation.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  presentmon-reel:
+    name: PresentMon d'Intel (signature) — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Signature du vrai PresentMon
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tests/installation/presentmon-reel.ps1
