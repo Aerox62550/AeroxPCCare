@@ -41,6 +41,15 @@ function Preparer-Reglages {
 }
 function Lire-Registre([string]$Nom) { try { return "$((Get-ItemProperty -LiteralPath $Cle -ErrorAction Stop).$Nom)" } catch { return '' } }
 function Meme-Fichier([string]$A, [string]$B) { return ((Get-FileHash -LiteralPath $A -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $B -Algorithm SHA256).Hash) }
+# La tâche « lancer avec Windows » doit viser le programme installé dans Program Files, avec les mêmes réglages qu'à sa création
+function Exiger-Tache-Intacte([string]$Contexte) {
+    $i = $null
+    try { $i = Get-TacheInfo $Tache } catch { throw "$Contexte : la tâche « lancer avec Windows » a disparu ($($_.Exception.Message))" }
+    Exiger ($i.Cible -eq $Exe) ("$Contexte : la tâche vise « {0} » au lieu de « {1} »" -f $i.Cible, $Exe)
+    Exiger ($i.Arguments -eq '--discret') "$Contexte : paramètre de la tâche : « $($i.Arguments) »"
+    Exiger ($i.Niveau -eq 'Highest') "$Contexte : niveau d'exécution de la tâche : $($i.Niveau)"
+    Exiger ($i.Declencheurs -ge 1) "$Contexte : déclencheur de la tâche perdu"
+}
 function Exiger-Installation([string]$Contexte) {
     foreach ($f in $Fichiers) {
         Exiger (Test-Path -LiteralPath (Join-Path $Dir $f)) "$Contexte : $f absent de $Dir"
@@ -81,14 +90,17 @@ Verifier 'Le dossier ne se choisit pas : /D=C:\AeroxCustom est ignoré' {
     Exiger-Installation 'avec /D='
     Exiger (-not (Test-Path -LiteralPath 'C:\AeroxCustom\AeroxPCCare.exe')) 'AEROX installé dans C:\AeroxCustom malgré tout'
 }
-Verifier 'Réinstallation par-dessus (même version) : rien de perdu' {
+Verifier 'Réinstallation par-dessus (même version) : rien de perdu, la tâche « lancer avec Windows » n''est pas touchée' {
     Preparer-Reglages
+    Register-TacheDiscret $Exe $Tache
     $avant = (Get-ChildItem -LiteralPath (Join-Path $Dir 'protege') -Recurse -File | Measure-Object).Count
     $code = Lancer-Programme $Setup '/S'
     Exiger ($code -eq 0) "code de sortie $code"
     Exiger-Installation 'réinstallation'
     $apres = (Get-ChildItem -LiteralPath (Join-Path $Dir 'protege') -Recurse -File | Measure-Object).Count
     Exiger ($apres -eq $avant) "fichiers du dossier protégé : $avant avant, $apres après"
+    Exiger-Tache-Intacte 'réinstallation'
+    Unregister-ScheduledTask -TaskName $Tache -Confirm:$false -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------------------------------------------- Lanceur
@@ -168,6 +180,39 @@ Verifier 'Au démarrage, une tâche qui vise le programme installé dans Program
 }
 
 # ---------------------------------------------------------------------------------------------------- Reprise d'une ancienne installation (M2)
+Verifier 'Diagnostic : comment Windows accepte de déplacer la tâche « lancer avec Windows »' {
+    $cible = Join-Path $Dir 'AeroxPCCare.exe'
+    $diag = New-Object 'System.Collections.Generic.List[string]'
+    function Lancer-Natif([string]$Programme, [string]$Ligne) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo $Programme
+        $psi.Arguments = $Ligne; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
+        $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+        $p = [System.Diagnostics.Process]::Start($psi)
+        $o = $p.StandardOutput.ReadToEnd(); $e = $p.StandardError.ReadToEnd(); $p.WaitForExit()
+        return @{ Code = $p.ExitCode; Texte = (($o + ' ' + $e) -replace '\s+', ' ').Trim() }
+    }
+    $tr = '/TR "\"' + $cible + '\" --discret"'
+    foreach ($variante in @(@('64 bits', "$env:SystemRoot\System32\schtasks.exe"), @('32 bits', "$env:SystemRoot\SysWOW64\schtasks.exe"))) {
+        if (-not (Test-Path -LiteralPath $variante[1])) { $diag.Add("schtasks $($variante[0]) absent"); continue }
+        Unregister-ScheduledTask -TaskName $Tache -Confirm:$false -ErrorAction SilentlyContinue
+        Register-TacheDiscret 'C:\AeroxOld\AeroxPCCare.exe' $Tache
+        $q = Lancer-Natif $variante[1] ('/Query /TN "' + $Tache + '"')
+        $c = Lancer-Natif $variante[1] ('/Change /TN "' + $Tache + '" ' + $tr)
+        $apres = 'tâche absente'; try { $i = Get-TacheInfo $Tache; $apres = ("vise « {0} » {1}, niveau {2}, {3} déclencheur(s)" -f $i.Cible, $i.Arguments, $i.Niveau, $i.Declencheurs) } catch {}
+        $diag.Add(("schtasks {0} : /Query code {1} ; /Change code {2} « {3} » ; ensuite : {4}" -f $variante[0], $q.Code, $c.Code, $c.Texte, $apres))
+    }
+    # Autre façon (module de tâches planifiées de PowerShell)
+    Unregister-ScheduledTask -TaskName $Tache -Confirm:$false -ErrorAction SilentlyContinue
+    Register-TacheDiscret 'C:\AeroxOld\AeroxPCCare.exe' $Tache
+    try {
+        Set-ScheduledTask -TaskName $Tache -Action (New-ScheduledTaskAction -Execute $cible -Argument '--discret') -ErrorAction Stop | Out-Null
+        $i = Get-TacheInfo $Tache
+        $diag.Add(("Set-ScheduledTask : vise « {0} » {1}, niveau {2}, {3} déclencheur(s)" -f $i.Cible, $i.Arguments, $i.Niveau, $i.Declencheurs))
+    } catch { $diag.Add("Set-ScheduledTask refusé : " + $_.Exception.Message) }
+    Unregister-ScheduledTask -TaskName $Tache -Confirm:$false -ErrorAction SilentlyContinue
+    foreach ($d in $diag) { Note ("  " + $d) }
+    throw ('DIAGNOSTIC (volontairement en échec) : ' + ($diag -join ' || '))
+}
 Verifier 'Ancienne installation dans un dossier libre : reprise, fichiers d''AEROX retirés, fichier perso gardé, tâche repointée' {
     Nettoyer
     Preparer-Ancienne 'C:\AeroxOld' -AvecFichierPerso -AvecTache
@@ -212,9 +257,11 @@ Verifier 'Mise à jour silencieuse (/S /UPDATE) : installée, puis AEROX est rel
     $code = Lancer-Programme $Setup '/S'
     Exiger ($code -eq 0) "première installation : code $code"
     Preparer-Reglages
+    Register-TacheDiscret $Exe $Tache
     $code = Lancer-Programme $Setup '/S /UPDATE'
     Exiger ($code -eq 0) "mise à jour : code $code"
     Exiger-Installation 'mise à jour'
+    Exiger-Tache-Intacte 'mise à jour'
     $vu = $false
     for ($i = 0; $i -lt 40; $i++) { if (Get-Process -Name 'AeroxPCCare' -ErrorAction SilentlyContinue) { $vu = $true; break }; Start-Sleep -Milliseconds 500 }
     Exiger $vu 'AEROX n''a pas été relancé après la mise à jour'

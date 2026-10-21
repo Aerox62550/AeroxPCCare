@@ -47,7 +47,8 @@ de support par édition), sinon AEROX ne signale plus les versions périmées.
 | **Tester le relais** (`relais.yml`, `tests/relais/relais.test.mjs`) | Le relais Cloudflare avec un stockage, GitHub et Discord simulés : textes nettoyés, requêtes invalides, plafonds d'envoi, statistiques, pannes du stockage, adresse IP jamais écrite ; et la liste des compteurs du logiciel = celle du relais. | 15 s |
 
 Les résultats se lisent dans l'onglet Actions, ou par `gh api repos/<dépôt>/check-runs/<id>/annotations` : le **résumé des échecs est
-toujours la première annotation** (GitHub ne garde que 10 annotations par étape). Le test du relais se lance aussi à la main :
+toujours la première annotation** (GitHub ne garde que 10 annotations par étape et coupe chacune vers 4 000 octets : le détail est
+découpé en blocs de 3 000 caractères). Le test du relais se lance aussi à la main :
 `node tests/relais/relais.test.mjs` (Node 20 ou plus récent, rien à installer).
 
 ## Règles de sécurité à ne pas casser

@@ -241,16 +241,19 @@ Section "Installer"
     RMDir "$OldDir"
   ${EndIf}
 
-  ; Lancement avec Windows (mode discret) : si la tâche existe, elle doit viser le logiciel installé ICI (jamais l'ancien
-  ; dossier). Si Windows refuse de la modifier, on la supprime : la personne la réactive en un clic dans Gaming.
-  nsExec::Exec 'schtasks.exe /Query /TN "${TASKNAME}"'
-  Pop $0
-  ${If} $0 == 0
-    nsExec::Exec 'schtasks.exe /Change /TN "${TASKNAME}" /TR "\"$INSTDIR\${EXENAME}\" --discret"'
+  ; Lancement avec Windows (mode discret) : seulement quand on vient d'abandonner un ancien dossier. La tâche visait le logiciel
+  ; qui y était : on la déplace vers l'installation actuelle ; si Windows refuse, on la supprime (la personne la réactive en un clic
+  ; dans Gaming). Dans tous les autres cas (mise à jour, réinstallation) le programme est au même endroit : la tâche n'est pas touchée.
+  ${If} $OldDir != ""
+    nsExec::Exec 'schtasks.exe /Query /TN "${TASKNAME}"'
     Pop $0
-    ${If} $0 != 0
-      nsExec::Exec 'schtasks.exe /Delete /TN "${TASKNAME}" /F'
+    ${If} $0 == 0
+      nsExec::Exec 'schtasks.exe /Change /TN "${TASKNAME}" /TR "\"$INSTDIR\${EXENAME}\" --discret"'
       Pop $0
+      ${If} $0 != 0
+        nsExec::Exec 'schtasks.exe /Delete /TN "${TASKNAME}" /F'
+        Pop $0
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 

@@ -6,18 +6,26 @@ $script:Echecs = New-Object 'System.Collections.Generic.List[string]'
 
 function Note([string]$t) { $script:Lignes.Add($t); Write-Host $t }
 
-# Résultat lisible via l'API GitHub (annotations). GitHub ne garde que 10 annotations par étape : la première est le résumé
-# (les échecs), les neuf autres portent le détail par morceaux de 100 lignes (la fin du détail est coupée s'il est trop long).
+# Résultat lisible via l'API GitHub (annotations). GitHub ne garde que 10 annotations par étape et coupe chacune vers 4 000 octets :
+# la première est le résumé (les échecs), les neuf autres portent le détail, découpé par blocs de 3 000 caractères au plus
+# (la fin du détail est coupée s'il est vraiment trop long).
 function Envoyer([string]$Titre) {
     $L = @($script:Lignes)
     $resume = "{0} échec(s)" -f $script:Echecs.Count
     foreach ($e in $script:Echecs) { $resume += "`n  - " + $e }
+    if ($resume.Length -gt 3000) { $resume = $resume.Substring(0, 3000) + '…' }
     Write-Host ("::notice title=$Titre résumé::" + $resume.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A'))
-    for ($i = 0; $i -lt $L.Count -and $i -lt 900; $i += 100) {
-        $n = [int][math]::Floor($i / 100) + 1
-        $fin = [math]::Min($i + 99, $L.Count - 1)
-        $chunk = (($L[$i..$fin]) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-        Write-Host "::notice title=$Titre $n::$chunk"
+    $blocs = New-Object 'System.Collections.Generic.List[string]'
+    $cur = ''
+    foreach ($ligne in $L) {
+        $l = "$ligne"; if ($l.Length -gt 2000) { $l = $l.Substring(0, 2000) + '…' }
+        if ($cur.Length -gt 0 -and ($cur.Length + $l.Length + 1) -gt 3000) { $blocs.Add($cur); $cur = '' }
+        $cur = $(if ($cur.Length) { $cur + "`n" + $l } else { $l })
+    }
+    if ($cur.Length) { $blocs.Add($cur) }
+    for ($i = 0; $i -lt $blocs.Count -and $i -lt 9; $i++) {
+        $chunk = $blocs[$i].Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+        Write-Host ("::notice title=$Titre {0}::{1}" -f ($i + 1), $chunk)
     }
 }
 
