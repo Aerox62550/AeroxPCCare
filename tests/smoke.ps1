@@ -852,13 +852,19 @@ function Invoke-Smoke {
         if (-not $r) { throw "pas de résultat" }
         Write-Host ("        verdict : {0} · vérifié : {1}" -f $r.Verdict.Title, ($r.Checked -join ' | '))
         foreach ($x in @($r.Items)) { Write-Host ("        [{0}] {1} | {2} | {3} | {4}" -f $x.Sev, $x.Rule, $x.Title, $x.Path, $x.Why) }
-        $crit = @($r.Items | Where-Object { $_.Sev -eq 'crit' })
+        # Machine de test GitHub : Defender y est volontairement aveuglé (exclusion des disques entiers) et ses agents
+        # tournent sans signature depuis ProgramData\GitHub et Temp. Vrais signes sur un PC normal, seulement notés ici.
+        $runner = { param($x) $env:GITHUB_ACTIONS -eq 'true' -and (($x.Rule -eq 'exclusion' -and "$($x.Path)" -match '^[A-Za-z]:\\?$') -or "$($x.Path)" -match '(?i)\\GitHub\\|\\provjobd') }
+        foreach ($x in @($r.Items | Where-Object { & $runner $_ })) { Write-Host ("        (machine de test GitHub, attendu) {0} {1}" -f $x.Title, $x.Path) }
+        $crit = @($r.Items | Where-Object { $_.Sev -eq 'crit' -and -not (& $runner $_) })
         if ($crit.Count) { throw ("{0} critique(s) sur une machine saine : {1}" -f $crit.Count, (($crit | ForEach-Object { "$($_.Rule) $($_.Title) $($_.Path)" }) -join ' | ')) }
         if (-not @($r.Checked).Count) { throw "pas de liste de vérifications" }
     }
     Smoke 'Sécurité : signes forts du diagnostic' {
         $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:CurrentCat = 'Sécurité'
         Test-SecQuickSigns
+        # Machine de test GitHub : exclusion des disques entiers voulue (voir ci-dessus)
+        if ($env:GITHUB_ACTIONS -eq 'true') { foreach ($i in @($script:Issues | Where-Object { $_.Id -eq 'secu-exclusion' -and "$($_.Detail)" -match '^([A-Za-z]:\\?(, )?)+$' })) { Write-Host "        (machine de test GitHub, attendu) $($i.Title) $($i.Detail)"; $script:Issues.Remove($i) } }
         if ($script:Issues.Count) { throw ("signe fort sur une machine saine : " + (($script:Issues | ForEach-Object { "$($_.Title) $($_.Detail)" }) -join ' | ')) }
     }
     Smoke 'Sécurité : fenêtre (machine de test)' { Show-SecDialog $null }

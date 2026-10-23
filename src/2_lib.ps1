@@ -6520,7 +6520,9 @@ function Get-SecProcesses {
         $key = ("{0}|{1}" -f $risk.Path, $risk.Why).ToLowerInvariant()
         if ($seen.ContainsKey($key)) { continue }; $seen[$key] = $true
         $sev = $risk.Sev; $why = $risk.Why
-        if ($conn.ContainsKey($procId)) { $sev = if ($sev -eq 'warn') { 'crit' } else { $sev }; $why += " Il est connecté à Internet en ce moment." }
+        # Connexion Internet : dite clairement, mais ne rend pas « critique » à elle seule (beaucoup de logiciels honnêtes
+        # sans signature sont connectés ; une fausse alerte critique ferait croire à un piratage)
+        if ($conn.ContainsKey($procId)) { $why += " Il est connecté à Internet en ce moment." }
         $fix = if ($risk.Exists -and (($risk.Path -split '\\')[-1] -notmatch $script:SecHostExe)) { @(@{ Kind = 'scan'; File = $risk.Path }) } else { @() }
         Add-SecItem -Rule $(if ($isHost) { 'commande' } else { 'programme' }) -Cat 'process' -Sev $sev -Title $(if ($isHost) { "Commande à risque en cours : $name" } else { "Programme suspect en cours : $name" }) -Path $risk.Path -Why $why `
             -Todo $(if ($sev -eq 'crit') { "Si tu ne le reconnais pas : analyse-le, change tes mots de passe depuis ton téléphone, puis lance l'analyse hors ligne." } else { "Si tu ne le reconnais pas : analyse-le avec Defender." }) `
@@ -6607,7 +6609,7 @@ function Get-SecDownloads([string[]]$Dirs = @()) {
             if ($f.Name -notmatch $script:RiskyDlExt) { continue }
             if ($f.LastWriteTime -lt $since -and $f.CreationTime -lt $since) { continue }
             $n++
-            $flags = @(Test-RiskyDownloadName $f.Name)
+            $flags = @(Test-RiskyDownloadName $f.Name | ForEach-Object { $_ })
             $sev = ''; $why = New-Object System.Collections.ArrayList; $rule = ''
             if ($f.Extension -ieq '.lnk') {
                 $sc = Get-ShortcutInfo $f.FullName
