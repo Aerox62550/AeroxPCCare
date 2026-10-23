@@ -2637,6 +2637,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.6.1' = @("Analyse de sécurité : le bouton « Traiter la sélection » est toujours visible en bas de la fenêtre (il pouvait être caché quand la liste était longue).",
+                "Les cachettes typiques des voleurs de mots de passe sont maintenant critiques et cochées d'office : programme au nom terminé par des caractères au hasard, dossier camouflé qui s'affiche comme « Ce PC », faux dossier « Windows » dans AppData ou ProgramData, faux nom Adobe ou Microsoft sans signature.")
     '2.6.0' = @("Nouvel onglet Sécurité : une analyse anti-intrusion approfondie (environ 1 minute) cherche les voleurs de mots de passe et leurs traces : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, faux cheats et cracks téléchargés, fichiers de mots de passe laissés en clair. Pour chaque élément : pourquoi c'est suspect et quoi faire. Tu coches, AEROX s'en occupe, sans jamais supprimer de fichier.",
                 "Quarantaine AEROX : un fichier suspect est déplacé dans le dossier protégé et ne peut plus se lancer, avec n'importe quel antivirus (pas besoin de Windows Defender). « Annuler » dans l'historique le remet à sa place.",
                 "Pas sûr ? « Envoyer au développeur » : le rapport (relu par toi, sans ton nom) part dans son salon privé, et il te dit sur Discord quels numéros cocher. AEROX ne reçoit jamais d'ordre par Internet : c'est toi qui coches.",
@@ -4269,8 +4271,8 @@ function Show-SecDialog($Issue) {
            else { "{0} critique(s) · {1} à vérifier · {2} pour info. Coche ce que tu veux traiter : les éléments critiques qui ont une correction sont déjà cochés. AEROX ne supprime jamais de fichier : il met en quarantaine, désactive ou retire un réglage dangereux, et tout ce qui est mis en quarantaine ou désactivé s'annule dans l'historique. Pas sûr ? « Envoyer au développeur » : il te dira sur Discord quels numéros cocher (code du rapport : {3})." -f $nc, $nw, $ni, $rep.Code }
     $p = New-Text $sub $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
-    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 400; $sv.Content = $list
-    Add-Child $sp $sv
+    # La liste ET « ce qui a été vérifié » défilent ; le titre en haut et les boutons en bas restent toujours visibles
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $list; $sv.Margin = Th 24 0 24 0
     foreach ($c in $script:SecCats.Keys) {
         $g = @($items | Where-Object { $_.Cat -eq $c })
         if (-not $g.Count) { continue }
@@ -4305,10 +4307,10 @@ function Show-SecDialog($Issue) {
     }
     if (-not $items.Count) { $t = New-Text "Aucun signe d'intrusion : rien de suspect dans les endroits où les virus et les voleurs de mots de passe se cachent." $Typo.Body $Pal.Ok; Add-Child $list $t }
     # Ce qui a été vérifié
-    $hv = New-Text 'CE QUI A ÉTÉ VÉRIFIÉ' $Typo.Small $Pal.Faint 'Bold'; $hv.Margin = Th 2 14 0 4; Add-Child $sp $hv
-    $ck = New-Text ((@($rep.Checked) | ForEach-Object { "✓ $_" }) -join "`n") $Typo.Small $Pal.Text3; $ck.LineHeight = 19; Add-Child $sp $ck
+    $hv = New-Text 'CE QUI A ÉTÉ VÉRIFIÉ' $Typo.Small $Pal.Faint 'Bold'; $hv.Margin = Th 2 14 0 4; Add-Child $list $hv
+    $ck = New-Text ((@($rep.Checked) | ForEach-Object { "✓ $_" }) -join "`n") $Typo.Small $Pal.Text3; $ck.LineHeight = 19; $ck.Margin = Th 0 0 0 6; Add-Child $list $ck
     # Boutons
-    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 14 0 0
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 24 12 24 18
     $left = New-Object System.Windows.Controls.StackPanel; $left.Orientation = 'Horizontal'
     $bSend = New-DlgButton 'Envoyer au développeur' 'ActionBtn'; $bSend.Margin = Th 0 0 8 0
     $bBr = New-DlgButton 'Navigateurs' 'TextBtn'; $bBr.Margin = Th 0 0 8 0
@@ -4320,7 +4322,6 @@ function Show-SecDialog($Issue) {
     $bApply = New-DlgButton 'Traiter la sélection' 'PrimaryBtn'; $script:SecApply = $bApply
     Add-Child $rightBar $bClose; Add-Child $rightBar $bApply
     [System.Windows.Controls.DockPanel]::SetDock($rightBar, 'Right'); Add-Child $bar $rightBar; Add-Child $bar $left
-    Add-Child $sp $bar
     $script:CountSec = {
         $n = @($script:SecRows | Where-Object { $_.Check.IsChecked }).Count
         $script:SecApply.Content = $(if ($n) { "Traiter la sélection ($n)" } else { 'Traiter la sélection' }); $script:SecApply.IsEnabled = ($n -gt 0)
@@ -4332,7 +4333,13 @@ function Show-SecDialog($Issue) {
     $bClose.Add_Click({ $script:SecWin.Close() })
     $bApply.Add_Click({ $script:SecChoice = @($script:SecRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:SecWin.Close() })
     & $script:CountSec
-    $w.Content = $sp
+    $sp.Margin = Th 24 22 24 8
+    $g = New-Object System.Windows.Controls.Grid
+    foreach ($h in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($h); $g.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($sp, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($bar, 2)
+    Add-Child $g $sp; Add-Child $g $sv; Add-Child $g $bar
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight
+    $w.Content = $g
     [void]$w.ShowDialog()
     if ($script:SecGo -eq 'browser') { Start-BrowserCheck $null; return }
     if ($script:SecGo -eq 'rescan') { Start-SecScan $Issue; return }

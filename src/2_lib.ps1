@@ -5971,6 +5971,21 @@ function Test-Masquerade([string]$Name, [string]$Path, [string]$WinDir = 'C:\Win
     return ''
 }
 
+# Signes de cachette d'un programme SANS signature rangé dans AppData, ProgramData ou un dossier temporaire (sinon '') :
+# nom terminé par une suite aléatoire (« NetHost1dcc90 », « 00138d5f2 »), dossier camouflé par un code « {20D04FE0-…} »
+# (il s'affiche comme « Ce PC »), dossier qui imite Windows (« AppData\Local\Windows », « ProgramData\Windows\Config »),
+# ou nom d'un grand éditeur (« AdobeInputHost », « MicrosoftStorageWorker ») sans sa signature. Vu sur un vrai PC infecté (23/10/2026).
+function Get-SuspiciousPlacement([string]$Path, [string]$Name = '') {
+    $p = ("$Path".Trim().Trim('"')) -replace '/', '\'
+    if (-not $p) { return '' }
+    $file = ($p -split '\\')[-1]; $base = $file -replace '\.[^.]+$', ''
+    if ($p -match '\.\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}(\\|$)') { return "rangé dans un dossier camouflé (il s'affiche comme « Ce PC » et ne s'ouvre pas)" }
+    if ($p -match '(?i)^[a-z]:\\(users\\[^\\]+\\appdata\\(local|roaming|locallow)|programdata)\\(windows|system32|syswow64|common\\common)\\') { return "rangé dans un dossier qui imite celui de Windows" }
+    if ($base -cmatch '(?i)^(?=.*\d)[0-9a-f]{6,}$' -or ($base -match '(?i)[a-z][0-9a-f]{5,}$' -and $Matches[0].Substring(1) -match '\d')) { return "nom terminé par une suite de caractères au hasard, typique des virus" }
+    foreach ($n in @($base, $Name)) { if ("$n" -match '(?i)^(microsoft|windows|adobe|google|intel|nvidia|realtek|onedrive|steam|discord)') { return ("porte le nom de « {0} » sans sa signature" -f $matches[1]) } }
+    return ''
+}
+
 # Exclusion de l'antivirus : 'crit' (dangereuse), 'warn' (dossier de ton compte), 'info' (à vérifier) ou '' (rien)
 $script:ExclRiskExt = @('exe', 'dll', 'ps1', 'bat', 'cmd', 'js', 'jse', 'vbs', 'vbe', 'wsf', 'scr', 'hta', 'com', 'pif', 'msi', 'lnk', 'cpl')
 $script:ExclRiskProc = @('powershell', 'pwsh', 'cmd', 'wscript', 'cscript', 'mshta', 'rundll32', 'regsvr32', 'svchost', 'explorer', 'msiexec', 'conhost', 'dllhost', 'certutil', 'bitsadmin', '*')
@@ -6126,7 +6141,7 @@ function Get-SecSig([string]$Path) {
     return $r
 }
 # Programme lancé (au démarrage ou en ce moment) : Sev '' / 'warn' / 'crit', raisons, fichier en cause
-function Get-LaunchRisk([string]$Cmd, [string]$UserProfile = '') {
+function Get-LaunchRisk([string]$Cmd, [string]$UserProfile = '', [string]$Name = '') {
     $r = @{ Sev = ''; Why = ''; Path = ''; Exists = $false }
     $c = "$Cmd".Trim(); if (-not $c) { return $r }
     $why = New-Object System.Collections.ArrayList
@@ -6151,8 +6166,12 @@ function Get-LaunchRisk([string]$Cmd, [string]$UserProfile = '') {
     if (-not $sig.Valid -and $script:SecZoneLabels.ContainsKey($zone)) {
         if ($zone -in 'temp', 'downloads', 'public') { $r.Sev = 'crit'; [void]$why.Add(("Programme sans signature d'éditeur lancé depuis {0}." -f $script:SecZoneLabels[$zone])) }
         else {
-            if (-not $r.Sev) { $r.Sev = 'warn' }
-            [void]$why.Add(("Programme sans signature d'éditeur lancé depuis {0}. Beaucoup de logiciels honnêtes font ça, mais c'est aussi là que se cachent les voleurs de mots de passe." -f $script:SecZoneLabels[$zone]))
+            $hide = Get-SuspiciousPlacement $target $Name
+            if ($hide) { $r.Sev = 'crit'; [void]$why.Add(("Programme sans signature d'éditeur lancé depuis {0}, {1}." -f $script:SecZoneLabels[$zone], $hide)) }
+            else {
+                if (-not $r.Sev) { $r.Sev = 'warn' }
+                [void]$why.Add(("Programme sans signature d'éditeur lancé depuis {0}. Beaucoup de logiciels honnêtes font ça, mais c'est aussi là que se cachent les voleurs de mots de passe." -f $script:SecZoneLabels[$zone]))
+            }
         }
     }
     $r.Why = ($why -join ' ')
@@ -6378,7 +6397,7 @@ function Get-SecAutoruns {
                 $nRun++
                 $cmd = [string]$key.GetValue($n)
                 [void]$script:SecAutoTexts.Add("$n $cmd")
-                $risk = Get-LaunchRisk $cmd $rt.Profile
+                $risk = Get-LaunchRisk $cmd $rt.Profile $n
                 if (-not $risk.Sev) { continue }
                 $fix = @(); $off = $false
                 if ($s[1] -and ($rt.Machine -or $rt.Session)) {
@@ -6404,7 +6423,7 @@ function Get-SecAutoruns {
             $cmd = '"{0}"' -f $file.FullName
             if ($file.Extension -ieq '.lnk') { $sc = Get-ShortcutInfo $file.FullName; if ($sc -and $sc.Target) { $cmd = ('"{0}" {1}' -f $sc.Target, $sc.Args).Trim() } }
             [void]$script:SecAutoTexts.Add("$($file.BaseName) $cmd")
-            $risk = Get-LaunchRisk $cmd $f.Profile
+            $risk = Get-LaunchRisk $cmd $f.Profile $file.BaseName
             if (-not $risk.Sev) { continue }
             $fix = @(); $off = $false
             if ($f.Appr) { $off = -not (Test-StartupEnabled $f.Appr $file.Name); if (-not $off) { $fix = @(@{ Kind = 'startup'; Id = "$($f.Appr)|$($file.Name)" }) } }
@@ -6421,7 +6440,7 @@ function Get-SecAutoruns {
             $nT++
             $cmd = ('"{0}" {1}' -f "$($a.Execute)".Trim().Trim('"'), "$($a.Arguments)").Trim()
             [void]$script:SecAutoTexts.Add("$($t.TaskName) $cmd")
-            $risk = Get-LaunchRisk $cmd $su.Profile
+            $risk = Get-LaunchRisk $cmd $su.Profile "$($t.TaskName)"
             if (-not $risk.Sev) { continue }
             $ms = "$($t.TaskPath)" -like '\Microsoft\*'
             $fix = if ($ms) { @() } else { @(@{ Kind = 'task'; Path = "$($t.TaskPath)"; Name = "$($t.TaskName)"; Label = "$($t.TaskName)" }) }
@@ -6445,7 +6464,7 @@ function Get-SecAutoruns {
                 if (-not $dll) { continue }
                 $cmd = '"{0}"' -f [Environment]::ExpandEnvironmentVariables($dll)
             }
-            $risk = Get-LaunchRisk $cmd
+            $risk = Get-LaunchRisk $cmd '' "$($sv.Name)"
             if (-not $risk.Sev) { continue }
             $drv = ($cls -eq 'Win32_SystemDriver')
             $fix = if (-not $drv -and $sv.StartMode -eq 'Auto' -and "$($sv.PathName)" -notmatch '(?i)\\svchost\.exe') { @(@{ Kind = 'service'; Name = "$($sv.Name)"; Label = "$($sv.DisplayName)" }) } else { @() }
