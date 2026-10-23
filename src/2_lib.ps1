@@ -5935,18 +5935,21 @@ function Get-CommandRisk([string]$Cmd) {
 function Get-EditDistance([string]$A, [string]$B) {
     $n = $A.Length; $m = $B.Length
     if (-not $n) { return $m }; if (-not $m) { return $n }
-    $d = New-Object 'int[,]' ($n + 1), ($m + 1)
-    for ($i = 0; $i -le $n; $i++) { $d[$i, 0] = $i }
-    for ($j = 0; $j -le $m; $j++) { $d[0, $j] = $j }
+    # Tableau de tableaux (Windows PowerShell 5.1 n'accepte pas « $d[$i, $j] » dans les arguments d'une méthode)
+    $d = New-Object 'System.Collections.Generic.List[int[]]'
+    for ($i = 0; $i -le $n; $i++) { $row = New-Object 'int[]' ($m + 1); $row[0] = $i; $d.Add($row) }
+    for ($j = 0; $j -le $m; $j++) { $d[0][$j] = $j }
     for ($i = 1; $i -le $n; $i++) {
+        $cur = $d[$i]; $up = $d[$i - 1]
         for ($j = 1; $j -le $m; $j++) {
-            $cost = if ($A[$i - 1] -eq $B[$j - 1]) { 0 } else { 1 }
-            $v = [math]::Min([math]::Min($d[($i - 1), $j] + 1, $d[$i, ($j - 1)] + 1), $d[($i - 1), ($j - 1)] + $cost)
-            if ($i -gt 1 -and $j -gt 1 -and $A[$i - 1] -eq $B[$j - 2] -and $A[$i - 2] -eq $B[$j - 1]) { $v = [math]::Min($v, $d[($i - 2), ($j - 2)] + 1) }
-            $d[$i, $j] = $v
+            $cost = 1; if ($A[$i - 1] -eq $B[$j - 1]) { $cost = 0 }
+            $del = $up[$j] + 1; $ins = $cur[$j - 1] + 1; $sub = $up[$j - 1] + $cost
+            $v = $del; if ($ins -lt $v) { $v = $ins }; if ($sub -lt $v) { $v = $sub }
+            if ($i -gt 1 -and $j -gt 1 -and $A[$i - 1] -eq $B[$j - 2] -and $A[$i - 2] -eq $B[$j - 1]) { $tr = $d[$i - 2][$j - 2] + 1; if ($tr -lt $v) { $v = $tr } }
+            $cur[$j] = $v
         }
     }
-    return $d[$n, $m]
+    return $d[$n][$m]
 }
 # Programmes de Windows dont les virus prennent le nom (ils ne sont QUE dans C:\Windows, System32 ou SysWOW64)
 $script:SysNames = @('svchost', 'lsass', 'csrss', 'smss', 'wininit', 'winlogon', 'services', 'spoolsv', 'taskhostw', 'dwm', 'conhost', 'rundll32', 'dllhost', 'sihost', 'ctfmon', 'fontdrvhost', 'explorer', 'audiodg', 'runtimebroker', 'searchindexer', 'userinit', 'wuauclt', 'lsm')
