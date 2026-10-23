@@ -877,6 +877,20 @@ function Invoke-Smoke {
         try { [void](Move-ToQuarantine (Join-Path $env:SystemRoot 'System32\whoami.exe')); throw "un fichier de Windows a été accepté" } catch { if ($_.Exception.Message -match 'accepté') { throw } }
         Write-Host "        en quarantaine, annulation scellée (remis à sa place par le test des annulations)"
     }
+    Smoke 'Sécurité : vider la quarantaine (seulement après 24 heures)' {
+        $dir = Get-SecureDir 'quarantaine'
+        $recent = @(Get-QuarantineItems | Where-Object { -not $_.CanDelete })
+        if (-not $recent.Count) { throw "le fichier mis en quarantaine à l'instant n'est pas listé" }
+        Clear-Quarantine -Ids @($recent[0].Id)
+        if (-not (Test-Path -LiteralPath (Join-Path $dir "$($recent[0].Id).quarantaine"))) { throw "un fichier mis en quarantaine il y a moins de 24 h a été supprimé" }
+        $old = [guid]::NewGuid().ToString('N')
+        [IO.File]::WriteAllText((Join-Path $dir "$old.quarantaine"), 'faux fichier de test')
+        [IO.File]::WriteAllText((Join-Path $dir "$old.json"), (@{ id = $old; chemin = 'C:\aerox\vieux.exe'; sha256 = ''; date = (Get-Date).AddDays(-3).ToString('s') } | ConvertTo-Json -Compress))
+        if (-not @(Get-QuarantineItems | Where-Object { $_.Id -eq $old -and $_.CanDelete }).Count) { throw "fichier de 3 jours pas supprimable" }
+        Clear-Quarantine -Ids @($old, 'pas-un-id')
+        if (Test-Path -LiteralPath (Join-Path $dir "$old.quarantaine")) { throw "fichier de 3 jours pas supprimé" }
+    }
+    Smoke 'Sécurité : fenêtre quarantaine' { Show-QuarantineDialog }
     Smoke 'Sécurité : analyse approfondie (0 critique attendu)' {
         Invoke-SecurityScan
         $r = $sync.SecReport
@@ -902,7 +916,7 @@ function Invoke-Smoke {
     Smoke 'Sécurité : fenêtre « compte piraté »' { Show-HackedDialog }
     Smoke 'Sécurité : boutons jamais coupés (écran 1024 × 720)' {
         foreach ($c in @($script:ClippedButtons)) { Write-Host "        $c" }
-        $bad = @($script:ClippedButtons | Where-Object { $_ -match 'sécurité|piraté' })
+        $bad = @($script:ClippedButtons | Where-Object { $_ -match 'sécurité|piraté|quarantaine' })
         if ($bad.Count) { throw ($bad -join ' | ') }
     }
     Remove-Item -LiteralPath 'C:\aerox\secu-test' -Recurse -Force -ErrorAction SilentlyContinue

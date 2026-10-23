@@ -2,6 +2,10 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 2.6.2 : vider la quarantaine (demande de Sam, 23/10/2026)
+
+- Carte « Quarantaine » (onglet Sécurité) : liste des fichiers mis en quarantaine (nom, emplacement d'origine, date, taille, empreinte SHA-256 à chercher sur VirusTotal), « Remettre à sa place » (confirmation) et « Supprimer définitivement » (confirmation, seulement 24 heures après la mise en quarantaine, et seulement les fichiers qu'AEROX y a mis). Suppression notée dans l'historique.
+
 ## Publié en 2.6.1 : correctif de l'analyse de sécurité (vrai PC infecté, 23/10/2026)
 
 - Fenêtre de résultat : titre en haut et boutons en bas toujours visibles, la liste et « ce qui a été vérifié » défilent entre les deux (le bouton « Traiter la sélection » était coupé sous le bas de la fenêtre). Test permanent : aucun bouton des fenêtres de sécurité n'est coupé sur un écran 1024 × 720.

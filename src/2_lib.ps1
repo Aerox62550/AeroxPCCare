@@ -6344,6 +6344,44 @@ function Move-ToQuarantine([string]$File) {
     Add-Change -Title ("Mis en quarantaine : {0}" -f (Split-Path -Leaf $full)) -Detail ("{0} · « Annuler » le remet à sa place." -f $full) -Undo ("Restore-Quarantine {0}" -f (ConvertTo-PsLiteral $id))
     return $id
 }
+# Contenu de la quarantaine (fiches lues dans le dossier protégé)
+$script:QuarMinHours = 24
+function Get-QuarantineItems {
+    $out = New-Object System.Collections.ArrayList
+    $dir = Join-Path $AppInfo.Secure 'quarantaine'
+    if (-not (Test-Path -LiteralPath $dir)) { return @() }
+    foreach ($m in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $id = $m.BaseName
+        if ($id -notmatch '^[0-9a-f]{32}$') { continue }
+        $q = Join-Path $dir "$id.quarantaine"
+        if (-not (Test-Path -LiteralPath $q)) { continue }
+        $meta = $null; try { $meta = [IO.File]::ReadAllText($m.FullName) | ConvertFrom-Json } catch {}
+        $date = $m.CreationTime; try { if ($meta.date) { $date = [datetime]$meta.date } } catch {}
+        [void]$out.Add(@{ Id = $id; Path = "$($meta.chemin)"; Name = (("$($meta.chemin)" -split '\\')[-1]); Sha = "$($meta.sha256)"; Date = $date; Size = [double](Get-Item -LiteralPath $q).Length
+                          CanDelete = (((Get-Date) - $date).TotalHours -ge $script:QuarMinHours) })
+    }
+    return @($out | Sort-Object { $_.Date } -Descending)
+}
+# Suppression définitive (seulement ce qu'AEROX a mis lui-même en quarantaine, et après 24 heures : le temps de vérifier
+# après un redémarrage que tout marche sans ces fichiers)
+function Clear-Quarantine([string[]]$Ids) {
+    Step "Suppression définitive des fichiers en quarantaine"
+    $dir = Join-Path $AppInfo.Secure 'quarantaine'
+    $items = @(Get-QuarantineItems)
+    $done = @()
+    foreach ($id in @($Ids)) {
+        $it = @($items | Where-Object { $_.Id -eq $id })[0]
+        if (-not $it) { Log ("   • {0} : n'est plus en quarantaine." -f $id); continue }
+        if (-not $it.CanDelete) { Log ("   • « {0} » est en quarantaine depuis moins de {1} heures : gardé pour l'instant (annulable)." -f $it.Name, $script:QuarMinHours); continue }
+        try {
+            Remove-Item -LiteralPath (Join-Path $dir "$id.quarantaine") -Force -ErrorAction Stop
+            Remove-Item -LiteralPath (Join-Path $dir "$id.json") -Force -ErrorAction SilentlyContinue
+            $done += $it.Name; Log ("   ✔ « {0} » supprimé définitivement." -f $it.Name)
+        } catch { Log ("   ⚠ « {0} » : {1}" -f $it.Name, $_.Exception.Message) }
+    }
+    if ($done.Count) { Add-Change -Kind 'info' -Title ("Quarantaine vidée : {0} fichier(s) supprimé(s) définitivement" -f $done.Count) -Detail ($done -join ' · ') }
+    Log ("✅ {0} fichier(s) supprimé(s) définitivement." -f $done.Count)
+}
 function Restore-Quarantine([string]$Id) {
     Step "Sortie de quarantaine"
     $dir = Get-SecureDir 'quarantaine'
