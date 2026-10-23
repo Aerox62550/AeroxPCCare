@@ -482,8 +482,8 @@ function Invoke-Smoke {
             "Set-UserProxy 0 '' ''", "Restore-HostsBackup 'C:\x\hosts.bak'", "Set-StartupApps -Enable @('a')", "Set-PowerScheme 'guid' 'nom'",
             'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', "Set-DisplayHz '\\.\DISPLAY1' 60", 'Set-NetAdapterSleep ''Ethernet'' $true',
             "Restore-Dns '{00000000-0000-0000-0000-000000000000}' '9.9.9.9'", 'Set-CpuMaxState 100', "Set-BgItem 'service' '' 'X' 'auto'", "Restore-RegBackup 'C:\x.reg'",
-            "Set-ReservedStorage 'Enabled'", "Set-HiberType 'full'", "Set-RestoreSpace '10'", "Set-CompactOS 'on'", 'Resume-BitLockerOs')
-        if ($exemples.Count -ne 18) { throw "il devait y avoir 18 exemples, il y en a $($exemples.Count)" }
+            "Set-ReservedStorage 'Enabled'", "Set-HiberType 'full'", "Set-RestoreSpace '10'", "Set-CompactOS 'on'", 'Resume-BitLockerOs', "Restore-Quarantine '0123456789abcdef0123456789abcdef'")
+        if ($exemples.Count -ne 19) { throw "il devait y avoir 19 exemples, il y en a $($exemples.Count)" }
         $n = 0
         foreach ($u in $exemples) {
             $n++
@@ -495,7 +495,7 @@ function Invoke-Smoke {
             if (-not (Test-UndoAuthorized $e.Id $e.Undo)) { throw "annulation notée par AEROX refusée : $u" }
             if (Test-UndoAuthorized "$($e.Id)x" $e.Undo) { throw "sceau accepté pour un autre identifiant : $u" }
         }
-        Write-Host "        18 actions : sceau obligatoire pour chacune"
+        Write-Host "        19 actions : sceau obligatoire pour chacune"
         } finally { Remove-Item -LiteralPath $iso -Recurse -Force -ErrorAction SilentlyContinue }
     }
     Smoke 'Mises à jour : doublons et logiciels déjà désinstallés' {
@@ -834,17 +834,28 @@ function Invoke-Smoke {
         if (@($script:SecItems | Where-Object { $_.Title -match 'Invite de commandes|DiscordSetup' }).Count) { throw "un fichier normal a été signalé" }
         if (@($script:SecItems | Where-Object { $_.Rule -eq 'raccourci-piege' -and $_.Sev -ne 'crit' }).Count) { throw "raccourci piégé pas critique" }
         if (@($journal | Where-Object { $_ -match 'mdp insta' }).Count) { throw "le nom d'un fichier de mots de passe est écrit dans le journal" }
-        $rep = @{ Items = @($script:SecItems); Checked = @($script:SecChecked); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date) }
+        $k = 0; foreach ($x in $script:SecItems) { $k++; $x.Num = $k }
+        $rep = @{ Items = @($script:SecItems); Checked = @($script:SecChecked); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date); Code = (New-SecCode) }
+        if ($rep.Code -notmatch '^[A-Z0-9]{6}$') { throw "code du rapport invalide : $($rep.Code)" }
         $txt = Get-SecReportText $rep
+        if ($txt -notmatch 'n° 1 ' -or $txt -notmatch [regex]::Escape($rep.Code)) { throw "numéros ou code absents du rapport" }
         if ($txt -match 'mdp insta') { throw "le nom d'un fichier de mots de passe est dans le rapport à copier" }
         $script:SecTestReport = $rep
     }
     Smoke 'Sécurité : fenêtre (éléments plantés)' { $sync.SecReport = $script:SecTestReport; Show-SecDialog $null }
-    Smoke 'Sécurité : analyse Defender ciblée du faux fichier' {
-        $id = @($script:SecTestReport.Items | Where-Object { $_.Rule -eq 'fausse-extension' })[0].Id
+    Smoke 'Sécurité : fenêtre d''envoi au développeur' { $sync.SecReport = $script:SecTestReport; Show-SecSendDialog }
+    Smoke 'Sécurité : quarantaine AEROX du faux fichier (annulable)' {
+        $it = @($script:SecTestReport.Items | Where-Object { $_.Rule -eq 'fausse-extension' })[0]
+        if (@($it.Fix | ForEach-Object { $_.Kind }) -notcontains 'quarantine') { throw "pas de quarantaine proposée" }
         $sync.SecReport = $script:SecTestReport
-        Repair-SecurityItems -Ids @($id)
-        if (-not (Test-Path -LiteralPath 'C:\aerox\secu-test\facture.pdf.exe') -and -not (Get-MpThreatDetection -ErrorAction SilentlyContinue)) { throw "AEROX a supprimé un fichier" }
+        Repair-SecurityItems -Ids @($it.Id)
+        if (Test-Path -LiteralPath 'C:\aerox\secu-test\facture.pdf.exe') { throw "fichier pas mis en quarantaine" }
+        $q = @(Get-ChildItem -LiteralPath (Join-Path $AppInfo.Secure 'quarantaine') -Filter '*.quarantaine' -ErrorAction SilentlyContinue)
+        if (-not $q.Count) { throw "fichier introuvable dans la quarantaine (AEROX ne doit jamais supprimer)" }
+        $ch = @(Get-Changes 20 | Where-Object { $_.Undo -like 'Restore-Quarantine*' })[0]
+        if (-not $ch -or -not (Test-UndoAuthorized $ch.Id $ch.Undo)) { throw "pas d'annulation autorisée dans l'historique" }
+        try { [void](Move-ToQuarantine (Join-Path $env:SystemRoot 'System32\whoami.exe')); throw "un fichier de Windows a été accepté" } catch { if ($_.Exception.Message -match 'accepté') { throw } }
+        Write-Host "        en quarantaine, annulation scellée (remis à sa place par le test des annulations)"
     }
     Smoke 'Sécurité : analyse approfondie (0 critique attendu)' {
         Invoke-SecurityScan

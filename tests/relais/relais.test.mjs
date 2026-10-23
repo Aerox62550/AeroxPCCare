@@ -47,7 +47,7 @@ let github = { panne: false, statut: 201, avis: [] };
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
   const methode = init.method || 'GET';
-  const corps = init.body ? JSON.parse(init.body) : null;
+  const corps = typeof init.body === 'string' ? JSON.parse(init.body) : (init.body || null);   // FormData : rapport de sécurité
   appels.push({ url: u, methode, corps });
   if (u.includes('api.github.com')) {
     if (github.panne) throw new Error('réseau coupé');
@@ -506,6 +506,39 @@ await test('Accord logiciel/relais : les familles de compteurs du logiciel sont 
     }
   }
   attendu(appelsTrouves >= 10, 'appels de Add-StatsEvent trouvés : ' + appelsTrouves + ' (le test ne lit plus le logiciel ?)');
+});
+
+// ---------------------------------------------------------------- Rapports de sécurité : salon Discord privé seulement
+const secu = (extra = {}) => ({ code: 'K7F2QX', verdict: "Signes d'intrusion trouvés", version: '2.6.0', texte: 'n° 1 [CRITIQUE] Tâche planifiée : x\n@everyone [lien](https://evil.example)', ...extra });
+await test('SECU · sans salon privé configuré : refus clair (503), rien envoyé, rien sur GitHub', async () => {
+  const r = await appeler(mkEnv(new KV(), { DISCORD_BUGS: WEBHOOK }), '/securite', secu());
+  attendu(r.statut === 503, 'statut ' + r.statut);
+  attendu(appels.length === 0, 'appels : ' + appels.length);
+});
+await test('SECU · envoyé en fichier joint dans le salon privé, jamais sur GitHub, sans mention possible', async () => {
+  const r = await appeler(mkEnv(new KV(), { DISCORD_SECU: WEBHOOK }), '/securite', secu());
+  attendu(r.statut === 200 && r.json.ok && r.json.code === 'K7F2QX', 'réponse : ' + r.texte);
+  attendu(issuesCreees().length === 0, 'ticket GitHub créé');
+  const d = appelsDiscord();
+  attendu(d.length === 1 && d[0].corps instanceof FormData, 'envoi Discord attendu en fichier joint');
+  const p = JSON.parse(d[0].corps.get('payload_json'));
+  attendu(Array.isArray(p.allowed_mentions.parse) && p.allowed_mentions.parse.length === 0, 'mentions possibles');
+  attendu(p.content.includes('K7F2QX') && p.content.includes('2.6.0'), 'message : ' + p.content);
+  const f = await d[0].corps.get('files[0]').text();
+  attendu(f.includes('n° 1') && !/@(?!​)/.test(f) && !/\]\(https:\/\/evil/.test(f), 'fichier non nettoyé : ' + f);
+});
+await test('SECU · code invalide, rapport vide, Discord en panne : erreurs propres', async () => {
+  const env = mkEnv(new KV(), { DISCORD_SECU: WEBHOOK });
+  attendu((await appeler(env, '/securite', secu({ code: 'abc' }))).statut === 400, 'code invalide accepté');
+  attendu((await appeler(env, '/securite', secu({ texte: '' }))).statut === 400, 'rapport vide accepté');
+  const vrai = globalThis.fetch;
+  globalThis.fetch = async (u, i) => { if (String(u).includes('discord.com')) throw new Error('coupé'); return vrai(u, i); };
+  try { attendu((await appeler(env, '/securite', secu())).statut === 502, 'Discord en panne mal signalé'); } finally { globalThis.fetch = vrai; }
+});
+await test('SECU · 5 rapports par heure et par adresse : le 6e est refusé', async () => {
+  const env = mkEnv(new KV(), { DISCORD_SECU: WEBHOOK });
+  for (let i = 0; i < 5; i++) attendu((await appeler(env, '/securite', secu())).statut === 200, 'envoi ' + (i + 1) + ' refusé');
+  attendu((await appeler(env, '/securite', secu())).statut === 429, '6e envoi accepté');
 });
 
 console.log(`\n${nbTests} vérifications, ${echecs.length} échec(s)`);

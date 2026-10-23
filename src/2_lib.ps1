@@ -597,7 +597,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs'
+    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -6281,6 +6281,66 @@ function Get-SecDefender {
     } catch {}
 }
 
+# Correctifs d'un fichier suspect : analyse Defender (si Defender est actif au moment du traitement) puis quarantaine AEROX,
+# qui marche avec n'importe quel antivirus. Jamais pour un fichier du dossier de Windows (seulement l'analyse).
+function Get-FileFixes([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+    $w = $env:SystemRoot.TrimEnd('\') + '\'
+    if ($Path.StartsWith($w, [StringComparison]::OrdinalIgnoreCase)) { return @(@{ Kind = 'scan'; File = $Path }) }
+    return @(@{ Kind = 'scan'; File = $Path }, @{ Kind = 'quarantine'; File = $Path })
+}
+function Get-FixLabel($Fix) {
+    $k = @(@($Fix) | Where-Object { $_ } | ForEach-Object { $_.Kind })
+    $q = $k -contains 'quarantine'; $off = @($k | Where-Object { $_ -in 'startup', 'task' }).Count; $svc = $k -contains 'service'
+    if ($q -and $svc) { return 'Mettre en quarantaine et passer le service en manuel' }
+    if ($q -and $off) { return 'Mettre en quarantaine et désactiver' }
+    if ($q) { return 'Mettre en quarantaine' }
+    if ($svc) { return 'Passer le service en manuel' }
+    if ($off) { return 'Désactiver' }
+    if ($k -contains 'scan') { return 'Analyser avec Windows Defender' }
+    return ''
+}
+
+# ---------------------------------------------------------------- Quarantaine AEROX
+# Le fichier est déplacé dans le dossier protégé (réservé aux administrateurs) et renommé pour ne plus pouvoir se lancer.
+# Rien n'est supprimé : « Annuler » dans l'historique le remet à sa place.
+function Move-ToQuarantine([string]$File) {
+    if ("$File" -notmatch '^[A-Za-z]:\\' -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { throw "le fichier n'existe plus" }
+    $full = [IO.Path]::GetFullPath($File)
+    $w = $env:SystemRoot.TrimEnd('\') + '\'; $a = (Split-Path -Parent $AppInfo.Secure).TrimEnd('\') + '\'
+    if ($full.StartsWith($w, [StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($a, [StringComparison]::OrdinalIgnoreCase)) { throw "fichier de Windows ou d'AEROX : jamais mis en quarantaine" }
+    if (-not [AeroxSafeDelete]::IsDirectPath($full)) { throw "le chemin passe par un lien : refusé par sécurité" }
+    if ((Get-SecSig $full).Ms) { throw "fichier signé par Microsoft : jamais mis en quarantaine" }
+    # Programme en cours depuis ce fichier : arrêté d'abord (sinon Windows refuse de le déplacer)
+    foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { "$($_.ExecutablePath)" -ieq $full })) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Log ("   • « {0} » était en marche : arrêté." -f $p.Name) } catch {}
+    }
+    Start-Sleep -Milliseconds 400
+    $dir = Get-SecureDir 'quarantaine'
+    $id = [guid]::NewGuid().ToString('N')
+    $sha = ''; try { $sha = (Get-FileHash -LiteralPath $full -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+    Move-Item -LiteralPath $full -Destination (Join-Path $dir "$id.quarantaine") -Force -ErrorAction Stop
+    $meta = [ordered]@{ id = $id; chemin = $full; sha256 = $sha; date = (Get-Date).ToString('s') }
+    [IO.File]::WriteAllText((Join-Path $dir "$id.json"), ($meta | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    Add-Change -Title ("Mis en quarantaine : {0}" -f (Split-Path -Leaf $full)) -Detail ("{0} · « Annuler » le remet à sa place." -f $full) -Undo ("Restore-Quarantine {0}" -f (ConvertTo-PsLiteral $id))
+    return $id
+}
+function Restore-Quarantine([string]$Id) {
+    Step "Sortie de quarantaine"
+    $dir = Get-SecureDir 'quarantaine'
+    $mf = Join-Path $dir "$Id.json"; $qf = Join-Path $dir "$Id.quarantaine"
+    if ($Id -notmatch '^[0-9a-f]{32}$' -or -not (Test-Path -LiteralPath $mf) -or -not (Test-Path -LiteralPath $qf)) { Add-TaskError -Title "Ce fichier n'est plus en quarantaine" -Cause "Il a déjà été remis à sa place, ou la quarantaine a été vidée." -Effect "Rien n'a changé."; return }
+    $meta = [IO.File]::ReadAllText($mf) | ConvertFrom-Json
+    $dest = "$($meta.chemin)"
+    if ($dest -notmatch '^[A-Za-z]:\\') { Add-TaskError -Title "Emplacement d'origine inconnu" -Cause "La fiche de quarantaine est abîmée." -Effect "Le fichier reste en quarantaine."; return }
+    if (Test-Path -LiteralPath $dest) { Add-TaskError -Title "Impossible de remettre le fichier à sa place" -Cause "Un fichier porte déjà ce nom à cet endroit : $dest" -Effect "Le fichier reste en quarantaine." -Steps @("Renomme ou déplace le fichier qui est à cet endroit, puis réessaie."); return }
+    $pd = Split-Path -Parent $dest
+    if (-not (Test-Path -LiteralPath $pd)) { New-Item -ItemType Directory -Force -Path $pd | Out-Null }
+    Move-Item -LiteralPath $qf -Destination $dest -ErrorAction Stop
+    Remove-Item -LiteralPath $mf -Force -ErrorAction SilentlyContinue
+    Log ("   ✔ « {0} » est revenu à sa place." -f (Split-Path -Leaf $dest))
+}
+
 # ---------------------------------------------------------------- b) Lancements automatiques cachés
 function Add-SecLaunch {
     param([string]$Rule, [string]$Title, $Risk, [string]$Todo = '', $Fix = @(), [string]$FixLabel = '', [switch]$Off)
@@ -6288,9 +6348,9 @@ function Add-SecLaunch {
     $sev = $Risk.Sev; $why = $Risk.Why
     if ($Off) { if ($sev -eq 'crit') { $sev = 'warn' }; $why += " (Désactivé au démarrage, mais toujours présent.)" }
     $fx = @($Fix | Where-Object { $_ })
-    if ($Risk.Exists -and $Risk.Path -and ($Risk.Path -split '\\')[-1] -notmatch $script:SecHostExe) { $fx = @(@{ Kind = 'scan'; File = $Risk.Path }) + $fx }
-    if (-not $FixLabel) { $FixLabel = if ($fx.Count -gt 1) { "Analyser avec Defender et désactiver" } elseif ($fx.Count -and $fx[0].Kind -eq 'scan') { 'Analyser avec Defender' } elseif ($fx.Count) { 'Désactiver' } else { '' } }
-    if (-not $Todo) { $Todo = if ($sev -eq 'crit') { "Si tu ne le reconnais pas : analyse-le et désactive-le, puis lance l'analyse hors ligne." } else { "Si tu ne le reconnais pas : analyse-le avec Defender." } }
+    if ($Risk.Exists -and $Risk.Path -and ($Risk.Path -split '\\')[-1] -notmatch $script:SecHostExe) { $fx = @(Get-FileFixes $Risk.Path) + $fx }
+    if (-not $FixLabel) { $FixLabel = Get-FixLabel $fx }
+    if (-not $Todo) { $Todo = if ($sev -eq 'crit') { "Si tu ne le reconnais pas : coche-le (quarantaine et désactivation), puis lance l'analyse hors ligne." } else { "Si tu ne le reconnais pas : coche-le, ou envoie le rapport au développeur pour avoir son avis." } }
     Add-SecItem -Rule $Rule -Cat 'autorun' -Sev $sev -Title $Title -Path $Risk.Path -Why $why -Todo $Todo -Fix $fx -FixLabel $FixLabel
 }
 function Get-SecAutoruns {
@@ -6390,7 +6450,7 @@ function Get-SecAutoruns {
             $drv = ($cls -eq 'Win32_SystemDriver')
             $fix = if (-not $drv -and $sv.StartMode -eq 'Auto' -and "$($sv.PathName)" -notmatch '(?i)\\svchost\.exe') { @(@{ Kind = 'service'; Name = "$($sv.Name)"; Label = "$($sv.DisplayName)" }) } else { @() }
             Add-SecLaunch -Rule $(if ($drv) { 'pilote' } else { 'service' }) -Title ("{0} : {1}" -f $(if ($drv) { 'Pilote' } else { 'Service' }), $(if ($sv.DisplayName) { $sv.DisplayName } else { $sv.Name })) -Risk $risk -Fix $fix `
-                -FixLabel $(if ($fix.Count) { 'Analyser avec Defender et passer en manuel' } else { '' })
+                -FixLabel ''
         }
     }
     Add-SecChecked ("Services et pilotes : {0}" -f $nS)
@@ -6471,7 +6531,7 @@ function Get-SecAutoruns {
             Add-SecItem -Rule 'winlogon' -Cat 'autorun' -Sev $(if ($sig.Valid -and $risk.Sev -ne 'crit') { 'warn' } else { 'crit' }) -Title ("Ajout à l'ouverture de session ({0})" -f $v[1]) -Path $part `
                 -Why ("Windows lance « {0} » à chaque ouverture de session, en plus de son programme normal. Rare pour un logiciel honnête, fréquent pour un virus." -f (($exe -split '\\')[-1])) `
                 -Todo "Si ce n'est pas un logiciel de ton entreprise ou de ton école : lance l'analyse hors ligne et fais-toi aider pour remettre Windows en état." `
-                -Fix $(if ($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Defender'
+                -Fix $(if ($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Windows Defender'
         }
     }
     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows') {
@@ -6483,7 +6543,7 @@ function Get-SecAutoruns {
                 $sig = if (Test-Path -LiteralPath $exe -PathType Leaf) { Get-SecSig $exe } else { @{ Valid = $false; Org = '' } }
                 Add-SecItem -Rule $(if ($sig.Valid) { 'appinit-info' } else { 'appinit' }) -Cat 'autorun' -Sev $(if ($sig.Valid) { 'info' } else { 'crit' }) -Title "DLL chargée dans tous les programmes (AppInit_DLLs)" -Path $exe `
                     -Why $(if ($sig.Valid) { "Cette DLL (signée par $($sig.Org)) est chargée dans chaque programme qui s'ouvre. Certains logiciels le font, mais c'est rare et déconseillé." } else { "Une DLL sans signature est chargée dans chaque programme qui s'ouvre : elle peut tout espionner, y compris le navigateur." }) `
-                    -Todo "Si tu ne sais pas d'où elle vient : analyse-la et lance l'analyse hors ligne." -Fix $(if (Test-Path -LiteralPath $exe -PathType Leaf) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Defender'
+                    -Todo "Si tu ne sais pas d'où elle vient : analyse-la et lance l'analyse hors ligne." -Fix $(if (Test-Path -LiteralPath $exe -PathType Leaf) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Windows Defender'
             }
         } catch {}
     }
@@ -6492,7 +6552,7 @@ function Get-SecAutoruns {
         $p = Join-Path $env:SystemRoot "System32\$n.exe"
         if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
         if ((Get-SecSig $p).Ms) { continue }
-        Add-SecItem -Rule 'accessibilite' -Cat 'autorun' -Sev 'crit' -Title ("Outil d'accessibilité remplacé : {0}.exe" -f $n) -Path $p -Fix @(@{ Kind = 'scan'; File = $p }) -FixLabel 'Analyser avec Defender' `
+        Add-SecItem -Rule 'accessibilite' -Cat 'autorun' -Sev 'crit' -Title ("Outil d'accessibilité remplacé : {0}.exe" -f $n) -Path $p -Fix @(@{ Kind = 'scan'; File = $p }) -FixLabel 'Analyser avec Windows Defender' `
             -Why "Ce programme se lance depuis l'écran de connexion, avant même d'ouvrir ta session. Il n'est pas signé par Microsoft : remplacé, il donne un accès complet au PC sans mot de passe." `
             -Todo "Lance l'analyse hors ligne, puis « Réparer les fichiers de Windows » (onglet Réparation)."
     }
@@ -6523,10 +6583,10 @@ function Get-SecProcesses {
         # Connexion Internet : dite clairement, mais ne rend pas « critique » à elle seule (beaucoup de logiciels honnêtes
         # sans signature sont connectés ; une fausse alerte critique ferait croire à un piratage)
         if ($conn.ContainsKey($procId)) { $why += " Il est connecté à Internet en ce moment." }
-        $fix = if ($risk.Exists -and (($risk.Path -split '\\')[-1] -notmatch $script:SecHostExe)) { @(@{ Kind = 'scan'; File = $risk.Path }) } else { @() }
+        $fix = if ($risk.Exists -and (($risk.Path -split '\\')[-1] -notmatch $script:SecHostExe)) { @(Get-FileFixes $risk.Path) } else { @() }
         Add-SecItem -Rule $(if ($isHost) { 'commande' } else { 'programme' }) -Cat 'process' -Sev $sev -Title $(if ($isHost) { "Commande à risque en cours : $name" } else { "Programme suspect en cours : $name" }) -Path $risk.Path -Why $why `
-            -Todo $(if ($sev -eq 'crit') { "Si tu ne le reconnais pas : analyse-le, change tes mots de passe depuis ton téléphone, puis lance l'analyse hors ligne." } else { "Si tu ne le reconnais pas : analyse-le avec Defender." }) `
-            -Fix $fix -FixLabel $(if ($fix.Count) { 'Analyser avec Defender' } else { '' })
+            -Todo $(if ($sev -eq 'crit') { "Si tu ne le reconnais pas : coche-le (il est arrêté et mis en quarantaine), change tes mots de passe depuis ton téléphone, puis lance l'analyse hors ligne." } else { "Si tu ne le reconnais pas : coche-le, ou envoie le rapport au développeur pour avoir son avis." }) `
+            -Fix $fix -FixLabel (Get-FixLabel $fix)
     }
     Add-SecChecked ("Programmes en cours : {0}" -f $n)
 }
@@ -6560,7 +6620,7 @@ function Get-SecRemote {
             Add-SecItem -Rule 'rat' -Cat 'remote' -Sev 'crit' -Title ("Cheval de Troie connu : {0}" -f $x.Name) -Path $x.Path `
                 -Why ("C'est le nom d'un programme qui permet à un pirate de contrôler le PC et de voler tes comptes ({0})." -f $st) `
                 -Todo "Change tes mots de passe depuis ton téléphone, puis lance l'analyse hors ligne." `
-                -Fix $(if ($x.Path -and (Test-Path -LiteralPath $x.Path -PathType Leaf)) { @(@{ Kind = 'scan'; File = $x.Path }) } else { @() }) -FixLabel 'Analyser avec Defender'
+                -Fix @(Get-FileFixes $x.Path) -FixLabel (Get-FixLabel @(Get-FileFixes $x.Path))
             continue
         }
         $sev = if ($x.Auto -or ($x.Running -and -not $x.App)) { 'warn' } else { 'info' }
@@ -6638,8 +6698,8 @@ function Get-SecDownloads([string[]]$Dirs = @()) {
             if (-not $sev) { continue }
             $org = Get-ZoneOrigin $f.FullName
             if ($org) { [void]$why.Add("Téléchargé depuis : $org.") }
-            Add-SecItem -Rule $rule -Cat 'download' -Sev $sev -Title $f.Name -Path $f.FullName -Why ($why -join ' ') -Fix @(@{ Kind = 'scan'; File = $f.FullName }) -FixLabel 'Analyser avec Defender' `
-                -Todo "Si tu l'as ouvert : analyse-le, change tes mots de passe depuis ton téléphone et lance l'analyse hors ligne. Sinon, supprime-le sans l'ouvrir."
+            Add-SecItem -Rule $rule -Cat 'download' -Sev $sev -Title $f.Name -Path $f.FullName -Why ($why -join ' ') -Fix @(Get-FileFixes $f.FullName) -FixLabel 'Mettre en quarantaine' `
+                -Todo "Si tu l'as ouvert : mets-le en quarantaine, change tes mots de passe depuis ton téléphone et lance l'analyse hors ligne. Sinon, mets-le en quarantaine sans l'ouvrir."
         }
     }
     Add-SecChecked ("Téléchargements et Bureau (60 derniers jours) : {0} programme(s), archive(s) ou raccourci(s)" -f $n)
@@ -6689,9 +6749,11 @@ function Invoke-SecurityScan {
     try { $h = @(Get-HostsHijacks); Add-SecChecked $(if ($h.Count) { "Fichier hosts : {0} site(s) détourné(s), voir le diagnostic" -f $h.Count } else { 'Fichier hosts : aucun site important détourné' }) } catch {}
     try { $px = Get-UserProxy; if ($px) { Add-SecChecked $(if (($px.Enable -eq 1 -and $px.Server) -or $px.Pac) { 'Proxy : actif, voir le diagnostic' } else { 'Proxy : aucun, connexion directe' }) } } catch {}
     $sync.Progress = 100
-    $items = @($script:SecItems | Sort-Object @{ Expression = { @{ crit = 0; warn = 1; info = 2 }[$_.Sev] } })
+    # Numéros dans l'ordre d'affichage (catégorie, puis gravité) : le développeur peut répondre « coche 2, 5 et 7 »
+    $items = @(foreach ($c in $script:SecCats.Keys) { @($script:SecItems | Where-Object { $_.Cat -eq $c } | Sort-Object @{ Expression = { @{ crit = 0; warn = 1; info = 2 }[$_.Sev] } }) })
+    $k = 0; foreach ($x in $items) { $k++; $x.Num = $k }
     $v = Get-SecVerdict $items
-    $sync.SecReport = @{ Items = $items; Checked = @($script:SecChecked); Verdict = $v; Date = (Get-Date) }
+    $sync.SecReport = @{ Items = $items; Checked = @($script:SecChecked); Verdict = $v; Date = (Get-Date); Code = (New-SecCode) }
     # Statistiques anonymes : seulement le type de signe trouvé (« probleme:secu-tache »)
     foreach ($r in @($items | Where-Object { $_.Sev -ne 'info' } | ForEach-Object { $_.Rule } | Select-Object -Unique)) { Add-StatsEvent ("probleme:secu-" + (ConvertTo-StatsId $r)) }
     # Journal : des nombres seulement (jamais de nom de fichier)
@@ -6702,13 +6764,16 @@ function Invoke-SecurityScan {
     Log ("{0} : {1} critique(s), {2} à vérifier, {3} pour info." -f $v.Title, @($items | Where-Object { $_.Sev -eq 'crit' }).Count, @($items | Where-Object { $_.Sev -eq 'warn' }).Count, @($items | Where-Object { $_.Sev -eq 'info' }).Count)
 }
 
-# Rapport à copier : les chemins des comptes sont masqués, les fichiers de mots de passe seulement comptés
+# Code du rapport (6 caractères sans 0/O ni 1/I) : la personne le donne au développeur sur Discord
+function New-SecCode { $a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; $r = New-Object Random; return (-join (1..6 | ForEach-Object { $a[$r.Next($a.Length)] })) }
+# Rapport à copier ou à envoyer : les chemins des comptes sont masqués, les fichiers de mots de passe seulement comptés
 function Get-SecReportText($Report) {
     if (-not $Report) { return '' }
     $mask = { param([string]$T) return ("$T" -replace '(?i)([a-z]:\\users\\)(?!public\\)[^\\]+', '$1…') }
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine(("AEROX PC Care {0} : analyse de sécurité du {1}" -f $AppInfo.Version, $Report.Date.ToString('dd/MM/yyyy HH:mm')))
     [void]$sb.AppendLine(("Verdict : {0}" -f $Report.Verdict.Title))
+    if ($Report.Code) { [void]$sb.AppendLine(("Code du rapport : {0}" -f $Report.Code)) }
     foreach ($c in $script:SecCats.Keys) {
         $g = @($Report.Items | Where-Object { $_.Cat -eq $c })
         if (-not $g.Count) { continue }
@@ -6717,10 +6782,11 @@ function Get-SecReportText($Report) {
         foreach ($x in $g) {
             $lab = @{ crit = 'CRITIQUE'; warn = 'À VÉRIFIER'; info = 'INFO' }[$x.Sev]
             $title = if ($x.Rule -eq 'admins') { 'Comptes administrateurs (noms non copiés)' } else { & $mask $x.Title }
-            [void]$sb.AppendLine(("[{0}] {1}" -f $lab, $title))
+            [void]$sb.AppendLine(("{0}[{1}] {2}" -f $(if ($x.Num) { "n° $($x.Num) " } else { '' }), $lab, $title))
             if ($x.Path -and $x.Rule -ne 'admins') { [void]$sb.AppendLine(("   {0}" -f (& $mask $x.Path))) }
             if ($x.Why) { [void]$sb.AppendLine(("   Pourquoi : {0}" -f (& $mask $x.Why))) }
             if ($x.Todo) { [void]$sb.AppendLine(("   Quoi faire : {0}" -f $x.Todo)) }
+            if ($x.Fix -and $x.FixLabel) { [void]$sb.AppendLine(("   Correction possible : {0}" -f $x.FixLabel)) }
         }
     }
     [void]$sb.AppendLine(''); [void]$sb.AppendLine('== Ce qui a été vérifié')
@@ -6736,8 +6802,12 @@ function Repair-SecurityItems([string[]]$Ids) {
     $sel = @($rep.Items | Where-Object { $_ -and $Ids -contains $_.Id -and $_.Fix })
     $acts = @(foreach ($it in $sel) { foreach ($fx in @($it.Fix)) { @{ Item = $it; Fix = $fx } } })
     $crit = @($sel | Where-Object { $_.Sev -eq 'crit' }).Count -gt 0
-    # 1. D'abord les analyses Defender (Defender met en quarantaine ce qui est un virus)
+    # 1. D'abord les analyses Defender, s'il est actif (Defender met en quarantaine ce qui est un virus connu)
     $files = @($acts | Where-Object { $_.Fix.Kind -eq 'scan' } | ForEach-Object { $_.Fix.File } | Select-Object -Unique)
+    if ($files.Count -and -not (Test-DefenderActive)) {
+        Log "   • Windows Defender n'est pas actif sur ce PC (un autre antivirus le remplace peut-être) : pas d'analyse Defender. La quarantaine AEROX empêche quand même les fichiers de se lancer."
+        $files = @()
+    }
     if ($files.Count) {
         $t0 = (Get-Date).AddSeconds(-5); $ok = 0
         foreach ($f in $files) {
@@ -6754,12 +6824,22 @@ function Repair-SecurityItems([string[]]$Ids) {
             Add-Change -Kind 'info' -Title ("Analyse de sécurité : Defender a trouvé {0} menace(s)" -f @($found | Group-Object ThreatID).Count)
         } elseif ($ok) { Log ("   ✔ {0} fichier(s) analysé(s) : Defender n'a rien trouvé. Un virus très récent peut encore passer inaperçu : en cas de doute, ne les ouvre pas et supprime-les." -f $ok) }
     }
-    # 2. Désactivations (annulables dans l'historique)
+    # 2. Quarantaine AEROX : avec n'importe quel antivirus (annulable dans l'historique)
+    $quar = @($acts | Where-Object { $_.Fix.Kind -eq 'quarantine' } | ForEach-Object { $_.Fix.File } | Select-Object -Unique)
+    if ($quar.Count -and -not $sync.Cancel) { Step ("Mise en quarantaine de {0} fichier(s)" -f $quar.Count) }
+    foreach ($f in $quar) {
+        if ($sync.Cancel) { return }
+        $nm = ($f -split '\\')[-1]
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { Log ("   • « {0} » n'est plus là (déjà traité par l'antivirus ?) : rien à mettre en quarantaine." -f $nm); continue }
+        try { [void](Move-ToQuarantine $f); Log ("   ✔ « {0} » est en quarantaine : il ne peut plus se lancer." -f $nm) }
+        catch { Add-TaskError -Title ("Impossible de mettre « {0} » en quarantaine" -f $nm) -Cause $_.Exception.Message -Effect "Le fichier est toujours à sa place." -Steps @("Redémarre le PC, puis relance l'analyse de sécurité et réessaie.", "Si ça bloque toujours, lance l'analyse hors ligne (onglet Sécurité).") }
+    }
+    # 3. Désactivations (annulables dans l'historique)
     $st = @($acts | Where-Object { $_.Fix.Kind -eq 'startup' } | ForEach-Object { $_.Fix.Id } | Select-Object -Unique)
     if ($st.Count -and -not $sync.Cancel) { Set-StartupApps -Disable $st }
     $bg = @($acts | Where-Object { $_.Fix.Kind -in 'task', 'service' } | ForEach-Object { if ($_.Fix.Kind -eq 'task') { "task|{0}|{1}|{2}" -f $_.Fix.Path, $_.Fix.Name, ($_.Fix.Label -replace '\|', '/') } else { "service||{0}|{1}" -f $_.Fix.Name, ($_.Fix.Label -replace '\|', '/') } } | Select-Object -Unique)
     if ($bg.Count -and -not $sync.Cancel) { Disable-BgItems -Items $bg }
-    # 3. Retraits sans annulation : notés dans l'historique, jamais dans la liste des annulations
+    # 4. Retraits sans annulation : notés dans l'historique, jamais dans la liste des annulations
     $other = @($acts | Where-Object { $_.Fix.Kind -in 'exclusion', 'wmi', 'ifeo', 'spe', 'policy' })
     if ($other.Count) { Step "Retrait des réglages dangereux" }
     foreach ($a in $other) {
@@ -6818,13 +6898,14 @@ function Repair-SecurityItems([string[]]$Ids) {
                 -FixLabel 'Ouvrir Sécurité Windows' -FixAction "Open-WinUri 'windowsdefender:'" -Steps @("Relance l'analyse de sécurité pour revoir l'élément.", "Si ça bloque toujours, lance l'analyse hors ligne.")
         }
     }
-    # 4. Désinstallations (le désinstalleur du logiciel s'ouvre)
+    # 5. Désinstallations (le désinstalleur du logiciel s'ouvre)
     foreach ($a in @($acts | Where-Object { $_.Fix.Kind -eq 'uninstall' })) {
         if ($sync.Cancel) { return }
         try { Uninstall-App 'win32' $a.Fix.Cmd $a.Fix.Name ([bool]$a.Fix.PerUser); Log ("   ✔ Désinstalleur de « {0} » ouvert : suis ses étapes." -f $a.Fix.Name); Add-Change -Kind 'info' -Title ("Désinstallation de « {0} » lancée" -f $a.Fix.Name) }
         catch { Add-TaskError -Title ("Impossible de désinstaller « {0} »" -f $a.Fix.Name) -Cause $_.Exception.Message -FixLabel 'Ouvrir les applications' -FixAction "Open-WinUri 'ms-settings:appsfeatures'" }
     }
-    Log "✅ Traitement terminé. Ce qui a été désactivé s'annule dans l'historique."
+    Log "✅ Traitement terminé. La quarantaine et les désactivations s'annulent dans l'historique."
+    $sync.SecReport = $null   # résultat traité : une nouvelle analyse montrera ce qui reste
     if ($crit) { Log "👉 Des signes d'intrusion ont été trouvés : lance maintenant l'analyse hors ligne (onglet Sécurité), et change tes mots de passe depuis ton téléphone." }
 }
 

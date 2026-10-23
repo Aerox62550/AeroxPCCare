@@ -772,7 +772,7 @@ $PageDefs = [ordered]@{
     @{ G = "Windows"; T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
     @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
  security = @{ Title = "Sécurité"; Sub = "Virus cachés, voleurs de mots de passe, prise en main à distance : vérifie que personne d'autre ne profite de ton PC."; Cards = @(
-    @{ G = "Analyser le PC"; T = "Analyse de sécurité approfondie"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'secscan'; UiBusy = $true; D = "Cherche les signes d'intrusion : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, téléchargements piégés (faux cheats, cracks) et fichiers de mots de passe laissés en clair. Rien n'est modifié : tu choisis ensuite quoi traiter. Environ 1 minute." },
+    @{ G = "Analyser le PC"; T = "Analyse de sécurité approfondie"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'secscan'; UiBusy = $true; StatusFn = { Get-SecCardStatus }; D = "Cherche les signes d'intrusion : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, téléchargements piégés (faux cheats, cracks) et fichiers de mots de passe laissés en clair. Rien n'est modifié : tu choisis ensuite quoi traiter. Environ 1 minute." },
     @{ G = "Analyser le PC"; T = "Analyse complète Windows Defender"; B = "Lancer"; A = "Start-DefenderFullScan"; D = "Fait vérifier chaque fichier du PC par Windows Defender. Long (30 minutes à 2 heures), mais à faire au moindre doute. Tu peux l'arrêter avec « Annuler »."; C = "L'analyse complète vérifie tous les fichiers du PC : 30 minutes à 2 heures. Tu peux continuer à utiliser le PC (un peu plus lent) et l'arrêter avec « Annuler ».`n`nLancer ?" },
     @{ G = "Analyser le PC"; T = "Analyse hors ligne"; B = "Redémarrer et analyser"; A = "Start-DefenderOffline"; D = "Redémarre le PC et analyse Windows avant qu'il démarre, là où les virus ne peuvent pas se cacher (environ 15 minutes). À faire si l'analyse a trouvé quelque chose de critique."; C = $script:OfflineConfirm },
     @{ G = "Arnaques et piratage"; T = "Mon compte a été piraté"; B = "Que faire ?"; UI = 'hacked'; D = "Discord, Instagram, Amazon ou ta boîte mail piratés malgré la double authentification ? Les étapes dans le bon ordre pour reprendre la main, puis nettoyer le PC." },
@@ -1541,7 +1541,7 @@ function Invoke-UiCommand($T) {
                     'bgitems' { Start-BgList $null }
                     'dupes' { Start-DuplicateScan }
                     'browser' { Start-BrowserCheck $null }
-                    'secscan' { Start-SecScan $null }
+                    'secscan' { if ($sync.SecReport) { Show-SecDialog $null } else { Start-SecScan $null } }
                     'hacked' { Show-HackedDialog }
                     'optimize' { Start-Optimize }
                     'appupdates' { Start-AppUpdatesList $null }
@@ -2638,6 +2638,8 @@ function Show-ReviewDialog {
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
     '2.6.0' = @("Nouvel onglet Sécurité : une analyse anti-intrusion approfondie (environ 1 minute) cherche les voleurs de mots de passe et leurs traces : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, faux cheats et cracks téléchargés, fichiers de mots de passe laissés en clair. Pour chaque élément : pourquoi c'est suspect et quoi faire. Tu coches, AEROX s'en occupe, sans jamais supprimer de fichier.",
+                "Quarantaine AEROX : un fichier suspect est déplacé dans le dossier protégé et ne peut plus se lancer, avec n'importe quel antivirus (pas besoin de Windows Defender). « Annuler » dans l'historique le remet à sa place.",
+                "Pas sûr ? « Envoyer au développeur » : le rapport (relu par toi, sans ton nom) part dans son salon privé, et il te dit sur Discord quels numéros cocher. AEROX ne reçoit jamais d'ordre par Internet : c'est toi qui coches.",
                 "Analyse complète et analyse hors ligne de Windows Defender, lancées et suivies depuis AEROX.",
                 "« Mon compte a été piraté » : les étapes dans le bon ordre quand Discord, Instagram ou Amazon a été piraté malgré la double authentification.",
                 "Le diagnostic signale tout de suite les signes forts d'intrusion (exclusion dangereuse dans l'antivirus, virus qui s'est lancé, faux programme de Windows). « Pubs et fausses alertes de virus » est maintenant dans l'onglet Sécurité.")
@@ -4248,6 +4250,11 @@ function Start-SecScan($Issue) {
     $script:SecIssue = $Issue
     [void](Start-AeroxTask 'Invoke-SecurityScan' 'Analyse de sécurité' 'secdialog')
 }
+function Get-SecCardStatus {
+    $r = $sync.SecReport
+    if (-not $r) { return $null }
+    return @{ StatusText = ("Dernière analyse à {0:HH:mm} · {1} · code {2}" -f $r.Date, $r.Verdict.Title, $r.Code); StatusKind = $(switch ($r.Verdict.Level) { 'crit' { 'warn' } 'warn' { 'warn' } default { 'on' } }); B = 'Voir le résultat' }
+}
 function Get-SecSevColor([string]$Sev) { switch ($Sev) { 'crit' { return $Pal.Bad } 'warn' { return $Pal.Warn } 'ok' { return $Pal.Ok } default { return $Pal.Muted } } }
 function Show-SecDialog($Issue) {
     $rep = $sync.SecReport
@@ -4259,7 +4266,7 @@ function Show-SecDialog($Issue) {
     $nc = @($items | Where-Object { $_.Sev -eq 'crit' }).Count; $nw = @($items | Where-Object { $_.Sev -eq 'warn' }).Count; $ni = @($items | Where-Object { $_.Sev -eq 'info' }).Count
     Add-Child $sp (New-Text $rep.Verdict.Title $Typo.H2 (Get-SecSevColor $rep.Verdict.Level) 'Bold')
     $sub = if ($rep.Verdict.Level -eq 'ok') { "Rien d'anormal dans tout ce qui a été vérifié (liste en bas)." + $(if ($ni) { " $ni point(s) pour info, à regarder si tu veux." } else { '' }) }
-           else { "{0} critique(s) · {1} à vérifier · {2} pour info. Coche ce que tu veux traiter : les éléments critiques qui ont un correctif sont déjà cochés. AEROX ne supprime jamais de fichier : il fait analyser par Defender, désactive (annulable) ou retire un réglage dangereux." -f $nc, $nw, $ni }
+           else { "{0} critique(s) · {1} à vérifier · {2} pour info. Coche ce que tu veux traiter : les éléments critiques qui ont une correction sont déjà cochés. AEROX ne supprime jamais de fichier : il met en quarantaine, désactive ou retire un réglage dangereux, et tout ce qui est mis en quarantaine ou désactivé s'annule dans l'historique. Pas sûr ? « Envoyer au développeur » : il te dira sur Discord quels numéros cocher (code du rapport : {3})." -f $nc, $nw, $ni, $rep.Code }
     $p = New-Text $sub $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $list = New-Object System.Windows.Controls.StackPanel
     $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 400; $sv.Content = $list
@@ -4271,7 +4278,7 @@ function Show-SecDialog($Issue) {
         $h = New-Text ("{0} · {1}" -f $script:SecCats[$c].ToUpper(), $g.Count) $Typo.Small (Get-SecSevColor $worst) 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
         foreach ($x in $g) {
             $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
-            Add-Child $txt (New-Text $x.Title $Typo.Body $(if ($x.Sev -eq 'info') { $Pal.White } else { Get-SecSevColor $x.Sev }) 'SemiBold')
+            Add-Child $txt (New-Text ("n° {0} · {1}" -f $x.Num, $x.Title) $Typo.Body $(if ($x.Sev -eq 'info') { $Pal.White } else { Get-SecSevColor $x.Sev }) 'SemiBold')
             if ($x.Path) { Add-Child $txt (New-Text $x.Path $Typo.Small $Pal.Faint) }
             if ($x.Why) { Add-Child $txt (New-Rich 'Pourquoi' $x.Why '') }
             if ($x.Todo) { Add-Child $txt (New-Rich 'Quoi faire' $x.Todo '') }
@@ -4303,9 +4310,11 @@ function Show-SecDialog($Issue) {
     # Boutons
     $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 14 0 0
     $left = New-Object System.Windows.Controls.StackPanel; $left.Orientation = 'Horizontal'
-    $bBr = New-DlgButton 'Analyser les navigateurs' 'TextBtn'; $bBr.Margin = Th 0 0 8 0
-    $bCopy = New-DlgButton 'Copier le rapport' 'TextBtn'
-    Add-Child $left $bBr; Add-Child $left $bCopy
+    $bSend = New-DlgButton 'Envoyer au développeur' 'ActionBtn'; $bSend.Margin = Th 0 0 8 0
+    $bBr = New-DlgButton 'Navigateurs' 'TextBtn'; $bBr.Margin = Th 0 0 8 0
+    $bRe = New-DlgButton 'Nouvelle analyse' 'TextBtn'; $bRe.Margin = Th 0 0 8 0
+    $bCopy = New-DlgButton 'Copier' 'TextBtn'
+    Add-Child $left $bSend; Add-Child $left $bBr; Add-Child $left $bRe; Add-Child $left $bCopy
     $rightBar = New-Object System.Windows.Controls.StackPanel; $rightBar.Orientation = 'Horizontal'; $rightBar.HorizontalAlignment = 'Right'
     $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
     $bApply = New-DlgButton 'Traiter la sélection' 'PrimaryBtn'; $script:SecApply = $bApply
@@ -4317,13 +4326,17 @@ function Show-SecDialog($Issue) {
         $script:SecApply.Content = $(if ($n) { "Traiter la sélection ($n)" } else { 'Traiter la sélection' }); $script:SecApply.IsEnabled = ($n -gt 0)
     }
     $bBr.Add_Click({ $script:SecGo = 'browser'; $script:SecWin.Close() })
-    $bCopy.Add_Click({ try { [System.Windows.Clipboard]::SetText((Get-SecReportText $sync.SecReport)); $this.Content = 'Rapport copié ✓' } catch { Write-Bug -Context 'Sécurité : copier le rapport' -ErrorRecord $_ } })
+    $bSend.Add_Click({ $script:SecGo = 'send'; $script:SecWin.Close() })
+    $bRe.Add_Click({ $script:SecGo = 'rescan'; $script:SecWin.Close() })
+    $bCopy.Add_Click({ try { [System.Windows.Clipboard]::SetText((Get-SecReportText $sync.SecReport)); $this.Content = 'Copié ✓' } catch { Write-Bug -Context 'Sécurité : copier le rapport' -ErrorRecord $_ } })
     $bClose.Add_Click({ $script:SecWin.Close() })
     $bApply.Add_Click({ $script:SecChoice = @($script:SecRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:SecWin.Close() })
     & $script:CountSec
     $w.Content = $sp
     [void]$w.ShowDialog()
     if ($script:SecGo -eq 'browser') { Start-BrowserCheck $null; return }
+    if ($script:SecGo -eq 'rescan') { Start-SecScan $Issue; return }
+    if ($script:SecGo -eq 'send') { Show-SecSendDialog; Refresh-Page; return }
     $sel = @($script:SecChoice | Where-Object { $_ })
     if (-not $sel.Count) { if ($Issue -and $rep.Verdict.Level -eq 'ok') { $Issue.Status = 'done'; Update-DiagBadge; Refresh-Page }; return }
     $lines = @($sel | Select-Object -First 12 | ForEach-Object { "• {0} : {1}" -f $_.FixLabel, $_.Title })
@@ -4332,6 +4345,51 @@ function Show-SecDialog($Issue) {
     if (-not (Confirm-Box $msg)) { return }
     if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
     if (-not (Start-AeroxTask ("Repair-SecurityItems -Ids " + (ConvertTo-PsList @($sel | ForEach-Object { $_.Id }))) ("Traitement de sécurité ({0})" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
+}
+
+# ---------------------------------------------------------------- Fenêtre : envoyer le rapport de sécurité au développeur
+# Salon Discord PRIVÉ du développeur seulement (jamais GitHub, qui est public). La personne relit le rapport avant l'envoi.
+# Le développeur répond sur Discord avec les numéros à cocher : AEROX ne reçoit jamais d'ordre par Internet.
+function Show-SecSendDialog {
+    $rep = $sync.SecReport
+    if (-not $rep) { return }
+    $txt = Get-SecReportText $rep
+    $w = New-Dialog "$AppName : envoyer le rapport de sécurité" 720
+    $script:SsWin = $w; $script:SsTxt = $txt
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Envoyer le rapport au développeur" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text ("Le rapport part dans le salon privé du développeur sur Discord : il n'est publié nulle part. Ton nom de compte et les noms des fichiers de mots de passe sont masqués. Relis-le ci-dessous.`n`nEnsuite, sur le Discord AEROX, donne au développeur le code {0} : il te dira quels numéros cocher. AEROX ne reçoit jamais d'ordre par Internet, c'est toi qui coches." -f $rep.Code) $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $tb = New-Object System.Windows.Controls.TextBox; $tb.Text = $txt; $tb.IsReadOnly = $true; $tb.TextWrapping = 'Wrap'; $tb.VerticalScrollBarVisibility = 'Auto'; $tb.Height = 300
+    $tb.FontFamily = 'Cascadia Mono, Consolas'; $tb.FontSize = $Typo.Small; $tb.Background = Brush $Pal.Sunken; $tb.Foreground = Brush $Pal.Text2; $tb.BorderBrush = Brush $Pal.Line; $tb.Padding = Th 8 6 8 6
+    Add-Child $sp $tb
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bClose = New-DlgButton 'Annuler' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $bGo = New-DlgButton 'Envoyer' 'PrimaryBtn'
+    if (-not $sync.BugRelay) { $bGo.IsEnabled = $false; $bGo.ToolTip = "Le service d'envoi ne répond pas pour l'instant." }
+    Add-Child $bar $bClose; Add-Child $bar $bGo; Add-Child $sp $bar
+    $bClose.Add_Click({ $script:SsWin.Close() })
+    $bGo.Add_Click({
+        $btn = $this; $btn.IsEnabled = $false; $btn.Content = 'Envoi…'
+        $payload = @{ code = $sync.SecReport.Code; verdict = $sync.SecReport.Verdict.Title; version = $AppVersion; texte = $script:SsTxt } | ConvertTo-Json -Compress
+        $script:SsBtn = $btn
+        Send-RelayAsync ($sync.BugRelay.TrimEnd('/') + '/securite') ([System.Text.Encoding]::UTF8.GetBytes($payload)) {
+            param($res)
+            if (-not $res.Ok) {
+                $script:SsBtn.IsEnabled = $true; $script:SsBtn.Content = 'Envoyer'
+                [System.Windows.MessageBox]::Show("Le rapport n'a pas pu être envoyé : $($res.Err)`n`nTu peux le copier (bouton « Copier » de la fenêtre de résultat) et l'envoyer au développeur en message privé sur Discord.", $AppName, 'OK', 'Warning') | Out-Null
+                return
+            }
+            Write-UiLog ("🛡️ Rapport de sécurité envoyé au développeur (code {0})." -f $sync.SecReport.Code)
+            $msg = "Rapport envoyé. Code : $($sync.SecReport.Code)`n`nDonne ce code au développeur sur le Discord AEROX : il te dira quels numéros cocher. Garde AEROX ouvert (ou relance l'analyse avant de cocher)."
+            if ($sync.DiscordUrl) {
+                if ([System.Windows.MessageBox]::Show($msg + "`n`nOuvrir le Discord AEROX maintenant ?", $AppName, 'YesNo', 'Information') -eq 'Yes') { [void](Open-Url $sync.DiscordUrl) }
+            } else { [System.Windows.MessageBox]::Show($msg, $AppName, 'OK', 'Information') | Out-Null }
+            $script:SsWin.Close()
+        }
+    })
+    $w.Content = $sp
+    [void]$w.ShowDialog()
 }
 
 # ---------------------------------------------------------------- Fenêtre : « Mon compte a été piraté »

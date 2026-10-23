@@ -45,6 +45,10 @@ et calcule la note moyenne affichée par le badge du README (`https://aerox-rela
 - **Discord** (facultatif) : crée un webhook dans le salon voulu (Paramètres du salon > Intégrations > Webhooks) et colle son adresse **directement dans
   Cloudflare** (Settings > Variables and Secrets > *Secret* `DISCORD_BUGS` pour les rapports, `DISCORD_AVIS` pour les avis). Ne l'envoie à personne.
   La tâche Statistiques indique si l'envoi vers Discord a marché.
+- **Rapports de sécurité** (onglet Sécurité > « Envoyer au développeur ») : ils ne vont JAMAIS sur GitHub (public). Crée un salon Discord
+  **privé** (visible de toi seul), un webhook dans ce salon, et colle son adresse dans le *Secret* `DISCORD_SECU`. Sans ce secret, le logiciel
+  dit que l'envoi n'est pas encore activé. Chaque rapport arrive en fichier joint avec un code à 6 caractères : la personne te donne ce code
+  sur Discord, tu lui réponds quels numéros cocher. Le relais n'envoie jamais rien au logiciel.
 - **Secret facultatif `SEL_IP`** : un texte au hasard (20 caractères ou plus) qui sert à brouiller les adresses IP (voir plus bas). Sans lui, le relais
   utilise le jeton GitHub, ce qui revient au même ; inutile de l'ajouter sauf si tu préfères séparer les deux.
 
