@@ -30,11 +30,28 @@ function Save-Shot($El, [string]$Name, $Bg) {
         $fs = [IO.File]::Create($f); $enc.Save($fs); $fs.Close()
     } catch { Write-Host "        (capture $Name impossible : $($_.Exception.Message))" }
 }
+# Boutons coupés : un bouton hors d'une liste qui défile doit être entièrement dans la fenêtre (sinon on ne peut pas cliquer)
+$script:ClippedButtons = New-Object System.Collections.ArrayList
+function Test-ButtonsVisible($Win) {
+    try {
+        $root = $Win.Content; if (-not $root) { return }
+        $stack = New-Object System.Collections.Stack; $stack.Push($root)
+        while ($stack.Count) {
+            $el = $stack.Pop()
+            if ($el -is [System.Windows.Controls.ScrollViewer]) { continue }   # ce qui est dans une liste qui défile peut être plus bas
+            if ($el -is [System.Windows.Controls.Primitives.ButtonBase] -and $el.IsVisible) {
+                $pt = $el.TranslatePoint((New-Object System.Windows.Point(0, $el.ActualHeight)), $root)
+                if ($pt.Y -gt $root.ActualHeight + 1) { [void]$script:ClippedButtons.Add(("{0} : « {1} » coupé ({2:N0} px sous le bas de la fenêtre)" -f $Win.Title, $el.Content, ($pt.Y - $root.ActualHeight))) }
+            }
+            if ($el -is [System.Windows.DependencyObject]) { for ($i = 0; $i -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($el); $i++) { $stack.Push([System.Windows.Media.VisualTreeHelper]::GetChild($el, $i)) } }
+        }
+    } catch {}
+}
 # Toute fenêtre ouverte est capturée puis fermée dès qu'elle est affichée
 [System.Windows.EventManager]::RegisterClassHandler([System.Windows.Window], [System.Windows.FrameworkElement]::LoadedEvent, [System.Windows.RoutedEventHandler]{
     param($s, $e)
     if ($s -eq $window) { return }
-    [void]$s.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ApplicationIdle, [Action[object]]{ param($w) try { if ($w.Content -is [System.Windows.UIElement] -and $w.Title -notlike '*Overlay*') { Save-Shot $w.Content ('fenetre-' + ($w.Title -replace '^.*?:\s*', '')) $w.Background } } catch {}; try { $w.Close() } catch {} }, $s)
+    [void]$s.Dispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::ApplicationIdle, [Action[object]]{ param($w) Test-ButtonsVisible $w; try { if ($w.Content -is [System.Windows.UIElement] -and $w.Title -notlike '*Overlay*') { Save-Shot $w.Content ('fenetre-' + ($w.Title -replace '^.*?:\s*', '')) $w.Background } } catch {}; try { $w.Close() } catch {} }, $s)
 })
 function Smoke([string]$Name, [scriptblock]$Code) {
     Write-Host ("  … {0}" -f $Name)
@@ -799,6 +816,9 @@ function Invoke-Smoke {
         & $chk 'secret' (Test-SecretFileName 'mdp insta.txt') $true
         & $chk 'pas secret' (Test-SecretFileName 'facture.pdf') $false
         & $chk 'verdict' (Get-SecVerdict @(@{ Sev = 'info' })).Level 'ok'
+        & $chk 'cachette nom au hasard' ([bool](Get-SuspiciousPlacement 'C:\ProgramData\Windows\Config\57AE748E\AppManagerServicef7ad.exe')) $true
+        & $chk 'cachette dossier camouflé' ([bool](Get-SuspiciousPlacement 'C:\Users\a\AppData\Local\Microsoft\Windows\tVKCIG.{20D04FE0-3AEA-1069-A2D8-08002B30309D}\MicrosoftStorageWorker.exe')) $true
+        & $chk 'pas de cachette' ([bool](Get-SuspiciousPlacement 'C:\Users\a\AppData\Local\Programs\lunarclient\Lunar Client.exe' 'Lunar Client')) $false
         # Fichiers signés par Microsoft : JAMAIS signalés, même copiés dans un dossier temporaire ou sous le nom d'un programme de Windows
         & $chk 'svchost de Windows' (Get-LaunchRisk ('"{0}" -k netsvcs' -f (Join-Path $env:SystemRoot 'System32\svchost.exe'))).Sev ''
         & $chk 'Explorateur' (Get-LaunchRisk (Join-Path $env:SystemRoot 'explorer.exe')).Sev ''
@@ -880,6 +900,11 @@ function Invoke-Smoke {
     }
     Smoke 'Sécurité : fenêtre (machine de test)' { Show-SecDialog $null }
     Smoke 'Sécurité : fenêtre « compte piraté »' { Show-HackedDialog }
+    Smoke 'Sécurité : boutons jamais coupés (écran 1024 × 720)' {
+        foreach ($c in @($script:ClippedButtons)) { Write-Host "        $c" }
+        $bad = @($script:ClippedButtons | Where-Object { $_ -match 'sécurité|piraté' })
+        if ($bad.Count) { throw ($bad -join ' | ') }
+    }
     Remove-Item -LiteralPath 'C:\aerox\secu-test' -Recurse -Force -ErrorAction SilentlyContinue
     Smoke 'Programmes en fond' { Get-BgItems }
     Smoke 'Fenêtre : programmes en fond' { Show-BgDialog $null }

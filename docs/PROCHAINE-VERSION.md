@@ -2,6 +2,11 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Publié en 2.6.1 : correctif de l'analyse de sécurité (vrai PC infecté, 23/10/2026)
+
+- Fenêtre de résultat : titre en haut et boutons en bas toujours visibles, la liste et « ce qui a été vérifié » défilent entre les deux (le bouton « Traiter la sélection » était coupé sous le bas de la fenêtre). Test permanent : aucun bouton des fenêtres de sécurité n'est coupé sur un écran 1024 × 720.
+- `Get-SuspiciousPlacement` : un programme sans signature dans AppData, ProgramData ou un dossier temporaire devient critique s'il a un nom terminé par une suite au hasard (`NetHost1dcc90`, `00138d5f2`), s'il est dans un dossier camouflé (`.{20D04FE0-…}`), dans un faux dossier `Windows`/`System32`/`Common\Common`, ou s'il porte (lui ou son entrée de démarrage) le nom d'un grand éditeur sans sa signature (`AdobeInputHost`, `MicrosoftStorageWorker`). Cas réels du PC infecté par un faux « modest menu » GTA 5.
+
 ## Publié en 2.6.0 : onglet Sécurité (analyse anti-intrusion)
 
 Demande de Sam (23/10/2026) : un faux cheat GTA 5 a installé un voleur de mots de passe chez son frère, qui a volé les cookies de session du navigateur (comptes piratés malgré la double authentification). AEROX doit repérer ce genre d'infection et ses traces, sans aucune fausse alerte.
