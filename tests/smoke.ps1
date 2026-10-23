@@ -750,7 +750,7 @@ function Invoke-Smoke {
         if ($script:RelayRes.Ok) { throw "un envoi impossible a été vu comme réussi" }
         Write-Host ("        erreur bien remontée : {0}" -f $script:RelayRes.Err)
     }
-    foreach ($k in 'home', 'clean', 'update', 'repair', 'perf', 'help', 'monitor') { Smoke-Page $k }
+    foreach ($k in 'home', 'clean', 'update', 'repair', 'security', 'perf', 'help', 'monitor') { Smoke-Page $k }
     foreach ($t in 'live', 'overlay', 'jeux') { $script:GameTab = $t; Smoke-Page 'monitor' }
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
@@ -773,6 +773,97 @@ function Invoke-Smoke {
         if ($j -ne $pref.Replace('"last_modified":"1","setting":1', '"last_modified":"1","setting":2')) { throw "fichier Preferences inattendu : $j" }
         Write-Host "        Preferences modifié au bon endroit uniquement (é conservé)"
     }
+    # ---------------- Sécurité (2.6.0) : règles, faux éléments plantés exprès, analyse complète (0 critique attendu), fenêtres
+    Smoke 'Sécurité : règles pures' {
+        $bad = @()
+        $chk = { param($n, $got, $want) if ("$got" -ne "$want") { $script:SecBad += "$n : '$got' au lieu de '$want'" } }
+        $script:SecBad = @()
+        & $chk 'zone temp' (Get-PathZone 'C:\Users\a\AppData\Local\Temp\x.exe') 'temp'
+        & $chk 'zone pf' (Get-PathZone 'C:\Program Files\Steam\steam.exe') 'programfiles'
+        & $chk 'zone racine' (Get-PathZone 'C:\Intel\x.exe') 'rootdir'
+        & $chk 'cmd encodée' (Get-CommandRisk 'powershell -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAA=').Level 'strong'
+        & $chk 'cmd Windows (SMB1)' (Get-CommandRisk 'powershell.exe -ExecutionPolicy Unrestricted -NonInteractive -NoProfile -WindowStyle Hidden "& %windir%\system32\WindowsPowerShell\v1.0\Modules\SmbShare\DisableUnusedSmb1.ps1 -Scenario Client"').Level 'weak'
+        & $chk 'cmd normale' (Get-CommandRisk '"C:\Program Files\Steam\steam.exe" -silent').Level ''
+        & $chk 'faux svchost' (Test-Masquerade 'svchost.exe' 'C:\Users\a\AppData\Roaming\svchost.exe') 'exact'
+        & $chk 'vrai svchost' (Test-Masquerade 'svchost.exe' (Join-Path $env:SystemRoot 'System32\svchost.exe') $env:SystemRoot) ''
+        & $chk 'scvhost' (Test-Masquerade 'scvhost.exe' 'C:\x\scvhost.exe') 'like:svchost'
+        & $chk 'exclusion racine' (Get-ExclusionRisk 'C:\' 'path') 'crit'
+        & $chk 'exclusion jeu' (Get-ExclusionRisk 'D:\SteamLibrary' 'path') 'info'
+        & $chk 'exclusion .exe' (Get-ExclusionRisk '.exe' 'ext') 'crit'
+        & $chk 'anydesk' (Get-RemoteToolName 'AnyDesk').Name 'AnyDesk'
+        & $chk 'radmin vpn' (Get-RemoteToolName 'Radmin VPN') ''
+        & $chk 'rat' (Get-RemoteToolName 'remcos.exe').Kind 'rat'
+        & $chk 'appât' ((Test-RiskyDownloadName 'GTA5 Mod Menu.exe') -join ',') 'appat'
+        & $chk 'double extension' ((Test-RiskyDownloadName 'facture.pdf.exe') -join ',') 'double'
+        & $chk 'nom normal' ((Test-RiskyDownloadName 'DiscordSetup.exe') -join ',') ''
+        & $chk 'secret' (Test-SecretFileName 'mdp insta.txt') $true
+        & $chk 'pas secret' (Test-SecretFileName 'facture.pdf') $false
+        & $chk 'verdict' (Get-SecVerdict @(@{ Sev = 'info' })).Level 'ok'
+        # Fichiers signés par Microsoft : JAMAIS signalés, même copiés dans un dossier temporaire ou sous le nom d'un programme de Windows
+        & $chk 'svchost de Windows' (Get-LaunchRisk ('"{0}" -k netsvcs' -f (Join-Path $env:SystemRoot 'System32\svchost.exe'))).Sev ''
+        & $chk 'Explorateur' (Get-LaunchRisk (Join-Path $env:SystemRoot 'explorer.exe')).Sev ''
+        & $chk 'rundll32 de Windows' (Get-LaunchRisk ('{0} shell32.dll,Control_RunDLL' -f (Join-Path $env:SystemRoot 'System32\rundll32.exe'))).Sev ''
+        $tmp = Join-Path $env:TEMP 'aerox-secu-signe'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        Copy-Item (Join-Path $env:SystemRoot 'System32\whoami.exe') (Join-Path $tmp 'whoami.exe') -Force
+        Copy-Item (Join-Path $env:SystemRoot 'System32\svchost.exe') (Join-Path $tmp 'svchost.exe') -Force
+        $script:SecSigCache = @{}
+        & $chk 'copie Microsoft dans Temp' (Get-LaunchRisk ('"{0}"' -f (Join-Path $tmp 'whoami.exe'))).Sev ''
+        & $chk 'vrai svchost copié dans Temp' (Get-LaunchRisk ('"{0}"' -f (Join-Path $tmp 'svchost.exe'))).Sev ''
+        [IO.File]::WriteAllText((Join-Path $tmp 'outil.exe'), 'pas un vrai programme')
+        & $chk 'sans signature dans Temp' (Get-LaunchRisk ('"{0}"' -f (Join-Path $tmp 'outil.exe'))).Sev 'crit'
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        if ($script:SecBad.Count) { throw ($script:SecBad -join ' | ') }
+    }
+    Smoke 'Sécurité : faux éléments plantés exprès' {
+        $d = 'C:\aerox\secu-test'; Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force -Path $d | Out-Null
+        $sh = New-Object -ComObject WScript.Shell
+        $lnk = $sh.CreateShortcut((Join-Path $d 'Mes photos.lnk')); $lnk.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'; $lnk.Arguments = '-WindowStyle Hidden -File C:\aerox\secu-test\absent.ps1'; $lnk.Save()
+        $ok = $sh.CreateShortcut((Join-Path $d 'Invite de commandes.lnk')); $ok.TargetPath = Join-Path $env:SystemRoot 'System32\cmd.exe'; $ok.Save()
+        [IO.File]::WriteAllText((Join-Path $d 'facture.pdf.exe'), 'pas un vrai programme')
+        [IO.File]::WriteAllText((Join-Path $d 'GTA5 Mod Menu.exe'), 'pas un vrai programme')
+        [IO.File]::WriteAllText((Join-Path $d 'DiscordSetup.exe'), 'pas un vrai programme')
+        [IO.File]::WriteAllText((Join-Path $d 'mdp insta.txt'), 'rien')
+        $script:SecItems = New-Object System.Collections.ArrayList; $script:SecChecked = New-Object System.Collections.ArrayList; $script:SecSigCache = @{}
+        $line = $null; while ($sync.Queue.TryDequeue([ref]$line)) {}
+        Get-SecDownloads -Dirs @($d)
+        Get-SecSecrets -Dirs @($d)
+        $journal = New-Object System.Collections.ArrayList; while ($sync.Queue.TryDequeue([ref]$line)) { [void]$journal.Add($line) }
+        foreach ($x in $script:SecItems) { Write-Host ("        [{0}] {1} | {2} | {3}" -f $x.Sev, $x.Rule, $x.Title, $x.Why) }
+        $rules = @($script:SecItems | ForEach-Object { "$($_.Rule)" })
+        foreach ($want in 'raccourci-piege', 'fausse-extension', 'appat', 'mots-de-passe') { if ($rules -notcontains $want) { throw "« $want » pas trouvé" } }
+        if (@($script:SecItems | Where-Object { $_.Title -match 'Invite de commandes|DiscordSetup' }).Count) { throw "un fichier normal a été signalé" }
+        if (@($script:SecItems | Where-Object { $_.Rule -eq 'raccourci-piege' -and $_.Sev -ne 'crit' }).Count) { throw "raccourci piégé pas critique" }
+        if (@($journal | Where-Object { $_ -match 'mdp insta' }).Count) { throw "le nom d'un fichier de mots de passe est écrit dans le journal" }
+        $rep = @{ Items = @($script:SecItems); Checked = @($script:SecChecked); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date) }
+        $txt = Get-SecReportText $rep
+        if ($txt -match 'mdp insta') { throw "le nom d'un fichier de mots de passe est dans le rapport à copier" }
+        $script:SecTestReport = $rep
+    }
+    Smoke 'Sécurité : fenêtre (éléments plantés)' { $sync.SecReport = $script:SecTestReport; Show-SecDialog $null }
+    Smoke 'Sécurité : analyse Defender ciblée du faux fichier' {
+        $id = @($script:SecTestReport.Items | Where-Object { $_.Rule -eq 'fausse-extension' })[0].Id
+        $sync.SecReport = $script:SecTestReport
+        Repair-SecurityItems -Ids @($id)
+        if (-not (Test-Path -LiteralPath 'C:\aerox\secu-test\facture.pdf.exe') -and -not (Get-MpThreatDetection -ErrorAction SilentlyContinue)) { throw "AEROX a supprimé un fichier" }
+    }
+    Smoke 'Sécurité : analyse approfondie (0 critique attendu)' {
+        Invoke-SecurityScan
+        $r = $sync.SecReport
+        if (-not $r) { throw "pas de résultat" }
+        Write-Host ("        verdict : {0} · vérifié : {1}" -f $r.Verdict.Title, ($r.Checked -join ' | '))
+        foreach ($x in @($r.Items)) { Write-Host ("        [{0}] {1} | {2} | {3} | {4}" -f $x.Sev, $x.Rule, $x.Title, $x.Path, $x.Why) }
+        $crit = @($r.Items | Where-Object { $_.Sev -eq 'crit' })
+        if ($crit.Count) { throw ("{0} critique(s) sur une machine saine : {1}" -f $crit.Count, (($crit | ForEach-Object { "$($_.Rule) $($_.Title) $($_.Path)" }) -join ' | ')) }
+        if (-not @($r.Checked).Count) { throw "pas de liste de vérifications" }
+    }
+    Smoke 'Sécurité : signes forts du diagnostic' {
+        $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:CurrentCat = 'Sécurité'
+        Test-SecQuickSigns
+        if ($script:Issues.Count) { throw ("signe fort sur une machine saine : " + (($script:Issues | ForEach-Object { "$($_.Title) $($_.Detail)" }) -join ' | ')) }
+    }
+    Smoke 'Sécurité : fenêtre (machine de test)' { Show-SecDialog $null }
+    Smoke 'Sécurité : fenêtre « compte piraté »' { Show-HackedDialog }
+    Remove-Item -LiteralPath 'C:\aerox\secu-test' -Recurse -Force -ErrorAction SilentlyContinue
     Smoke 'Programmes en fond' { Get-BgItems }
     Smoke 'Fenêtre : programmes en fond' { Show-BgDialog $null }
     Smoke 'Fenêtre : démarrage' { Show-StartupDialog $null }
@@ -1096,7 +1187,7 @@ function Invoke-Smoke {
     Smoke 'Rapport de bug' { $r = Build-BugReport 'test' 20 5; if ($r.Length -lt 100) { throw 'rapport vide' } }
     Smoke 'Captures des pages' {
         Show-Page 'home'; Save-Shot $window.Content 'fenetre-complete' $window.Background
-        foreach ($k in 'home', 'diag', 'clean', 'update', 'repair', 'perf', 'system', 'help') { Show-Page $k; Save-Shot $PageHost ("page-" + $k) $window.Background }
+        foreach ($k in 'home', 'diag', 'clean', 'update', 'repair', 'security', 'perf', 'system', 'help') { Show-Page $k; Save-Shot $PageHost ("page-" + $k) $window.Background }
         foreach ($t in 'jeux', 'live', 'overlay') { $script:GameTab = $t; Show-Page 'home'; Show-Page 'monitor'; Save-Shot $PageHost ("page-gaming-" + $t) $window.Background }
         Write-Host ("        {0} captures" -f @(Get-ChildItem $script:ShotDir -Filter *.png -ErrorAction SilentlyContinue).Count)
     }

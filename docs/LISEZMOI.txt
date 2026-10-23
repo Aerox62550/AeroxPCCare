@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v2.5.3
+﻿AEROX PC Care - v2.6.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -42,6 +42,18 @@ Pour chaque problème trouvé, tu vois :
 
 « Tout réparer » lance toutes les réparations automatiques d'un coup,
 après avoir créé un point de restauration.
+
+SÉCURITÉ (ANTI-INTRUSION)
+-------------------------
+Onglet Sécurité > « Analyse de sécurité approfondie » (environ 1 minute, rien n'est
+modifié) : cherche les voleurs de mots de passe et leurs traces (antivirus saboté,
+programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main
+à distance, faux cheats et cracks téléchargés, fichiers de mots de passe en clair).
+Pour chaque élément : pourquoi c'est suspect et quoi faire. Tu coches, AEROX fait
+analyser par Windows Defender, désactive (annulable) ou retire un réglage dangereux.
+AEROX ne supprime jamais de fichier et ne lit jamais tes mots de passe.
+Dans le même onglet : analyse complète et analyse hors ligne de Windows Defender,
+« Mon compte a été piraté » (les étapes dans l'ordre) et « Pubs et fausses alertes ».
 
 NETTOYAGE APPROFONDI
 --------------------

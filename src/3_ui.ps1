@@ -186,6 +186,9 @@ $XamlText = @'
           <RadioButton x:Name="NavRepair" Style="{StaticResource NavBtn}" GroupName="nav">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE90F;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Réparation"/></StackPanel>
           </RadioButton>
+          <RadioButton x:Name="NavSecurity" Style="{StaticResource NavBtn}" GroupName="nav">
+            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xEA18;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Sécurité"/></StackPanel>
+          </RadioButton>
           <RadioButton x:Name="NavPerf" Style="{StaticResource NavBtn}" GroupName="nav">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE945;" Width="28" VerticalAlignment="Center"/><TextBlock Text="Performances"/></StackPanel>
           </RadioButton>
@@ -264,7 +267,7 @@ $wFit = Get-WindowFit ([System.Windows.SystemParameters]::WorkArea.Width) ([Syst
 $window.MinWidth = $wFit.MinW; $window.MinHeight = $wFit.MinH; $window.Width = $wFit.W; $window.Height = $wFit.H
 Set-SplashStep 78 'Création de l''interface…'
 foreach ($n in 'Scroll','PageHost','BusyPanel','StatusText','ElapsedText','CancelBtn','Progress','LogBox','LogToggle','LogChevron','LogDot','LogLast','BtnReport','BtnCopyLog','BtnOpenLogs',
-               'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavPerf','NavMonitor','NavSystem','NavHelp') {
+               'VersionText','DiagBadge','DiagBadgeText','NavHome','NavDiag','NavClean','NavUpdate','NavRepair','NavSecurity','NavPerf','NavMonitor','NavSystem','NavHelp') {
     Set-Variable -Name $n -Value $window.FindName($n) -Scope Script
 }
 $VersionText.Text = "Version $AppVersion" + $(if ($Portable) { "  ·  portable" } else { '' })
@@ -280,7 +283,7 @@ $VersionText.Add_MouseLeftButtonUp({
     [System.Windows.MessageBox]::Show($(if ($on) { "Canal test activé.`n`nCe PC reçoit les versions de test avant tout le monde, pour les vérifier avant leur publication." } else { "Canal test désactivé : ce PC reçoit uniquement les versions publiques." }), $AppName, 'OK', 'Information') | Out-Null
     if ($GitHubRepo) { $sync.UpdateInfo = $null; $script:UpdateShown = $false; Start-Background 'Find-AppUpdate' }
 })
-$NavMap = @{ home = $NavHome; diag = $NavDiag; clean = $NavClean; update = $NavUpdate; repair = $NavRepair; perf = $NavPerf; monitor = $NavMonitor; system = $NavSystem; help = $NavHelp }
+$NavMap = @{ home = $NavHome; diag = $NavDiag; clean = $NavClean; update = $NavUpdate; repair = $NavRepair; security = $NavSecurity; perf = $NavPerf; monitor = $NavMonitor; system = $NavSystem; help = $NavHelp }
 
 # ---------------------------------------------------------------- État de l'interface
 $script:BC          = New-Object System.Windows.Media.BrushConverter
@@ -447,7 +450,7 @@ $script:CardIcons = @{
     deepclean = 'E74D'; space = 'EDA2'; dupes = 'E8C8'; 'Clear-TempFiles' = 'E7C3'; 'Clear-RecycleBinAll' = 'E74D'; 'Enable-StorageSense' = 'E916'; 'Disable-StorageSense' = 'E916'
     appupdates = 'E896'; 'Update-Apps' = 'E895'; 'Update-Windows' = 'E777'; drivers = 'E713'; 'Open-WindowsUpdate' = 'E8A7'
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
-    browser = 'EA18'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
+    browser = 'E7BA'; secscan = 'EA18'; 'Start-DefenderFullScan' = 'E721'; 'Start-DefenderOffline' = 'E777'; hacked = 'E730'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
@@ -738,6 +741,7 @@ function New-IssueCard($I, [switch]$IsError) {
 }
 
 # ---------------------------------------------------------------- Pages
+$script:OfflineConfirm = "Le PC va REDÉMARRER TOUT DE SUITE pour analyser Windows avant son démarrage, là où les virus ne peuvent pas se cacher (environ 15 minutes).`n`nEnregistre ton travail et ferme tes logiciels avant.`n`nRedémarrer maintenant ?"
 $PageDefs = [ordered]@{
  clean = @{ Title = "Nettoyage"; Sub = "Libère de la place et supprime les fichiers inutiles. Tes fichiers perso (photos, documents, téléchargements, jeux) ne sont jamais touchés."; Cards = @(
     @{ G = "Libérer de la place"; T = "Nettoyage approfondi"; Badge = "Recommandé"; P = $true; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
@@ -763,11 +767,16 @@ $PageDefs = [ordered]@{
     @{ G = "Dépannage rapide"; Tile = $true; S = "Vide la file bloquée et remet l'imprimante en ligne."; T = "L'imprimante n'imprime plus"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Relance l'Explorateur en quelques secondes, sans redémarrer."; T = "Bureau ou barre des tâches figés"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Vide le cache (tu restes connecté) et répare l'installation."; T = "Discord bugue ou ne s'installe plus"; B = "Réparer"; A = "Repair-Discord"; D = "Écran gris, chargement sans fin, son ou micro bizarres, ou réinstallation impossible ? Ferme Discord, vide son cache (tu restes connecté), repère une installation abîmée et vérifie que son téléchargement passe depuis ce PC."; C = "Discord va être fermé et son cache vidé. Tu restes connecté et tes réglages sont gardés.`n`nContinuer ?" },
-    @{ G = "Arnaques et pubs"; T = "Pubs et fausses alertes de virus"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." },
     @{ G = "Windows"; T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
     @{ G = "Windows"; T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows." },
     @{ G = "Windows"; T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
     @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
+ security = @{ Title = "Sécurité"; Sub = "Virus cachés, voleurs de mots de passe, prise en main à distance : vérifie que personne d'autre ne profite de ton PC."; Cards = @(
+    @{ G = "Analyser le PC"; T = "Analyse de sécurité approfondie"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'secscan'; UiBusy = $true; D = "Cherche les signes d'intrusion : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, téléchargements piégés (faux cheats, cracks) et fichiers de mots de passe laissés en clair. Rien n'est modifié : tu choisis ensuite quoi traiter. Environ 1 minute." },
+    @{ G = "Analyser le PC"; T = "Analyse complète Windows Defender"; B = "Lancer"; A = "Start-DefenderFullScan"; D = "Fait vérifier chaque fichier du PC par Windows Defender. Long (30 minutes à 2 heures), mais à faire au moindre doute. Tu peux l'arrêter avec « Annuler »."; C = "L'analyse complète vérifie tous les fichiers du PC : 30 minutes à 2 heures. Tu peux continuer à utiliser le PC (un peu plus lent) et l'arrêter avec « Annuler ».`n`nLancer ?" },
+    @{ G = "Analyser le PC"; T = "Analyse hors ligne"; B = "Redémarrer et analyser"; A = "Start-DefenderOffline"; D = "Redémarre le PC et analyse Windows avant qu'il démarre, là où les virus ne peuvent pas se cacher (environ 15 minutes). À faire si l'analyse a trouvé quelque chose de critique."; C = $script:OfflineConfirm },
+    @{ G = "Arnaques et piratage"; T = "Mon compte a été piraté"; B = "Que faire ?"; UI = 'hacked'; D = "Discord, Instagram, Amazon ou ta boîte mail piratés malgré la double authentification ? Les étapes dans le bon ordre pour reprendre la main, puis nettoyer le PC." },
+    @{ G = "Arnaques et piratage"; T = "Pubs et fausses alertes de virus"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." }) }
  perf = @{ Title = "Performances"; Sub = "Pour un PC qui démarre plus vite et rame moins. Chaque réglage affiche son état actuel et peut être annulé."; Cards = @(
     @{ G = "Trouver ce qui ralentit"; T = "Pourquoi mon PC rame ?"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'slow'; UiBusy = $true; D = "Mesure pendant 20 secondes ce qui occupe le processeur, la mémoire et le disque, trouve les programmes gourmands et les réglages qui brident le PC, et te dit quoi faire. Encore mieux si tu la lances quand le PC rame." },
     @{ G = "Trouver ce qui ralentit"; T = "Désinstaller les logiciels inutiles"; B = "Analyser"; UI = 'uninstall'; UiBusy = $true; D = "Repère les logiciels inutiles ou douteux (faux « optimiseurs », barres d'outils, logiciels de pilotes, antivirus en double, applis préinstallées) et t'explique pourquoi. Tous tes logiciels sont listés, du plus gros au plus petit." },
@@ -1339,6 +1348,7 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
     elseif ($job.OnDone -eq 'dupdialog' -and $null -ne $sync.Dupes) { Show-DuplicatesDialog }
     elseif ($job.OnDone -eq 'browserdialog' -and $null -ne $sync.BrowserReport) { Show-BrowserDialog $script:BrowserIssue; $script:BrowserIssue = $null }
+    elseif ($job.OnDone -eq 'secdialog' -and $null -ne $sync.SecReport) { Show-SecDialog $script:SecIssue; $script:SecIssue = $null }
     elseif ($job.OnDone -eq 'driverdialog' -and $sync.DriverScan) { Show-DriverDialog $script:DrvIssue; $script:DrvIssue = $null }
     elseif ($job.OnDone -eq 'uninstalldialog' -and $sync.InstalledApps) { Show-UninstallDialog $script:UniIssue; $script:UniIssue = $null }
     elseif ($job.OnDone -eq 'selfupdate' -and $sync.UpdateReady) { $script:Wiz = $null; Complete-SelfUpdate; return }
@@ -1437,6 +1447,7 @@ function Invoke-UiCommand($T) {
                 if ($i.UiFix -eq 'drivers') { Start-DriverCheck $i; return }
                 if ($i.UiFix -eq 'bgitems') { Start-BgList $i; return }
                 if ($i.UiFix -eq 'browser') { Start-BrowserCheck $i; return }
+                if ($i.UiFix -eq 'secscan') { Start-SecScan $i; return }
                 if ($i.Confirm -and -not (Confirm-Box $i.Confirm)) { return }
                 $i.Status = 'fixing'; $script:FixingIssue = $i
                 if (-not (Start-AeroxTask $i.FixAction $i.FixLabel)) { $i.Status = 'open'; $script:FixingIssue = $null }
@@ -1530,6 +1541,8 @@ function Invoke-UiCommand($T) {
                     'bgitems' { Start-BgList $null }
                     'dupes' { Start-DuplicateScan }
                     'browser' { Start-BrowserCheck $null }
+                    'secscan' { Start-SecScan $null }
+                    'hacked' { Show-HackedDialog }
                     'optimize' { Start-Optimize }
                     'appupdates' { Start-AppUpdatesList $null }
                     'deepclean' { Start-CleanAnalysis $null }
@@ -2624,6 +2637,10 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.6.0' = @("Nouvel onglet Sécurité : une analyse anti-intrusion approfondie (environ 1 minute) cherche les voleurs de mots de passe et leurs traces : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, faux cheats et cracks téléchargés, fichiers de mots de passe laissés en clair. Pour chaque élément : pourquoi c'est suspect et quoi faire. Tu coches, AEROX s'en occupe, sans jamais supprimer de fichier.",
+                "Analyse complète et analyse hors ligne de Windows Defender, lancées et suivies depuis AEROX.",
+                "« Mon compte a été piraté » : les étapes dans le bon ordre quand Discord, Instagram ou Amazon a été piraté malgré la double authentification.",
+                "Le diagnostic signale tout de suite les signes forts d'intrusion (exclusion dangereuse dans l'antivirus, virus qui s'est lancé, faux programme de Windows). « Pubs et fausses alertes de virus » est maintenant dans l'onglet Sécurité.")
     '2.5.3' = @("Diagnostic plus fiable, moins de fausses alertes : le disque n'est « presque plein » que s'il reste peu de place en pourcentage ET en Go, la mémoire est jugée sur ce qui est vraiment installé, les températures tiennent compte du type de disque et du processeur (les Ryzen récents chauffent normalement jusqu'à 95 °C), et Windows 11 24H2 est bien signalé comme n'étant plus pris en charge depuis le 13 octobre.",
         "Plus de sécurité : AEROX s'installe toujours dans Program Files (le dossier protégé de Windows) et ne lance le compteur de FPS que s'il est bien signé par Intel. Si tu l'avais installé ailleurs, l'installation le range toute seule au bon endroit, sans rien perdre.",
         "La fenêtre d'AEROX tient maintenant entièrement sur les petits écrans (1024×768, portables 1366×768).",
@@ -4226,6 +4243,139 @@ function Show-BrowserDialog($Issue) {
 }
 
 # ---------------------------------------------------------------- Fenêtre : fichiers en double
+# ---------------------------------------------------------------- Fenêtre : analyse de sécurité approfondie
+function Start-SecScan($Issue) {
+    $script:SecIssue = $Issue
+    [void](Start-AeroxTask 'Invoke-SecurityScan' 'Analyse de sécurité' 'secdialog')
+}
+function Get-SecSevColor([string]$Sev) { switch ($Sev) { 'crit' { return $Pal.Bad } 'warn' { return $Pal.Warn } 'ok' { return $Pal.Ok } default { return $Pal.Muted } } }
+function Show-SecDialog($Issue) {
+    $rep = $sync.SecReport
+    if (-not $rep) { return }
+    $items = @($rep.Items | Where-Object { $_ })
+    $w = New-Dialog "$AppName : analyse de sécurité" 820
+    $script:SecWin = $w; $script:SecChoice = $null; $script:SecGo = ''; $script:SecRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    $nc = @($items | Where-Object { $_.Sev -eq 'crit' }).Count; $nw = @($items | Where-Object { $_.Sev -eq 'warn' }).Count; $ni = @($items | Where-Object { $_.Sev -eq 'info' }).Count
+    Add-Child $sp (New-Text $rep.Verdict.Title $Typo.H2 (Get-SecSevColor $rep.Verdict.Level) 'Bold')
+    $sub = if ($rep.Verdict.Level -eq 'ok') { "Rien d'anormal dans tout ce qui a été vérifié (liste en bas)." + $(if ($ni) { " $ni point(s) pour info, à regarder si tu veux." } else { '' }) }
+           else { "{0} critique(s) · {1} à vérifier · {2} pour info. Coche ce que tu veux traiter : les éléments critiques qui ont un correctif sont déjà cochés. AEROX ne supprime jamais de fichier : il fait analyser par Defender, désactive (annulable) ou retire un réglage dangereux." -f $nc, $nw, $ni }
+    $p = New-Text $sub $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.MaxHeight = 400; $sv.Content = $list
+    Add-Child $sp $sv
+    foreach ($c in $script:SecCats.Keys) {
+        $g = @($items | Where-Object { $_.Cat -eq $c })
+        if (-not $g.Count) { continue }
+        $worst = if (@($g | Where-Object { $_.Sev -eq 'crit' }).Count) { 'crit' } elseif (@($g | Where-Object { $_.Sev -eq 'warn' }).Count) { 'warn' } else { 'info' }
+        $h = New-Text ("{0} · {1}" -f $script:SecCats[$c].ToUpper(), $g.Count) $Typo.Small (Get-SecSevColor $worst) 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
+        foreach ($x in $g) {
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            Add-Child $txt (New-Text $x.Title $Typo.Body $(if ($x.Sev -eq 'info') { $Pal.White } else { Get-SecSevColor $x.Sev }) 'SemiBold')
+            if ($x.Path) { Add-Child $txt (New-Text $x.Path $Typo.Small $Pal.Faint) }
+            if ($x.Why) { Add-Child $txt (New-Rich 'Pourquoi' $x.Why '') }
+            if ($x.Todo) { Add-Child $txt (New-Rich 'Quoi faire' $x.Todo '') }
+            if ($x.Fix -and $x.FixLabel) { $fl = New-Text ("Si coché : {0}" -f $x.FixLabel) $Typo.Small $Pal.Muted; $fl.Margin = Th 0 3 0 0; Add-Child $txt $fl }
+            $right = $null
+            $fp = ''; if ("$($x.Path)" -match '^[A-Za-z]:\\') { $fp = "$($x.Path)" -replace ' · .*$', '' }
+            $show = $false; if ($fp) { try { $show = Test-Path -LiteralPath $fp } catch {} }
+            if ($show) {
+                $right = New-DlgButton 'Afficher' 'TextBtn'; $right.Tag = $fp; $right.VerticalAlignment = 'Top'
+                $right.Add_Click({ $t = [string]$this.Tag; if (Test-Path -LiteralPath $t -PathType Container) { Start-Process explorer.exe ('"{0}"' -f $t) } else { Start-Process explorer.exe ('/select,"{0}"' -f $t) } })
+            }
+            if ($x.Fix) {
+                $r = New-CheckRow ([bool]$x.Default) $txt $right
+                $r.Check.Add_Click({ & $script:CountSec })
+                Add-Child $list $r.Row
+                [void]$script:SecRows.Add(@{ Item = $x; Check = $r.Check })
+            } else {
+                $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Sunken; $row.CornerRadius = Corner 10; $row.Padding = Th 14 9 12 9; $row.Margin = Th 0 0 6 6
+                $dp = New-Object System.Windows.Controls.DockPanel
+                if ($right) { [System.Windows.Controls.DockPanel]::SetDock($right, 'Right'); Add-Child $dp $right }
+                Add-Child $dp $txt; $row.Child = $dp; Add-Child $list $row
+            }
+        }
+    }
+    if (-not $items.Count) { $t = New-Text "Aucun signe d'intrusion : rien de suspect dans les endroits où les virus et les voleurs de mots de passe se cachent." $Typo.Body $Pal.Ok; Add-Child $list $t }
+    # Ce qui a été vérifié
+    $hv = New-Text 'CE QUI A ÉTÉ VÉRIFIÉ' $Typo.Small $Pal.Faint 'Bold'; $hv.Margin = Th 2 14 0 4; Add-Child $sp $hv
+    $ck = New-Text ((@($rep.Checked) | ForEach-Object { "✓ $_" }) -join "`n") $Typo.Small $Pal.Text3; $ck.LineHeight = 19; Add-Child $sp $ck
+    # Boutons
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 0 14 0 0
+    $left = New-Object System.Windows.Controls.StackPanel; $left.Orientation = 'Horizontal'
+    $bBr = New-DlgButton 'Analyser les navigateurs' 'TextBtn'; $bBr.Margin = Th 0 0 8 0
+    $bCopy = New-DlgButton 'Copier le rapport' 'TextBtn'
+    Add-Child $left $bBr; Add-Child $left $bCopy
+    $rightBar = New-Object System.Windows.Controls.StackPanel; $rightBar.Orientation = 'Horizontal'; $rightBar.HorizontalAlignment = 'Right'
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Traiter la sélection' 'PrimaryBtn'; $script:SecApply = $bApply
+    Add-Child $rightBar $bClose; Add-Child $rightBar $bApply
+    [System.Windows.Controls.DockPanel]::SetDock($rightBar, 'Right'); Add-Child $bar $rightBar; Add-Child $bar $left
+    Add-Child $sp $bar
+    $script:CountSec = {
+        $n = @($script:SecRows | Where-Object { $_.Check.IsChecked }).Count
+        $script:SecApply.Content = $(if ($n) { "Traiter la sélection ($n)" } else { 'Traiter la sélection' }); $script:SecApply.IsEnabled = ($n -gt 0)
+    }
+    $bBr.Add_Click({ $script:SecGo = 'browser'; $script:SecWin.Close() })
+    $bCopy.Add_Click({ try { [System.Windows.Clipboard]::SetText((Get-SecReportText $sync.SecReport)); $this.Content = 'Rapport copié ✓' } catch { Write-Bug -Context 'Sécurité : copier le rapport' -ErrorRecord $_ } })
+    $bClose.Add_Click({ $script:SecWin.Close() })
+    $bApply.Add_Click({ $script:SecChoice = @($script:SecRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:SecWin.Close() })
+    & $script:CountSec
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    if ($script:SecGo -eq 'browser') { Start-BrowserCheck $null; return }
+    $sel = @($script:SecChoice | Where-Object { $_ })
+    if (-not $sel.Count) { if ($Issue -and $rep.Verdict.Level -eq 'ok') { $Issue.Status = 'done'; Update-DiagBadge; Refresh-Page }; return }
+    $lines = @($sel | Select-Object -First 12 | ForEach-Object { "• {0} : {1}" -f $_.FixLabel, $_.Title })
+    if ($sel.Count -gt 12) { $lines += ("• … et {0} autre(s)" -f ($sel.Count - 12)) }
+    $msg = ("Traiter {0} élément(s) ?`n`n{1}`n`nD'abord les analyses Windows Defender, puis les désactivations (annulables dans l'historique) et les retraits de réglages dangereux. AEROX ne supprime aucun fichier." -f $sel.Count, ($lines -join "`n"))
+    if (-not (Confirm-Box $msg)) { return }
+    if ($Issue) { $Issue.Status = 'fixing'; $script:FixingIssue = $Issue }
+    if (-not (Start-AeroxTask ("Repair-SecurityItems -Ids " + (ConvertTo-PsList @($sel | ForEach-Object { $_.Id }))) ("Traitement de sécurité ({0})" -f $sel.Count))) { if ($Issue) { $Issue.Status = 'open'; $script:FixingIssue = $null } }
+}
+
+# ---------------------------------------------------------------- Fenêtre : « Mon compte a été piraté »
+function Show-HackedDialog {
+    $w = New-Dialog "$AppName : compte piraté" 720
+    $script:HkWin = $w; $script:HkGo = ''
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Mon compte a été piraté" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Pourquoi la double authentification n'a pas suffi : un voleur de mots de passe (souvent caché dans un faux cheat ou un crack) a copié les « cookies de session » de ton navigateur. Avec eux, le pirate est déjà connecté : il n'a besoin ni du mot de passe, ni du code." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 14; Add-Child $sp $p
+    $steps = @(
+        "Depuis ton téléphone (pas depuis ce PC), change d'abord le mot de passe de ta boîte mail, puis choisis « Se déconnecter de toutes les sessions ».",
+        "Toujours depuis le téléphone, change un par un les comptes enregistrés dans le navigateur du PC (Discord, Instagram, Amazon, Steam…) en choisissant « déconnecter partout ».",
+        "Active la double authentification sur chaque compte, ou mieux une clé d'accès (passkey).",
+        "Préviens tes contacts Discord et Instagram : le pirate envoie souvent des liens piégés depuis ton compte.",
+        "Une carte bancaire était enregistrée dans le navigateur ? Appelle ta banque pour la faire bloquer.",
+        "Sur ce PC : lance l'analyse de sécurité approfondie (bouton ci-dessous), puis l'analyse hors ligne.",
+        "Si un voleur de mots de passe a été trouvé, ou si le piratage recommence : réinstalle Windows depuis une clé USB officielle de Microsoft."
+    )
+    $k = 0
+    foreach ($s in $steps) {
+        $k++
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Sunken; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 0 6
+        $dp = New-Object System.Windows.Controls.DockPanel
+        $num = New-Object System.Windows.Controls.Border; $num.Width = 24; $num.Height = 24; $num.CornerRadius = Corner 12; $num.Background = Brush $Pal.AccentSoft; $num.Margin = Th 0 0 12 0; $num.VerticalAlignment = 'Top'
+        $nt = New-Text "$k" $Typo.Small $Pal.AccentText 'Bold'; $nt.HorizontalAlignment = 'Center'; $nt.VerticalAlignment = 'Center'; $num.Child = $nt
+        [System.Windows.Controls.DockPanel]::SetDock($num, 'Left'); Add-Child $dp $num
+        Add-Child $dp (New-Text $s $Typo.Body $Pal.Text2)
+        $row.Child = $dp; Add-Child $sp $row
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $bOff = New-DlgButton 'Analyse hors ligne' 'TextBtn'; $bOff.Margin = Th 0 0 8 0
+    $bScan = New-DlgButton "Lancer l'analyse approfondie" 'PrimaryBtn'
+    Add-Child $bar $bClose; Add-Child $bar $bOff; Add-Child $bar $bScan; Add-Child $sp $bar
+    $bClose.Add_Click({ $script:HkWin.Close() })
+    $bOff.Add_Click({ $script:HkGo = 'offline'; $script:HkWin.Close() })
+    $bScan.Add_Click({ $script:HkGo = 'scan'; $script:HkWin.Close() })
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+    if ($script:HkGo -eq 'scan') { Start-SecScan $null }
+    elseif ($script:HkGo -eq 'offline' -and (Confirm-Box $script:OfflineConfirm)) { [void](Start-AeroxTask 'Start-DefenderOffline' 'Analyse hors ligne') }
+}
+
 function Start-DuplicateScan { [void](Start-AeroxTask 'Get-Duplicates' 'Recherche des fichiers en double' 'dupdialog') }
 function Show-DuplicatesDialog {
     $groups = @($sync.Dupes.Groups | Where-Object { $_ })
@@ -5546,6 +5696,7 @@ $NavDiag.Add_Checked({ Show-Page 'diag' })
 $NavClean.Add_Checked({ Show-Page 'clean' })
 $NavUpdate.Add_Checked({ Show-Page 'update' })
 $NavRepair.Add_Checked({ Show-Page 'repair' })
+$NavSecurity.Add_Checked({ Show-Page 'security' })
 $NavPerf.Add_Checked({ Show-Page 'perf' })
 $NavMonitor.Add_Checked({ Show-Page 'monitor' })
 $NavSystem.Add_Checked({ Show-Page 'system' })

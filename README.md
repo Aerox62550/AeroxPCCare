@@ -21,6 +21,9 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
   avec la taille de chaque catégorie, et un arbre de ce qui prend de la place.
 - **Mises à jour des logiciels** au choix, avec « Ignorer » pour ceux que tu ne veux pas mettre à jour.
 - **Réparations** : connexion Internet, fichiers de Windows (DISM + SFC), disque, Windows Update bloqué.
+- **Sécurité (anti-intrusion)** : analyse approfondie des traces de voleurs de mots de passe (antivirus saboté,
+  lancements cachés, faux programmes de Windows, prise en main à distance, faux cheats téléchargés, mots de passe
+  en clair), analyses complète et hors ligne de Windows Defender, et un guide « Mon compte a été piraté ».
 - **Performances** : programmes au démarrage appli par appli, mode performances, effets visuels,
   logiciels inutiles à désinstaller (avec l'explication et le disque où ils se trouvent).
 - **Gaming** : chaque jeu est reconnu tout seul et **chaque partie est notée** (FPS moyens, 1 % low,

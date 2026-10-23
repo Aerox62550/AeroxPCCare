@@ -2,6 +2,16 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 2.6.0 : onglet Sécurité (analyse anti-intrusion)
+
+Demande de Sam (23/10/2026) : un faux cheat GTA 5 a installé un voleur de mots de passe chez son frère, qui a volé les cookies de session du navigateur (comptes piratés malgré la double authentification). AEROX doit repérer ce genre d'infection et ses traces, sans aucune fausse alerte.
+- Onglet Sécurité (après Réparation) : analyse approfondie (`Invoke-SecurityScan`, lecture seule, résultat dans `$sync.SecReport`), analyse complète Defender (MpCmdRun de Program Files signé Microsoft, suivie, annulable avec `-Scan -Cancel`), analyse hors ligne (`Start-MpWDOScan`, confirmation claire), fenêtre « Mon compte a été piraté », carte « Pubs et fausses alertes » déplacée depuis Réparation (pas de doublon).
+- Ce qui est cherché : exclusions et stratégies qui aveuglent Defender, protections coupées, SmartScreen, virus des 30 derniers jours ; lancements cachés (Run/RunOnce/Policies de chaque compte, dossiers Démarrage, toutes les tâches planifiées, services, pilotes, abonnements WMI, IFEO/SilentProcessExit, Winlogon, AppInit_DLLs, outils d'accessibilité remplacés) ; programmes en cours (faux noms de Windows à une lettre près, commandes à risque, connexion Internet) ; prise en main à distance et chevaux de Troie connus, Bureau à distance, comptes ; téléchargements piégés (cheat/crack, fausse extension, caractère RLO, raccourci piégé, exécutable gonflé, site d'origine) ; fichiers de mots de passe en clair (jamais nommés dans le journal, les rapports ou les statistiques).
+- Règles pures testées sans Windows : `Get-PathZone`, `Get-CommandRisk`, `Test-Masquerade`, `Get-ExclusionRisk`, `Get-RemoteToolName`, `Test-RiskyDownloadName`, `Test-SecretFileName`, `Get-SecVerdict`. Tout programme signé valide est ignoré (sauf commande à risque ou faux nom de Windows).
+- Correctifs (jamais de suppression de fichier) : analyse Defender ciblée d'abord, puis désactivation d'un démarrage, d'une tâche ou d'un service (annulable), retrait d'une exclusion, d'un abonnement WMI, d'un détournement ou des stratégies (noté dans l'historique, sans annulation), désinstallation d'un logiciel de prise en main. Les tâches rangées sous `\Microsoft\` sont lues mais jamais coupées.
+- Diagnostic : trois signes forts (exclusion dangereuse, virus actif ou lancé, faux programme de Windows en cours), jamais ignorables, qui renvoient vers l'analyse. Statistiques : seulement `probleme:secu-<règle>`.
+- AEROX ne lit jamais les mots de passe, les cookies ou la mémoire des programmes, ne touche jamais à LSASS, n'arrête jamais un antivirus et n'ajoute jamais d'exclusion.
+
 ## Publié en 2.5.3 : corrections de l'audit du 21/10/2026 (demande de Sam : une seule mise à jour)
 
 Audit complet du code par Claude (détail privé dans le projet « Aerox PcCare »). Chaque défaut corrigé a son test permanent dans tests/smoke.ps1.
