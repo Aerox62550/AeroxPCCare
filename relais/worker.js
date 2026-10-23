@@ -2,6 +2,8 @@
 // Le logiciel envoie le rapport (ou l'avis) ici ; le relais le publie dans les Issues du dépôt avec une clé
 // GitHub qui reste secrète (variable GITHUB_TOKEN du Worker), jamais dans le logiciel.
 //   POST /       : rapport de bug (étiquette « bug »)
+//   POST /securite : rapport de sécurité (analyse anti-intrusion), envoyé SEULEMENT dans le salon Discord privé du développeur
+//                  (jamais sur GitHub, qui est public) ; refusé tant que DISCORD_SECU n'est pas configuré
 //   POST /avis   : avis (note 1 à 5 + commentaire), étiquette « avis », publié directement ; un seul avis par PC (modifiable)
 //   GET  /note   : note moyenne pour le badge de la page GitHub (format shields.io)
 //   POST /stats  : statistiques anonymes (compteurs seulement, additionnés par mois dans l'espace KV)
@@ -13,6 +15,7 @@
 //   LIMITES       : (liaison KV, recommandée) espace KV pour les limites anti-abus et les statistiques
 //   DISCORD_BUGS  : (secret, facultatif) adresse du webhook du salon Discord des rapports de bug
 //   DISCORD_AVIS  : (secret, facultatif) adresse du webhook du salon Discord des avis
+//   DISCORD_SECU  : (secret, nécessaire aux rapports de sécurité) webhook d'un salon Discord PRIVÉ (visible du développeur seul)
 //   SEL_IP        : (secret, facultatif) texte secret qui sert à brouiller les adresses IP ; à défaut, GITHUB_TOKEN
 //
 // Règles de ce relais (le test tests/relais/relais.test.mjs les vérifie à chaque envoi sur GitHub) :
@@ -26,10 +29,11 @@ const MAX_REQUEST = 100000;   // taille maximale d'une requête, en octets, cont
 const PER_HOUR = 5;           // rapports (ou avis) maximum par heure et par adresse IP
 // Plafonds toutes adresses confondues : quelqu'un qui contourne la limite par IP (envois simultanés, plusieurs adresses)
 // ne peut pas inonder les Issues. Un vrai usage en est très loin (quelques rapports par jour).
-const GLOBAL_CAPS = { bug: { hour: 30, day: 100 }, avis: { hour: 15, day: 40 } };
-const HOOK_OF = { bug: 'DISCORD_BUGS', avis: 'DISCORD_AVIS' };
+const GLOBAL_CAPS = { bug: { hour: 30, day: 100 }, avis: { hour: 15, day: 40 }, secu: { hour: 15, day: 50 } };
+const HOOK_OF = { bug: 'DISCORD_BUGS', avis: 'DISCORD_AVIS', secu: 'DISCORD_SECU' };
 const TROP = {
   bug: 'Trop de rapports envoyés depuis ce réseau : réessaie dans une heure.',
+  secu: 'Trop de rapports envoyés depuis ce réseau : réessaie dans une heure.',
   avis: "Trop d'envois depuis ce réseau : réessaie dans une heure."
 };
 
@@ -196,7 +200,7 @@ async function alertCap(env, ctx, kind, hour) {
   const c = GLOBAL_CAPS[kind];
   discord(env, ctx, HOOK_OF[kind], {
     title: "⚠️ Plafond d'envois atteint",
-    description: `Le relais refuse les nouveaux ${kind === 'bug' ? 'rapports de bug' : 'avis'} pour le moment (${c.hour} par heure et ${c.day} par jour au maximum, toutes adresses confondues). Si ce n'est pas un vrai pic d'utilisation, regarde les derniers tickets : quelqu'un envoie peut-être du spam.`,
+    description: `Le relais refuse les nouveaux ${kind === 'bug' ? 'rapports de bug' : kind === 'secu' ? 'rapports de sécurité' : 'avis'} pour le moment (${c.hour} par heure et ${c.day} par jour au maximum, toutes adresses confondues). Si ce n'est pas un vrai pic d'utilisation, regarde les derniers tickets : quelqu'un envoie peut-être du spam.`,
     color: 0xf59e0b
   });
 }
@@ -272,7 +276,7 @@ async function statsGet(env, url) {
   if (!url.searchParams.has('voir')) return json({ aerox: 'stats', ok: !!env.LIMITES });
   if (!env.LIMITES) return json({ error: "Pas d'espace KV lié sous le nom LIMITES." }, 503);
   const out = {};
-  for (const h of ['DISCORD_BUGS', 'DISCORD_AVIS']) out[h] = (await kvGet(env, 'discord:' + h)) || (env[h] ? 'configuré, rien envoyé depuis' : 'secret absent');
+  for (const h of ['DISCORD_BUGS', 'DISCORD_AVIS', 'DISCORD_SECU']) out[h] = (await kvGet(env, 'discord:' + h)) || (env[h] ? 'configuré, rien envoyé depuis' : 'secret absent');
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
   const hh = String(now.getUTCHours());
@@ -434,6 +438,43 @@ async function postReport(request, env, ctx) {
   return json({ ok: true, number: issue.number, url: issue.html_url });
 }
 
+// ---------------------------------------------------------------- Rapport de sécurité (salon Discord privé seulement)
+// Le rapport (déjà relu par la personne, comptes masqués) part en fichier joint dans le salon privé. Le code à 6 caractères
+// permet à la personne de dire au développeur quel rapport est le sien. Rien n'est publié sur GitHub, rien n'est gardé ici.
+// Le relais n'envoie JAMAIS de correction au logiciel : le développeur répond sur Discord avec les numéros à cocher.
+const SECU_CODE = /^[A-Z0-9]{6}$/;
+async function postSecurity(request, env, ctx) {
+  const r = await readJson(request, 'Rapport');
+  if (r.err) return r.err;
+  const d = r.d;
+  const code = String(d.code == null ? '' : d.code);
+  if (!SECU_CODE.test(code)) return json({ error: 'Code du rapport invalide.' }, 400);
+  const texte = clean(d.texte, MAX_BODY);
+  if (!texte) return json({ error: 'Rapport vide.' }, 400);
+  const verdict = clean(oneLine(d.verdict), 80);
+  const version = versionOf(d.version);
+  const url = String(env.DISCORD_SECU || '').trim();
+  if (!DISCORD_HOOK.test(url)) return json({ error: "L'envoi des rapports de sécurité n'est pas encore activé par le développeur." }, 503);
+
+  const refus = await admit(request, env, ctx, 'secu');
+  if (refus) return refus;
+
+  const nom = `securite-${code}.txt`;
+  const fd = new FormData();
+  fd.append('payload_json', JSON.stringify({
+    username: 'AEROX PC Care', allowed_mentions: { parse: [] },
+    content: cut(`🛡️ Rapport de sécurité · code ${code} · ${verdict || 'sans verdict'} · AEROX ${version}`, 1900),
+    attachments: [{ id: 0, filename: nom }]
+  }));
+  fd.append('files[0]', new Blob([texte], { type: 'text/plain; charset=utf-8' }), nom);
+  let res;
+  try { res = await fetch(url, { method: 'POST', body: fd }); }
+  catch (e) { await noteDiscord(env, 'DISCORD_SECU', 'erreur : ' + String(e && e.message || e).slice(0, 200)); return json({ error: "Discord ne répond pas pour l'instant : réessaie plus tard." }, 502); }
+  await noteDiscord(env, 'DISCORD_SECU', res.ok ? 'envoyé' : `refusé par Discord (${res.status})`);
+  if (!res.ok) return json({ error: `Discord a refusé le rapport (${res.status}) : réessaie plus tard.` }, 502);
+  return json({ ok: true, code });
+}
+
 // ---------------------------------------------------------------- Point d'entrée
 async function route(request, env, ctx) {
   const url = new URL(request.url);
@@ -444,6 +485,7 @@ async function route(request, env, ctx) {
   if (request.headers.get('X-Aerox') !== '1') return json({ error: 'Requête refusée.' }, 400);
   if (path === '/avis') return postReview(request, env, ctx);
   if (path === '/stats') return statsPost(request, env);
+  if (path === '/securite') return postSecurity(request, env, ctx);
   if (path === '') return postReport(request, env, ctx);
   return json({ error: 'Adresse inconnue.' }, 404);
 }
