@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.6.0 : onglet Sécurité (analyse anti-intrusion)
+## Publié en 2.6.0 : onglet Sécurité (analyse anti-intrusion)
 
 Demande de Sam (23/10/2026) : un faux cheat GTA 5 a installé un voleur de mots de passe chez son frère, qui a volé les cookies de session du navigateur (comptes piratés malgré la double authentification). AEROX doit repérer ce genre d'infection et ses traces, sans aucune fausse alerte.
 - Onglet Sécurité (après Réparation) : analyse approfondie (`Invoke-SecurityScan`, lecture seule, résultat dans `$sync.SecReport`), analyse complète Defender (MpCmdRun de Program Files signé Microsoft, suivie, annulable avec `-Scan -Cancel`), analyse hors ligne (`Start-MpWDOScan`, confirmation claire), fenêtre « Mon compte a été piraté », carte « Pubs et fausses alertes » déplacée depuis Réparation (pas de doublon).
