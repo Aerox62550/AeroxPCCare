@@ -17,6 +17,8 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 - **Diagnostic complet** : stockage, mémoire, stabilité (écrans bleus, plantages), mises à jour, pilotes,
   sécurité, réseau, démarrage, santé des disques, températures. Chaque problème affiche sa cause, sa
   conséquence et la réparation (automatique quand c'est possible).
+- **Libérer de la place** : une seule liste de tout ce qui peut partir (fichiers inutiles, place gardée par Windows,
+  vieux installateurs, jeux et logiciels pas utilisés depuis 3 mois), ce qui est sans risque déjà coché, un seul bouton.
 - **Nettoyage approfondi** : fichiers temporaires, caches, anciennes mises à jour, Windows.old…
   avec la taille de chaque catégorie, et un arbre de ce qui prend de la place.
 - **Mises à jour des logiciels** au choix, avec « Ignorer » pour ceux que tu ne veux pas mettre à jour.

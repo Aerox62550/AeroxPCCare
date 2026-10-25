@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v2.7.2
+﻿AEROX PC Care - v2.8.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -59,6 +59,16 @@ Pas sûr ? « Envoyer au développeur » : le rapport part dans son salon Discor
 d'ordre par Internet : c'est toi qui coches.
 Dans le même onglet : analyse complète et analyse hors ligne de Windows Defender,
 « Mon compte a été piraté » (les étapes dans l'ordre) et « Pubs et fausses alertes ».
+
+LIBÉRER DE LA PLACE (LE PLUS SIMPLE)
+------------------------------------
+Accueil ou onglet Nettoyage > « Libérer de la place » : une seule liste de tout
+ce qui peut partir, du plus gros au plus petit. Ce qui est sans risque est déjà
+coché (fichiers inutiles, place gardée par Windows). Tu coches en plus ce qui ne
+te sert plus : vieux installateurs des Téléchargements, corbeille, jeux et
+logiciels pas lancés depuis 3 mois. Un bouton : le nettoyage se fait, puis les
+désinstallations s'ouvrent une par une, et un bilan te dit combien tu as gagné.
+Tes fichiers perso vont seulement à la corbeille, jamais supprimés directement.
 
 NETTOYAGE APPROFONDI
 --------------------
