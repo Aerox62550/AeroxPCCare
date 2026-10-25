@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.8.0 : assistant « Libérer de la place » (frère de Sam, disque plein, 25/10)
+## Publié en 2.8.0 : assistant « Libérer de la place » (frère de Sam, disque plein, 25/10)
 
 - Demande de Sam : « une vraie option pour faciliter et vraiment retirer ce qui sert à rien sans galère ». Une seule fenêtre, liste triée par gain, groupes : sans risque (coché : fichiers inutiles, Windows.old), place gardée par Windows (cochée selon les règles existantes ; stockage réservé décoché si un redémarrage est en attente), tes fichiers (vieux installateurs → corbeille, corbeille ; jamais cochés), jeux Steam (lus dans les manifestes de toutes les bibliothèques, dernière partie notée par Steam) et logiciels pas lancés depuis 3 mois (jamais cochés). « Après : X libres » en direct, un seul bouton, une confirmation, nettoyage en arrière-plan puis désinstallations une par une (la suivante s'ouvre quand la précédente a vraiment disparu), bilan final.
 - Accueil : bandeau quand le disque de Windows est presque plein + tuile ; onglet Nettoyage : première carte ; le problème « disque presque plein » du diagnostic ouvre l'assistant.
