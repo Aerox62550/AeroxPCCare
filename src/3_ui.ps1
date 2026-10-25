@@ -1047,6 +1047,7 @@ function Show-Page([string]$Key) {
     if ($script:InTray) { $script:Cur = $Key; return }
     $same = ($Key -eq $script:Cur); $offset = $Scroll.VerticalOffset
     $script:Cur = $Key
+    if ($Key -eq 'home' -and -not $same -and $script:SysDiskSig) { Sync-HomeDisk -Now -NoRefresh }
     $script:PageButtons.Clear()
     try {
         $page = switch ($Key) { 'home' { Build-HomePage } 'diag' { Build-DiagPage } 'monitor' { Build-MonitorPage } 'system' { Build-SystemPage } default { Build-StaticPage $Key } }
@@ -1088,6 +1089,7 @@ function Update-HomeStats([switch]$KeepDrives) {
         $c   = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
         $ramPct = [math]::Round((1 - ([double]$os.FreePhysicalMemory * 1KB) / [double]$cs.TotalPhysicalMemory) * 100)
         $pct = [math]::Round($c.FreeSpace / $c.Size * 100)
+        $script:SysDiskSig = [math]::Round([double]$c.FreeSpace / 100MB)
         $script:Stats = @{
             OS   = @{ L = 'Système'; V = ($os.Caption -replace '^Microsoft\s+', ''); S = "Build $($os.BuildNumber)"; C = $Pal.White }
             CPU  = @{ L = 'Processeur'; V = ($cpu.Name.Trim() -replace '\s+', ' ' -replace '\(R\)|\(TM\)|CPU|Processor|\d+-Core', '' -replace '\s+', ' ').Trim(); S = "$($cpu.NumberOfCores) cœurs / $($cpu.NumberOfLogicalProcessors) threads"; C = $Pal.White }
@@ -1104,6 +1106,20 @@ function Update-HomeStats([switch]$KeepDrives) {
             $script:Stats.DISK.S = (@("sur $(Format-Size $c.Size) ($pct %)") + @($others | Select-Object -First 4 | ForEach-Object { "{0} {1} libres sur {2}{3}" -f $_.Id, (Format-Size $_.Free), (Format-Size $_.Size), $(if ($_.Removable) { ' (amovible)' } else { '' }) }) + @($(if ($others.Count -gt 4) { "+ $($others.Count - 4) autre(s)" }) | Where-Object { $_ })) -join "`n"
         }
     } catch { Write-Bug -Context 'Infos de l''accueil' -ErrorRecord $_ }
+}
+
+# Espace libre de l'accueil : relu quand on revient sur l'accueil, quand la fenêtre reprend la main et toutes les 30 s
+# pendant qu'il est affiché (de la place libérée hors d'AEROX, corbeille vidée, jeu désinstallé, s'affiche sans redémarrer).
+# Le disque de Windows est lu directement (instantané) ; les autres disques seulement à la demande, pour ne pas réveiller
+# un disque USB en veille toutes les 30 s.
+function Sync-HomeDisk([switch]$Now, [switch]$NoRefresh) {
+    if (-not $Now -and $script:DiskCheckAt -and ((Get-Date) - $script:DiskCheckAt).TotalSeconds -lt 30) { return }
+    $script:DiskCheckAt = Get-Date
+    try {
+        $sig = [math]::Round([double](New-Object IO.DriveInfo $env:SystemDrive).TotalFreeSpace / 100MB)
+        if ($Now -and -not $script:Job -and (-not $script:DrivesAskAt -or ((Get-Date) - $script:DrivesAskAt).TotalSeconds -ge 10)) { $script:DrivesAskAt = Get-Date; Start-Background '$sync.Drives = @(Get-DriveList | Where-Object { $_.Id -ne $env:SystemDrive }); $sync.DrivesNew = $true' }
+        if ($sig -ne $script:SysDiskSig) { Update-HomeStats -KeepDrives; if ($script:Cur -eq 'home' -and -not $NoRefresh) { Refresh-Page } }
+    } catch { Write-Bug -Context 'Espace disque de l''accueil' -ErrorRecord $_ }
 }
 
 # ---------------------------------------------------------------- Journal
@@ -2643,6 +2659,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.7.1' = @("Accueil : l'espace libre du disque se met à jour tout seul quand tu libères de la place en dehors d'AEROX (corbeille vidée, jeu désinstallé…), sans redémarrer le logiciel.")
     '2.7.0' = @("Analyse de sécurité plus fouillée : tâches planifiées cachées, composants de Windows détournés, programmes de Windows où les voleurs de mots de passe se cachent, programmes lancés ces derniers jours depuis Temp (même effacés depuis), protections de l'antivirus coupées en douce, dossiers de cheats et de mod menus dans Documents.",
                 "Les dizaines d'exclusions qu'un virus peut ajouter à l'antivirus sont regroupées en une seule ligne, avec la date à laquelle elles ont été ajoutées.",
                 "Onglet Sécurité > Quarantaine : la liste des fichiers mis de côté (avec leur empreinte à vérifier sur virustotal.com), pour en remettre un à sa place ou les supprimer définitivement 24 heures après. Les fichiers en quarantaine sont mieux protégés.",
@@ -5851,6 +5868,8 @@ $window.Add_SourceInitialized({
         if (-not $script:HotkeyText) { Write-Bug -Context 'Raccourci Ctrl+Maj+O' -ErrorRecord "Ctrl+Maj+O, Ctrl+Alt+O et Ctrl+Maj+F10 sont déjà utilisés par d'autres logiciels" -Type 'erreur' }
     } catch { Write-Bug -Context 'Raccourci Ctrl+Maj+O' -ErrorRecord $_ }
 })
+# Retour dans AEROX (après avoir vidé la corbeille dans l'Explorateur, par exemple) : l'espace libre de l'accueil est relu
+$window.Add_Activated({ try { if ($script:Cur -eq 'home' -and -not $script:InTray -and $script:SysDiskSig) { Sync-HomeDisk -Now } } catch {} })
 $window.Add_Closing({
     param($s, $e)
     # Mode discret : la croix cache AEROX près de l'horloge (il continue de noter les parties)
@@ -5878,6 +5897,7 @@ $timer.Add_Tick({
             $sig = (@($sync.Drives | Where-Object { $_ } | ForEach-Object { "{0}{1}" -f $_.Id, [math]::Round([double]$_.Free / 1GB) }) -join ',')
             if ($sig -ne $script:DrivesSig) { $script:DrivesSig = $sig; Update-HomeStats -KeepDrives; if ($script:Cur -eq 'home') { Refresh-Page } }
         }
+        if ($script:Cur -eq 'home' -and -not $script:InTray -and $window.IsActive) { Sync-HomeDisk }
         Flush-Queue
         if ($script:ShowEvent -and $script:ShowEvent.WaitOne(0)) { Show-MainWindow '' }
         try { Invoke-MonitorTick } catch { Write-Bug -Context 'Gaming' -ErrorRecord $_ }
