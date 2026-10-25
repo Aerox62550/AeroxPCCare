@@ -862,6 +862,58 @@ function Invoke-Smoke {
         if ($txt -match 'mdp insta') { throw "le nom d'un fichier de mots de passe est dans le rapport à copier" }
         $script:SecTestReport = $rep
     }
+    Smoke 'Sécurité 2.7 : cachettes plantées (COM, tâche cachée, ligne vide, dossier de mod menu)' {
+        $tmp = Join-Path $env:TEMP 'aerox-cachettes'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        $evil = Join-Path $tmp 'evil.dll'; [IO.File]::WriteAllText($evil, 'pas une vraie DLL')
+        $evilExe = Join-Path $tmp 'relance.exe'; [IO.File]::WriteAllText($evilExe, 'pas un vrai programme')
+        $clsid = '{' + [guid]::NewGuid().ToString() + '}'
+        $ck = "HKCU:\Software\Classes\CLSID\$clsid\InprocServer32"
+        New-Item -Path $ck -Force | Out-Null; Set-ItemProperty -LiteralPath $ck -Name '(default)' -Value $evil
+        $tf = Join-Path $env:SystemRoot 'System32\Tasks\AeroxTestTacheCachee'
+        [IO.File]::WriteAllText($tf, ('<?xml version="1.0" encoding="UTF-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>{0}</Command></Exec></Actions></Task>' -f $evilExe), [Text.Encoding]::Unicode)
+        $rk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+        Set-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -Value '"C:\aerox\absent\rien.exe" --x'
+        try {
+            $script:SecItems = New-Object System.Collections.ArrayList; $script:SecChecked = New-Object System.Collections.ArrayList; $script:SecSigCache = @{}; $script:SecDefOn = $true
+            Get-SecAutoruns
+            foreach ($x in @($script:SecItems | Where-Object { $_.Rule -in 'com', 'tache-cachee', 'demarrage-vide' })) { Write-Host ("        [{0}] {1} | {2} | {3}" -f $x.Sev, $x.Rule, $x.Title, $x.Path) }
+            if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'com' -and $_.Path -eq $evil -and $_.Sev -eq 'crit' }).Count) { throw "composant COM détourné pas trouvé" }
+            if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'tache-cachee' -and $_.Path -eq $evilExe -and $_.Sev -eq 'crit' }).Count) { throw "tâche cachée pas trouvée" }
+            $lv = @($script:SecItems | Where-Object { $_.Rule -eq 'demarrage-vide' -and $_.Title -match 'AeroxTestLigneVide' })[0]
+            if (-not $lv -or $lv.Sev -ne 'info' -or -not $lv.Fix) { throw "ligne de démarrage vide pas trouvée (ou sans correction)" }
+            if (@($script:SecItems | Where-Object { $_.Rule -in 'demarrage-vide' -and $_.Default }).Count) { throw "une ligne vide est cochée d'office" }
+            $sync.SecReport = @{ Items = @($script:SecItems); Checked = @(); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date); Code = 'TEST27' }
+            Repair-SecurityItems -Ids @($lv.Id)
+            if ($null -ne (Get-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -ErrorAction SilentlyContinue)) { throw "ligne vide pas retirée" }
+            # rundll32 avec une extension inhabituelle
+            $t = Get-CommandTarget ('rundll32.exe "{0}\a b.dat",Run' -f $tmp)
+            if ($t -ne (Join-Path $tmp 'a b.dat')) { throw "cible de rundll32 mal lue : $t" }
+            # Dossier de mod menu dans Documents
+            $doc = 'C:\aerox\secu-docs'; New-Item -ItemType Directory -Force -Path (Join-Path $doc 'modest-menu_v0.9.4') | Out-Null
+            $script:SecItems = New-Object System.Collections.ArrayList
+            Get-SecDownloads -Dirs @($doc)
+            if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'dossier-appat' }).Count) { throw "dossier de mod menu pas trouvé" }
+            Remove-Item -LiteralPath $doc -Recurse -Force -ErrorAction SilentlyContinue
+        } finally {
+            Remove-Item -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue
+            Remove-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Smoke 'Sécurité 2.7 : protections coupées et exclusions regroupées (Defender simulé)' {
+        # Fausses réponses de Defender, seulement pour ce test (les fonctions passent avant les commandes du même nom)
+        function Get-MpComputerStatus { [pscustomobject]@{ AntivirusEnabled = $true; AMServiceEnabled = $true; RealTimeProtectionEnabled = $false; IsTamperProtected = $true; BehaviorMonitorEnabled = $true } }
+        function Get-MpPreference { [pscustomobject]@{ ExclusionPath = @(); ExclusionExtension = @(); ExclusionProcess = @(1..6 | ForEach-Object { "C:\Users\a\AppData\Local\Temp\x$($_)q7rk2.exe" }); MAPSReporting = 2; DisableRealtimeMonitoring = $true; DisableIOAVProtection = $false; DisableScriptScanning = $true; DisableBehaviorMonitoring = $false; DisableBlockAtFirstSeen = $false } }
+        $script:SecItems = New-Object System.Collections.ArrayList; $script:SecChecked = New-Object System.Collections.ArrayList
+        Get-SecDefender
+        foreach ($x in $script:SecItems) { Write-Host ("        [{0}] {1} | {2} | {3}" -f $x.Sev, $x.Rule, $x.Title, $x.Path) }
+        $g = @($script:SecItems | Where-Object { $_.Rule -eq 'exclusion' })
+        if ($g.Count -ne 1 -or @($g[0].Fix).Count -ne 6) { throw "6 exclusions attendues en UNE ligne avec 6 corrections (obtenu : $($g.Count) ligne(s))" }
+        if ($g[0].Why -notmatch "n'existent plus") { throw "les exclusions de programmes disparus ne sont pas signalées comme traces" }
+        $c = @($script:SecItems | Where-Object { $_.Rule -eq 'defender-coupe' })
+        if (-not $c.Count -or $c[0].Path -notmatch 'temps réel' -or $c[0].Path -notmatch 'scripts') { throw "protections coupées pas signalées" }
+    }
     Smoke 'Sécurité : fenêtre (éléments plantés)' { $sync.SecReport = $script:SecTestReport; Show-SecDialog $null }
     Smoke 'Sécurité : fenêtre d''envoi au développeur' { $sync.SecReport = $script:SecTestReport; Show-SecSendDialog }
     Smoke 'Sécurité : quarantaine AEROX du faux fichier (annulable)' {
@@ -872,11 +924,26 @@ function Invoke-Smoke {
         if (Test-Path -LiteralPath 'C:\aerox\secu-test\facture.pdf.exe') { throw "fichier pas mis en quarantaine" }
         $q = @(Get-ChildItem -LiteralPath (Join-Path $AppInfo.Secure 'quarantaine') -Filter '*.quarantaine' -ErrorAction SilentlyContinue)
         if (-not $q.Count) { throw "fichier introuvable dans la quarantaine (AEROX ne doit jamais supprimer)" }
+        foreach ($f in $q) { $wk = Get-AclWeakness $f.FullName; if ($wk) { throw "fichier en quarantaine modifiable sans droits admin : $wk" } }
         $ch = @(Get-Changes 20 | Where-Object { $_.Undo -like 'Restore-Quarantine*' })[0]
         if (-not $ch -or -not (Test-UndoAuthorized $ch.Id $ch.Undo)) { throw "pas d'annulation autorisée dans l'historique" }
         try { [void](Move-ToQuarantine (Join-Path $env:SystemRoot 'System32\whoami.exe')); throw "un fichier de Windows a été accepté" } catch { if ($_.Exception.Message -match 'accepté') { throw } }
         Write-Host "        en quarantaine, annulation scellée (remis à sa place par le test des annulations)"
     }
+    Smoke 'Sécurité : vider la quarantaine (seulement après 24 heures)' {
+        $dir = Get-SecureDir 'quarantaine'
+        $recent = @(Get-QuarantineItems | Where-Object { -not $_.CanDelete })
+        if (-not $recent.Count) { throw "le fichier mis en quarantaine à l'instant n'est pas listé" }
+        Clear-Quarantine -Ids @($recent[0].Id)
+        if (-not (Test-Path -LiteralPath (Join-Path $dir "$($recent[0].Id).quarantaine"))) { throw "un fichier mis en quarantaine il y a moins de 24 h a été supprimé" }
+        $old = [guid]::NewGuid().ToString('N')
+        [IO.File]::WriteAllText((Join-Path $dir "$old.quarantaine"), 'faux fichier de test')
+        [IO.File]::WriteAllText((Join-Path $dir "$old.json"), (@{ id = $old; chemin = 'C:\aerox\vieux.exe'; sha256 = ''; date = (Get-Date).AddDays(-3).ToString('s') } | ConvertTo-Json -Compress))
+        if (-not @(Get-QuarantineItems | Where-Object { $_.Id -eq $old -and $_.CanDelete }).Count) { throw "fichier de 3 jours pas supprimable" }
+        Clear-Quarantine -Ids @($old, 'pas-un-id')
+        if (Test-Path -LiteralPath (Join-Path $dir "$old.quarantaine")) { throw "fichier de 3 jours pas supprimé" }
+    }
+    Smoke 'Sécurité : fenêtre quarantaine' { Show-QuarantineDialog }
     Smoke 'Sécurité : analyse approfondie (0 critique attendu)' {
         Invoke-SecurityScan
         $r = $sync.SecReport
@@ -885,7 +952,7 @@ function Invoke-Smoke {
         foreach ($x in @($r.Items)) { Write-Host ("        [{0}] {1} | {2} | {3} | {4}" -f $x.Sev, $x.Rule, $x.Title, $x.Path, $x.Why) }
         # Machine de test GitHub : Defender y est volontairement aveuglé (exclusion des disques entiers) et ses agents
         # tournent sans signature depuis ProgramData\GitHub et Temp. Vrais signes sur un PC normal, seulement notés ici.
-        $runner = { param($x) $env:GITHUB_ACTIONS -eq 'true' -and (($x.Rule -eq 'exclusion' -and "$($x.Path)" -match '^[A-Za-z]:\\?$') -or "$($x.Path)" -match '(?i)\\GitHub\\|\\provjobd') }
+        $runner = { param($x) $env:GITHUB_ACTIONS -eq 'true' -and (($x.Rule -eq 'exclusion' -and "$($x.Path)" -match '^[A-Za-z]:\\?( · [A-Za-z]:\\?)*$') -or $x.Rule -eq 'defender-coupe' -or "$($x.Path)" -match '(?i)\\GitHub\\|\\provjobd|\\actions-runner\\|\\hostedtoolcache\\') }
         foreach ($x in @($r.Items | Where-Object { & $runner $_ })) { Write-Host ("        (machine de test GitHub, attendu) {0} {1}" -f $x.Title, $x.Path) }
         $crit = @($r.Items | Where-Object { $_.Sev -eq 'crit' -and -not (& $runner $_) })
         if ($crit.Count) { throw ("{0} critique(s) sur une machine saine : {1}" -f $crit.Count, (($crit | ForEach-Object { "$($_.Rule) $($_.Title) $($_.Path)" }) -join ' | ')) }
@@ -900,11 +967,6 @@ function Invoke-Smoke {
     }
     Smoke 'Sécurité : fenêtre (machine de test)' { Show-SecDialog $null }
     Smoke 'Sécurité : fenêtre « compte piraté »' { Show-HackedDialog }
-    Smoke 'Sécurité : boutons jamais coupés (écran 1024 × 720)' {
-        foreach ($c in @($script:ClippedButtons)) { Write-Host "        $c" }
-        $bad = @($script:ClippedButtons | Where-Object { $_ -match 'sécurité|piraté' })
-        if ($bad.Count) { throw ($bad -join ' | ') }
-    }
     Remove-Item -LiteralPath 'C:\aerox\secu-test' -Recurse -Force -ErrorAction SilentlyContinue
     Smoke 'Programmes en fond' { Get-BgItems }
     Smoke 'Fenêtre : programmes en fond' { Show-BgDialog $null }
@@ -1313,6 +1375,10 @@ function Invoke-SmokeActions {
     Smoke 'Dépannage : bureau figé' { Restart-Shell }
     Smoke 'Test de connexion' { Test-Internet }
     Smoke 'Point de restauration' { New-RestorePoint }
+    Smoke 'Fenêtres : aucun bouton coupé (écran 1024 × 720)' {
+        foreach ($c in @($script:ClippedButtons)) { Write-Host "        $c" }
+        if (@($script:ClippedButtons).Count) { throw (@($script:ClippedButtons | Select-Object -Unique) -join ' | ') }
+    }
     Smoke 'Annulations depuis l historique' {
         $n = 0
         foreach ($c in @(Get-Changes | Where-Object { $_.Undo })) {

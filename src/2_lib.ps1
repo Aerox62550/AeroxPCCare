@@ -6040,7 +6040,7 @@ function Get-RemoteToolName([string]$Text) {
 
 # Nom de fichier téléchargé à risque : 'rlo' (caractère qui inverse le nom), 'double' (« photo.jpg.exe »), 'appat' (cheat, crack…)
 $script:RiskyDlExt = '(?i)\.(exe|scr|com|bat|cmd|msi|lnk|zip|rar|7z|js|jse|vbs|vbe|wsf|hta|ps1|dll|pif|iso|img|cpl)$'
-$script:BaitNames = '(?i)(?<![a-z])(cheats?|triche|hacks?|crack(ed)?|keygen|injector|executor|mod[ _.-]?menu|spoofer|free[ _.-]?robux|robux[ _.-]?(gen\w*|free)|aimbot|wallhack|kmspico|kms[ _.-]?auto)(?![a-z])'
+$script:BaitNames = '(?i)(?<![a-z])(cheats?|triche|hacks?|crack(ed)?|keygen|injector|executor|mod[ _.-]?menu|modest[ _.-]?menu|spoofer|free[ _.-]?robux|robux[ _.-]?(gen\w*|free)|aimbot|wallhack|kmspico|kms[ _.-]?auto|kiddions?|yim[ _.-]?menu|2take1|cherax|solara|krnl|fluxus|jjsploit|synapse[ _.-]?x)(?![a-z])'
 function Test-RiskyDownloadName([string]$Name) {
     $out = New-Object System.Collections.ArrayList
     $n = "$Name"
@@ -6069,6 +6069,8 @@ function Get-SecVerdict($Items) {
 }
 
 # ---------------------------------------------------------------- Outils de l'analyse
+$script:SecLolBins = '(?i)^(regasm|regsvcs|applaunch|installutil|msbuild|vbc|jsc|cvtres|aspnet_compiler|caspol|addinprocess|addinprocess32|addinutil)\.exe$'
+$script:SecDevTools = '(?i)^(devenv|msbuild|dotnet|vbcscompiler|servicehub[\w.]*|rider64|code|unity(hub)?|vstest[\w.]*|testhost[\w.]*|msvsmon|blend|xdesproc)\.exe$'
 $script:SecHostExe = '(?i)^(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32|conhost|forfiles|bitsadmin|certutil)(\.exe)?$'
 $script:SecCats = [ordered]@{ defender = 'Antivirus'; autorun = 'Lancements automatiques cachés'; process = 'Programmes en cours'; remote = 'Accès à distance et comptes'
                               download = 'Téléchargements à risque'; secret = 'Mots de passe en clair' }
@@ -6121,6 +6123,8 @@ function Get-CommandTarget([string]$Cmd, [string]$UserProfile = '') {
     $rest = if ($c -match '^\s*"[^"]*"(.*)$') { $matches[1] } elseif ($c -match '^\s*\S+(.*)$') { $matches[1] } else { '' }
     $m = [regex]::Match($rest, '(?i)([a-z]:\\[^"<>|*?\r\n]+?\.(exe|dll|js|jse|vbs|vbe|wsf|hta|ps1|bat|cmd|scr|cpl|ocx|com))(?=["''\s,;]|$)')
     if ($m.Success) { return $m.Groups[1].Value }
+    # rundll32 « fichier,fonction » : le fichier peut avoir n'importe quelle extension (.dat, .tmp, aucune…)
+    if ($c -match '(?i)rundll32(\.exe)?"?\s+"?([a-z]:\\[^",]+)') { return $matches[2].Trim() }
     return ''
 }
 # Signature Windows d'un fichier (gardée en mémoire par chemin pendant l'analyse)
@@ -6209,31 +6213,67 @@ function Get-SecProfiles {
     return $m
 }
 
+# Heure d'ajout des exclusions (journal de Defender, événement 5007 « configuration modifiée ») : valeur en minuscules -> date
+function Get-ExclusionAddTimes {
+    $m = @{}
+    try {
+        foreach ($e in @(Get-WinEvent -LogName 'Microsoft-Windows-Windows Defender/Operational' -FilterXPath '*[System[(EventID=5007)]]' -MaxEvents 1000 -ErrorAction Stop)) {
+            foreach ($x in [regex]::Matches("$($e.Message)", '(?i)Exclusions\\(?:Paths|Processes|Extensions)\\(.+?)\s*=\s*0x0')) {
+                $k = $x.Groups[1].Value.Trim().ToLowerInvariant()
+                if (-not $m.ContainsKey($k) -or $m[$k] -lt $e.TimeCreated) { $m[$k] = $e.TimeCreated }
+            }
+        }
+    } catch {}
+    return $m
+}
+
 # ---------------------------------------------------------------- a) Antivirus saboté
 function Get-SecDefender {
     $mp = $null; try { $mp = Get-MpComputerStatus -ErrorAction Stop } catch {}
     $pref = $null; try { $pref = Get-MpPreference -ErrorAction Stop } catch {}
     $third = @(); try { $third = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | Where-Object { $_.displayName -notmatch 'Defender' } | ForEach-Object { "$($_.displayName)" } | Select-Object -Unique) } catch {}
     if (-not $mp -and -not $pref) { Add-SecChecked $(if ($third.Count) { "Antivirus : {0} (Windows Defender est remplacé, ses réglages ne sont pas lisibles)" -f ($third -join ', ') } else { "Antivirus : Windows Defender ne répond pas" }); return }
-    # Exclusions
+    # Exclusions (regroupées au-delà de 3 de même gravité : un virus peut en ajouter des dizaines)
     $nEx = 0
+    $byLv = @{ crit = New-Object System.Collections.ArrayList; warn = New-Object System.Collections.ArrayList; info = New-Object System.Collections.ArrayList }
     if ($pref) {
         foreach ($t in @(@('path', 'ExclusionPath'), @('ext', 'ExclusionExtension'), @('process', 'ExclusionProcess'))) {
             foreach ($v in @($pref.($t[1]) | Where-Object { $_ -and "$_" -notmatch '^N/A' })) {
                 $nEx++
                 $lv = Get-ExclusionRisk "$v" $t[0]
-                if (-not $lv) { continue }
-                $what = switch ($t[0]) { 'ext' { "les fichiers « .{0} »" -f ("$v" -replace '^\*?\.', '') } 'process' { "tout ce que fait le programme « {0} »" -f "$v" } default { "le dossier « {0} »" -f "$v" } }
-                $fix = @(@{ Kind = 'exclusion'; Type = $t[0]; Value = "$v" })
-                switch ($lv) {
-                    'crit' { Add-SecItem -Rule 'exclusion' -Cat 'defender' -Sev 'crit' -Title "Exclusion dangereuse dans l'antivirus" -Path "$v" -Fix $fix -FixLabel 'Retirer cette exclusion' `
-                                -Why ("Defender ne surveille plus {0}. Les virus ajoutent ce genre d'exclusion pour ne pas être détectés." -f $what) -Todo "Retire-la, sauf si tu l'as ajoutée toi-même pour une raison précise." }
-                    'warn' { Add-SecItem -Rule 'exclusion-compte' -Cat 'defender' -Sev 'warn' -Title "Exclusion d'un dossier de ton compte dans l'antivirus" -Path "$v" -Fix $fix -FixLabel 'Retirer cette exclusion' `
-                                -Why ("Defender ne surveille plus {0}, un dossier où les programmes s'installent sans droits administrateur." -f $what) -Todo "Garde-la si tu l'as ajoutée toi-même (logiciel de travail, jeu). Sinon, retire-la." }
-                    default { Add-SecItem -Rule 'exclusion-info' -Cat 'defender' -Sev 'info' -Title "Exclusion dans l'antivirus" -Path "$v" -Fix $fix -FixLabel 'Retirer cette exclusion' `
-                                -Why ("Defender ne surveille pas {0}." -f $what) -Todo "Normal si tu l'as ajoutée toi-même (jeu, logiciel de travail). Sinon, retire-la." }
-                }
+                if ($lv) { [void]$byLv[$lv].Add(@{ Type = $t[0]; Value = "$v" }) }
             }
+        }
+    }
+    $when = @{}; if ($nEx) { $when = Get-ExclusionAddTimes }
+    $txt = @{
+        crit = @("exclusion", "Exclusion dangereuse dans l'antivirus", "Les virus ajoutent ce genre d'exclusion pour ne pas être détectés.", "Retire-la, sauf si tu l'as ajoutée toi-même pour une raison précise.")
+        warn = @("exclusion-compte", "Exclusion d'un dossier de ton compte dans l'antivirus", "C'est un dossier où les programmes s'installent sans droits administrateur.", "Garde-la si tu l'as ajoutée toi-même (logiciel de travail, jeu). Sinon, retire-la.")
+        info = @("exclusion-info", "Exclusion dans l'antivirus", "", "Normal si tu l'as ajoutée toi-même (jeu, logiciel de travail). Sinon, retire-la.")
+    }
+    foreach ($lv in 'crit', 'warn', 'info') {
+        $l = @($byLv[$lv]); if (-not $l.Count) { continue }
+        $tx = $txt[$lv]
+        $describe = {
+            param($e)
+            switch ($e.Type) { 'ext' { "les fichiers « .{0} »" -f ($e.Value -replace '^\*?\.', '') } 'process' { "tout ce que fait le programme « {0} »" -f $e.Value } default { "le dossier « {0} »" -f $e.Value } }
+        }
+        $gone = @($l | Where-Object { $_.Type -ne 'ext' -and $_.Value -match '^[A-Za-z]:\\' -and -not (Test-Path -LiteralPath $_.Value) }).Count
+        $dates = @($l | ForEach-Object { $when[$_.Value.ToLowerInvariant()] } | Where-Object { $_ } | Sort-Object)
+        $dTxt = if ($dates.Count -gt 1) { " Ajoutées entre le {0:dd/MM à HH:mm} et le {1:dd/MM à HH:mm}." -f $dates[0], $dates[-1] } elseif ($dates.Count) { " Ajoutée le {0:dd/MM à HH:mm}." -f $dates[0] } else { '' }
+        if ($l.Count -le 3) {
+            foreach ($e in $l) {
+                $d = $when[$e.Value.ToLowerInvariant()]
+                Add-SecItem -Rule $tx[0] -Cat 'defender' -Sev $lv -Title $tx[1] -Path $e.Value -Fix @(@{ Kind = 'exclusion'; Type = $e.Type; Value = $e.Value }) -FixLabel 'Retirer cette exclusion' `
+                    -Why (("Defender ne surveille plus {0}. {1}{2}" -f (& $describe $e), $tx[2], $(if ($d) { " Ajoutée le {0:dd/MM à HH:mm}." -f $d } else { '' }))).Trim() -Todo $tx[3]
+            }
+        } else {
+            $shown = @($l | Select-Object -First 4 | ForEach-Object { $_.Value })
+            Add-SecItem -Rule $tx[0] -Cat 'defender' -Sev $lv -Title ("{0} exclusions {1}dans l'antivirus" -f $l.Count, $(if ($lv -eq 'crit') { 'dangereuses ' } else { '' })) `
+                -Path (($shown -join ' · ') + $(if ($l.Count -gt 4) { " · … et {0} autre(s)" -f ($l.Count - 4) } else { '' })) `
+                -Fix @($l | ForEach-Object { @{ Kind = 'exclusion'; Type = $_.Type; Value = $_.Value } }) -FixLabel ("Retirer les {0} exclusions" -f $l.Count) `
+                -Why (("Defender ne surveille plus ces {0} éléments. {1}{2}{3}" -f $l.Count, $tx[2], $(if ($gone) { " $gone d'entre eux n'existent plus sur le PC : ce sont des traces laissées par un programme qui s'est effacé." } else { '' }), $dTxt)).Trim() `
+                -Todo $(if ($lv -eq 'crit') { "Retire-les toutes. Si elles reviennent après un redémarrage, l'infection est toujours là." } else { $tx[3] })
         }
     }
     Add-SecChecked ("Exclusions de l'antivirus : {0}" -f $(if ($nEx) { $nEx } else { 'aucune' }))
@@ -6254,11 +6294,26 @@ function Get-SecDefender {
                 -Fix @(@{ Kind = 'policy'; Values = @($found | ForEach-Object { "{0}|{1}" -f $_[0], $_[1] }) }) -FixLabel 'Remettre les réglages par défaut'
         }
         if ($mp -and $mp.AntivirusEnabled) {
+            # Protections coupées par un programme (Set-MpPreference), sans stratégie : la fenêtre Sécurité Windows peut rester verte
+            $off = New-Object System.Collections.ArrayList
+            if ($mp.RealTimeProtectionEnabled -eq $false) { [void]$off.Add('protection en temps réel') }
+            if ($pref) {
+                foreach ($q in @(@('DisableRealtimeMonitoring', 'protection en temps réel'), @('DisableIOAVProtection', 'analyse des téléchargements'), @('DisableScriptScanning', 'analyse des scripts'),
+                                 @('DisableBehaviorMonitoring', 'surveillance des comportements'), @('DisableBlockAtFirstSeen', 'blocage des fichiers inconnus'))) {
+                    if ($pref.($q[0]) -eq $true -and -not $off.Contains($q[1])) { [void]$off.Add($q[1]) }
+                }
+            }
+            if ($off.Count) {
+                Add-SecItem -Rule 'defender-coupe' -Cat 'defender' -Sev 'crit' -Title "Des protections de l'antivirus sont coupées" -Path ($off -join ' · ') `
+                    -Why ("Un programme a coupé : {0}. Les virus le font pour travailler tranquilles ; la fenêtre Sécurité Windows peut quand même afficher que tout est activé." -f ($off -join ', ')) `
+                    -Todo "Remets-les (case cochée), puis lance l'analyse hors ligne. Si elles se recoupent après un redémarrage, l'infection est toujours là." `
+                    -Fix @(@{ Kind = 'mppref' }) -FixLabel 'Remettre les protections'
+            }
             if ($mp.IsTamperProtected -eq $false) {
                 Add-SecItem -Rule 'falsification' -Cat 'defender' -Sev 'warn' -Title "La protection contre les falsifications est coupée" -Why "Sans elle, un programme peut éteindre l'antivirus en douce." `
                     -Todo "Sécurité Windows > Protection contre les virus et menaces > Gérer les paramètres : active « Protection contre les falsifications »."
             }
-            if ($mp.BehaviorMonitorEnabled -eq $false) {
+            if ($mp.BehaviorMonitorEnabled -eq $false -and -not $off.Contains('surveillance des comportements')) {
                 Add-SecItem -Rule 'comportement' -Cat 'defender' -Sev 'warn' -Title "La surveillance des comportements est coupée" -Why "Defender ne repère plus les programmes qui agissent comme des virus (même inconnus)." `
                     -Todo "Sécurité Windows > Protection contre les virus et menaces > Gérer les paramètres : réactive la protection en temps réel. Si ça reste coupé, lance l'analyse hors ligne."
             }
@@ -6304,9 +6359,10 @@ function Get-SecDefender {
 # qui marche avec n'importe quel antivirus. Jamais pour un fichier du dossier de Windows (seulement l'analyse).
 function Get-FileFixes([string]$Path) {
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+    $scan = @(); if ($script:SecDefOn -ne $false) { $scan = @(@{ Kind = 'scan'; File = $Path }) }
     $w = $env:SystemRoot.TrimEnd('\') + '\'
-    if ($Path.StartsWith($w, [StringComparison]::OrdinalIgnoreCase)) { return @(@{ Kind = 'scan'; File = $Path }) }
-    return @(@{ Kind = 'scan'; File = $Path }, @{ Kind = 'quarantine'; File = $Path })
+    if ($Path.StartsWith($w, [StringComparison]::OrdinalIgnoreCase)) { return $scan }
+    return @($scan + @(@{ Kind = 'quarantine'; File = $Path }))
 }
 function Get-FixLabel($Fix) {
     $k = @(@($Fix) | Where-Object { $_ } | ForEach-Object { $_.Kind })
@@ -6338,11 +6394,59 @@ function Move-ToQuarantine([string]$File) {
     $dir = Get-SecureDir 'quarantaine'
     $id = [guid]::NewGuid().ToString('N')
     $sha = ''; try { $sha = (Get-FileHash -LiteralPath $full -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
-    Move-Item -LiteralPath $full -Destination (Join-Path $dir "$id.quarantaine") -Force -ErrorAction Stop
+    $qpath = Join-Path $dir "$id.quarantaine"
+    Move-Item -LiteralPath $full -Destination $qpath -Force -ErrorAction Stop
+    # Un fichier déplacé garde les droits de son ancien dossier : il resterait modifiable sans droits admin.
+    # Propriétaire = Administrateurs, droits = ceux du dossier protégé.
+    Set-QuarantineAcl $qpath
     $meta = [ordered]@{ id = $id; chemin = $full; sha256 = $sha; date = (Get-Date).ToString('s') }
     [IO.File]::WriteAllText((Join-Path $dir "$id.json"), ($meta | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
     Add-Change -Title ("Mis en quarantaine : {0}" -f (Split-Path -Leaf $full)) -Detail ("{0} · « Annuler » le remet à sa place." -f $full) -Undo ("Restore-Quarantine {0}" -f (ConvertTo-PsLiteral $id))
     return $id
+}
+function Set-QuarantineAcl([string]$Path) {
+    $ic = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    try { $null = & $ic $Path '/setowner' '*S-1-5-32-544' '/q' 2>&1; $null = & $ic $Path '/reset' '/q' 2>&1 } catch {}
+    $weak = ''; try { $weak = Get-AclWeakness $Path } catch { $weak = $_.Exception.Message }
+    if ($weak) { Log ("   ⚠ Droits du fichier en quarantaine pas entièrement protégés ({0}) : il reste impossible à lancer." -f $weak) }
+}
+# Contenu de la quarantaine (fiches lues dans le dossier protégé)
+$script:QuarMinHours = 24
+function Get-QuarantineItems {
+    $out = New-Object System.Collections.ArrayList
+    $dir = Join-Path $AppInfo.Secure 'quarantaine'
+    if (-not (Test-Path -LiteralPath $dir)) { return @() }
+    foreach ($m in @(Get-ChildItem -LiteralPath $dir -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        $id = $m.BaseName
+        if ($id -notmatch '^[0-9a-f]{32}$') { continue }
+        $q = Join-Path $dir "$id.quarantaine"
+        if (-not (Test-Path -LiteralPath $q)) { continue }
+        $meta = $null; try { $meta = [IO.File]::ReadAllText($m.FullName) | ConvertFrom-Json } catch {}
+        $date = $m.CreationTime; try { if ($meta.date) { $date = [datetime]$meta.date } } catch {}
+        [void]$out.Add(@{ Id = $id; Path = "$($meta.chemin)"; Name = (("$($meta.chemin)" -split '\\')[-1]); Sha = "$($meta.sha256)"; Date = $date; Size = [double](Get-Item -LiteralPath $q).Length
+                          CanDelete = (((Get-Date) - $date).TotalHours -ge $script:QuarMinHours) })
+    }
+    return @($out | Sort-Object { $_.Date } -Descending)
+}
+# Suppression définitive (seulement ce qu'AEROX a mis lui-même en quarantaine, et après 24 heures : le temps de vérifier
+# après un redémarrage que tout marche sans ces fichiers)
+function Clear-Quarantine([string[]]$Ids) {
+    Step "Suppression définitive des fichiers en quarantaine"
+    $dir = Join-Path $AppInfo.Secure 'quarantaine'
+    $items = @(Get-QuarantineItems)
+    $done = @()
+    foreach ($id in @($Ids)) {
+        $it = @($items | Where-Object { $_.Id -eq $id })[0]
+        if (-not $it) { Log ("   • {0} : n'est plus en quarantaine." -f $id); continue }
+        if (-not $it.CanDelete) { Log ("   • « {0} » est en quarantaine depuis moins de {1} heures : gardé pour l'instant (annulable)." -f $it.Name, $script:QuarMinHours); continue }
+        try {
+            Remove-Item -LiteralPath (Join-Path $dir "$id.quarantaine") -Force -ErrorAction Stop
+            Remove-Item -LiteralPath (Join-Path $dir "$id.json") -Force -ErrorAction SilentlyContinue
+            $done += $it.Name; Log ("   ✔ « {0} » supprimé définitivement." -f $it.Name)
+        } catch { Log ("   ⚠ « {0} » : {1}" -f $it.Name, $_.Exception.Message) }
+    }
+    if ($done.Count) { Add-Change -Kind 'info' -Title ("Quarantaine vidée : {0} fichier(s) supprimé(s) définitivement" -f $done.Count) -Detail ($done -join ' · ') }
+    Log ("✅ {0} fichier(s) supprimé(s) définitivement." -f $done.Count)
 }
 function Restore-Quarantine([string]$Id) {
     Step "Sortie de quarantaine"
@@ -6353,11 +6457,32 @@ function Restore-Quarantine([string]$Id) {
     $dest = "$($meta.chemin)"
     if ($dest -notmatch '^[A-Za-z]:\\') { Add-TaskError -Title "Emplacement d'origine inconnu" -Cause "La fiche de quarantaine est abîmée." -Effect "Le fichier reste en quarantaine."; return }
     if (Test-Path -LiteralPath $dest) { Add-TaskError -Title "Impossible de remettre le fichier à sa place" -Cause "Un fichier porte déjà ce nom à cet endroit : $dest" -Effect "Le fichier reste en quarantaine." -Steps @("Renomme ou déplace le fichier qui est à cet endroit, puis réessaie."); return }
+    # Le fichier doit être exactement celui mis en quarantaine (empreinte notée à ce moment-là)
+    if ($meta.sha256) {
+        $h = ''; try { $h = (Get-FileHash -LiteralPath $qf -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+        if ($h -ne "$($meta.sha256)") { Add-TaskError -Title "Le fichier en quarantaine a été modifié" -Cause "Son empreinte ne correspond plus à celle notée lors de la mise en quarantaine." -Effect "Il n'est pas remis à sa place, par sécurité."; return }
+    }
+    # Aucun dossier du chemin d'origine ne doit être un lien vers ailleurs (sinon le fichier pourrait atterrir dans Windows)
     $pd = Split-Path -Parent $dest
+    $cur = $pd; while ($cur -and -not (Test-Path -LiteralPath $cur)) { $cur = Split-Path -Parent $cur }
+    if (-not $cur -or -not [AeroxSafeDelete]::IsDirectPath($cur)) { Add-TaskError -Title "Impossible de remettre le fichier à sa place" -Cause "Le dossier d'origine passe par un lien vers un autre dossier." -Effect "Le fichier reste en quarantaine, par sécurité."; return }
     if (-not (Test-Path -LiteralPath $pd)) { New-Item -ItemType Directory -Force -Path $pd | Out-Null }
+    if (-not [AeroxSafeDelete]::IsDirectPath($pd)) { Add-TaskError -Title "Impossible de remettre le fichier à sa place" -Cause "Le dossier d'origine passe par un lien vers un autre dossier." -Effect "Le fichier reste en quarantaine, par sécurité."; return }
     Move-Item -LiteralPath $qf -Destination $dest -ErrorAction Stop
     Remove-Item -LiteralPath $mf -Force -ErrorAction SilentlyContinue
     Log ("   ✔ « {0} » est revenu à sa place." -f (Split-Path -Leaf $dest))
+}
+
+# Fichier d'un composant COM : d'abord celui du compte (qui passe avant celui de Windows), puis celui du PC
+function Get-ComServerPath([string]$ClassId, [string]$Hkcu = 'HKCU:') {
+    $id = "$ClassId".Trim()
+    if ($id -notmatch '^\{[0-9A-Fa-f-]{36}\}$') { return '' }
+    foreach ($root in @("$Hkcu\Software\Classes\CLSID", 'HKLM:\SOFTWARE\Classes\CLSID')) {
+        foreach ($srv in 'InprocServer32', 'LocalServer32') {
+            try { $v = "$((Get-Item -LiteralPath "$root\$id\$srv" -ErrorAction Stop).GetValue(''))"; if ($v.Trim()) { return (Resolve-SecPath $(if ($v -match '^\s*"' -or $srv -eq 'LocalServer32') { $v } else { '"{0}"' -f $v.Trim() })) } } catch {}
+        }
+    }
+    return ''
 }
 
 # ---------------------------------------------------------------- b) Lancements automatiques cachés
@@ -6398,7 +6523,18 @@ function Get-SecAutoruns {
                 $cmd = [string]$key.GetValue($n)
                 [void]$script:SecAutoTexts.Add("$n $cmd")
                 $risk = Get-LaunchRisk $cmd $rt.Profile $n
-                if (-not $risk.Sev) { continue }
+                if (-not $risk.Sev) {
+                    # Ligne qui lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé)
+                    $tgt = Resolve-SecPath $cmd $rt.Profile
+                    if ($tgt -match '^[A-Za-z]:\\' -and ($tgt -split '\\')[-1] -notmatch $script:SecHostExe -and (Test-Path -LiteralPath $tgt.Substring(0, 3)) -and -not (Test-Path -LiteralPath $tgt)) {
+                        $key = "{0}\{1}" -f $(if ($rt.Session) { $su.Hkcu } else { $rt.Hk }), $s[0]
+                        $canFix = ($rt.Machine -or $rt.Session) -and $s[0] -notmatch 'Policies'
+                        Add-SecItem -Rule 'demarrage-vide' -Cat 'autorun' -Sev 'info' -Title ("Ligne de démarrage vide : {0}" -f $n) -Path $tgt `
+                            -Why "Elle lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé). Elle ne lance rien, mais un virus pourrait la réutiliser." `
+                            -Todo "Retire-la si tu ne reconnais pas ce nom." -Fix $(if ($canFix) { @(@{ Kind = 'runvalue'; Key = $key; Name = $n }) } else { @() }) -FixLabel 'Retirer la ligne'
+                    }
+                    continue
+                }
                 $fix = @(); $off = $false
                 if ($s[1] -and ($rt.Machine -or $rt.Session)) {
                     $appr = if ($rt.Machine) { "HKLM:\$ab\$($s[1])" } else { "$($su.Hkcu)\$ab\$($s[1])" }
@@ -6434,8 +6570,18 @@ function Get-SecAutoruns {
     if ($sync.Cancel) { return }
     # 3. Tâches planifiées (toutes, y compris celles de Windows : elles sont lues, jamais coupées)
     $nT = 0
+    $seenTasks = @{}
     foreach ($t in @(Get-ScheduledTask -ErrorAction SilentlyContinue)) {
+        $seenTasks[("{0}{1}" -f $t.TaskPath, $t.TaskName).ToLowerInvariant()] = $true
         if ($t.State -eq 'Disabled' -or "$($t.TaskName)" -match '(?i)^AEROX PC Care') { continue }
+        # Action « COM » : le programme lancé est la DLL du composant (un composant détourné dans le compte se lance à sa place)
+        foreach ($a in @($t.Actions | Where-Object { $_ -and -not $_.Execute -and $_.ClassId })) {
+            $dll = Get-ComServerPath "$($a.ClassId)" $su.Hkcu
+            if (-not $dll) { continue }
+            $nT++
+            $risk = Get-LaunchRisk ('"{0}"' -f $dll) $su.Profile "$($t.TaskName)"
+            if ($risk.Sev) { Add-SecLaunch -Rule 'tache-com' -Title ("Tâche planifiée (composant COM) : {0}" -f $t.TaskName) -Risk $risk }
+        }
         foreach ($a in @($t.Actions | Where-Object { $_ -and $_.Execute })) {
             $nT++
             $cmd = ('"{0}" {1}' -f "$($a.Execute)".Trim().Trim('"'), "$($a.Arguments)").Trim()
@@ -6448,7 +6594,45 @@ function Get-SecAutoruns {
                 -Todo $(if ($ms) { "Cette tâche est rangée avec celles de Windows : AEROX ne la coupe pas. Analyse le fichier avec Defender, puis lance l'analyse hors ligne." } else { '' })
         }
     }
-    Add-SecChecked ("Tâches planifiées (y compris celles de Windows) : {0}" -f $nT)
+    # Tâches cachées : présentes dans C:\Windows\System32\Tasks mais invisibles pour le Planificateur (descripteur retiré du registre,
+    # technique de virus). Lues directement dans leur fichier XML.
+    $nH = 0
+    $troot = Join-Path $env:SystemRoot 'System32\Tasks'
+    foreach ($f in @(Get-ChildItem -LiteralPath $troot -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+        $rel = $f.FullName.Substring($troot.Length)
+        if ($seenTasks.ContainsKey($rel.ToLowerInvariant())) { continue }
+        $x = $null; try { $x = [xml][IO.File]::ReadAllText($f.FullName) } catch { continue }
+        if (-not $x -or -not $x.Task) { continue }
+        if ("$($x.Task.Settings.Enabled)" -eq 'false') { continue }
+        $cmds = @(@($x.Task.Actions.Exec) | Where-Object { $_ } | ForEach-Object { ('"{0}" {1}' -f "$($_.Command)".Trim().Trim('"'), "$($_.Arguments)").Trim() })
+        $cmds += @(@($x.Task.Actions.ComHandler) | Where-Object { $_ } | ForEach-Object { $d = Get-ComServerPath "$($_.ClassId)" $su.Hkcu; if ($d) { '"{0}"' -f $d } })
+        foreach ($cmd in @($cmds | Where-Object { $_ })) {
+            $nH++
+            [void]$script:SecAutoTexts.Add("$rel $cmd")
+            $risk = Get-LaunchRisk $cmd $su.Profile ($rel -split '\\')[-1]
+            if (-not $risk.Sev) { continue }
+            $risk.Sev = 'crit'
+            $risk.Why = "Cette tâche est invisible dans le Planificateur de tâches de Windows : technique de virus pour se relancer sans être vu. " + $risk.Why
+            Add-SecLaunch -Rule 'tache-cachee' -Title ("Tâche planifiée cachée : {0}" -f $rel) -Risk $risk -Todo "Coche-la : le fichier est mis en quarantaine, la tâche ne peut plus rien lancer. Puis lance l'analyse hors ligne."
+        }
+    }
+    Add-SecChecked ("Tâches planifiées (y compris celles de Windows et les tâches cachées) : {0}" -f ($nT + $nH))
+    if ($sync.Cancel) { return }
+    # Composants COM détournés dans le compte : un programme se charge à la place d'un composant de Windows (sans droits admin)
+    $nC = 0
+    foreach ($k in @(Get-ChildItem -LiteralPath "$($su.Hkcu)\Software\Classes\CLSID" -ErrorAction SilentlyContinue)) {
+        foreach ($srv in 'InprocServer32', 'LocalServer32') {
+            $v = ''; try { $v = "$((Get-Item -LiteralPath (Join-Path $k.PSPath $srv) -ErrorAction Stop).GetValue(''))" } catch { continue }
+            if (-not $v.Trim()) { continue }
+            $nC++
+            $risk = Get-LaunchRisk $(if ($v -match '^\s*"' -or $srv -eq 'LocalServer32') { $v } else { '"{0}"' -f $v.Trim() }) $su.Profile
+            if ($risk.Sev) {
+                $risk.Why = "Ce programme se charge à la place d'un composant de Windows, dans ton compte (détournement COM) : technique de virus pour se relancer sans droits administrateur. " + $risk.Why
+                Add-SecLaunch -Rule 'com' -Title ("Composant COM détourné : {0}" -f $k.PSChildName) -Risk $risk
+            }
+        }
+    }
+    Add-SecChecked ("Composants COM du compte : {0}" -f $nC)
     if ($sync.Cancel) { return }
     # 4. Services et pilotes qui démarrent avec Windows (ou en marche)
     $nS = 0
@@ -6550,7 +6734,7 @@ function Get-SecAutoruns {
             Add-SecItem -Rule 'winlogon' -Cat 'autorun' -Sev $(if ($sig.Valid -and $risk.Sev -ne 'crit') { 'warn' } else { 'crit' }) -Title ("Ajout à l'ouverture de session ({0})" -f $v[1]) -Path $part `
                 -Why ("Windows lance « {0} » à chaque ouverture de session, en plus de son programme normal. Rare pour un logiciel honnête, fréquent pour un virus." -f (($exe -split '\\')[-1])) `
                 -Todo "Si ce n'est pas un logiciel de ton entreprise ou de ton école : lance l'analyse hors ligne et fais-toi aider pour remettre Windows en état." `
-                -Fix $(if ($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Windows Defender'
+                -Fix @(Get-FileFixes $exe) -FixLabel (Get-FixLabel @(Get-FileFixes $exe))
         }
     }
     foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows') {
@@ -6562,7 +6746,7 @@ function Get-SecAutoruns {
                 $sig = if (Test-Path -LiteralPath $exe -PathType Leaf) { Get-SecSig $exe } else { @{ Valid = $false; Org = '' } }
                 Add-SecItem -Rule $(if ($sig.Valid) { 'appinit-info' } else { 'appinit' }) -Cat 'autorun' -Sev $(if ($sig.Valid) { 'info' } else { 'crit' }) -Title "DLL chargée dans tous les programmes (AppInit_DLLs)" -Path $exe `
                     -Why $(if ($sig.Valid) { "Cette DLL (signée par $($sig.Org)) est chargée dans chaque programme qui s'ouvre. Certains logiciels le font, mais c'est rare et déconseillé." } else { "Une DLL sans signature est chargée dans chaque programme qui s'ouvre : elle peut tout espionner, y compris le navigateur." }) `
-                    -Todo "Si tu ne sais pas d'où elle vient : analyse-la et lance l'analyse hors ligne." -Fix $(if (Test-Path -LiteralPath $exe -PathType Leaf) { @(@{ Kind = 'scan'; File = $exe }) } else { @() }) -FixLabel 'Analyser avec Windows Defender'
+                    -Todo "Si tu ne sais pas d'où elle vient : analyse-la et lance l'analyse hors ligne." -Fix @(Get-FileFixes $exe) -FixLabel (Get-FixLabel @(Get-FileFixes $exe))
             }
         } catch {}
     }
@@ -6571,7 +6755,7 @@ function Get-SecAutoruns {
         $p = Join-Path $env:SystemRoot "System32\$n.exe"
         if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { continue }
         if ((Get-SecSig $p).Ms) { continue }
-        Add-SecItem -Rule 'accessibilite' -Cat 'autorun' -Sev 'crit' -Title ("Outil d'accessibilité remplacé : {0}.exe" -f $n) -Path $p -Fix @(@{ Kind = 'scan'; File = $p }) -FixLabel 'Analyser avec Windows Defender' `
+        Add-SecItem -Rule 'accessibilite' -Cat 'autorun' -Sev 'crit' -Title ("Outil d'accessibilité remplacé : {0}.exe" -f $n) -Path $p -Fix @(Get-FileFixes $p) -FixLabel (Get-FixLabel @(Get-FileFixes $p)) `
             -Why "Ce programme se lance depuis l'écran de connexion, avant même d'ouvrir ta session. Il n'est pas signé par Microsoft : remplacé, il donne un accès complet au PC sans mot de passe." `
             -Todo "Lance l'analyse hors ligne, puis « Réparer les fichiers de Windows » (onglet Réparation)."
     }
@@ -6584,12 +6768,32 @@ function Get-SecProcesses {
     try { foreach ($c in @(Get-NetTCPConnection -State Established -ErrorAction Stop)) { if ("$($c.RemoteAddress)" -notmatch '^(127\.|::1$|0\.0\.0\.0$|::$)') { $conn[[int]$c.OwningProcess] = $true } } } catch {}
     $script:SecProcTexts = New-Object System.Collections.ArrayList
     $seen = @{}; $n = 0
-    foreach ($p in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $byId = @{}; foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }
+    foreach ($p in $all) {
         $procId = [int]$p.ProcessId
         if ($procId -le 4 -or $procId -eq $PID) { continue }
         $n++
         $name = "$($p.Name)"; $path = "$($p.ExecutablePath)"; $cl = "$($p.CommandLine)"
         [void]$script:SecProcTexts.Add(@{ Text = "$name $path"; Path = $path })
+        # Programmes .NET de Windows où les voleurs de mots de passe se cachent en mémoire (RegAsm, AppLaunch, MSBuild…) :
+        # signalés quand ils tournent sans outil de développement pour les lancer
+        if ($name -match $script:SecLolBins) {
+            $par = $byId[[int]$p.ParentProcessId]
+            $parName = if ($par) { "$($par.Name)" } else { '' }
+            if ($parName -notmatch $script:SecDevTools) {
+                $net = $conn.ContainsKey($procId)
+                $k = "lol|$name|$procId"
+                if (-not $seen.ContainsKey($k)) {
+                    $seen[$k] = $true
+                    Add-SecItem -Rule 'programme-detourne' -Cat 'process' -Sev $(if ($net) { 'crit' } else { 'warn' }) -Title ("Programme de Windows peut-être détourné : {0}" -f $name) -Path $path `
+                        -Why ("Les voleurs de mots de passe se cachent souvent dans ce programme de Windows pour ne pas être vus. Il tourne sans outil de développement pour l'avoir lancé{0}{1}." -f $(if ($parName) { " (lancé par « $parName »)" } else { ' (son programme de départ a disparu)' }), $(if ($net) { ', et il est connecté à Internet' } else { '' })) `
+                        -Todo "Si tu ne programmes pas en .NET : coche-le pour l'arrêter, redémarre le PC et relance l'analyse. S'il revient, l'infection est toujours là." `
+                        -Fix @(@{ Kind = 'stop'; Pid = $procId; Name = $name }) -FixLabel 'Arrêter le programme'
+                }
+            }
+            continue
+        }
         $isHost = ($name -match $script:SecHostExe)
         if ($isHost) { if (-not $cl) { continue }; $risk = Get-LaunchRisk $cl }
         elseif ($path) { $risk = Get-LaunchRisk ('"{0}"' -f $path) }
@@ -6608,6 +6812,48 @@ function Get-SecProcesses {
             -Fix $fix -FixLabel (Get-FixLabel $fix)
     }
     Add-SecChecked ("Programmes en cours : {0}" -f $n)
+}
+
+# ---------------------------------------------------------------- c bis) Programmes lancés ces 7 derniers jours (Windows les note dans le registre « BAM »)
+# Montre ce qui relance une infection même si le programme ne tourne plus pendant l'analyse, ou s'est effacé après coup.
+function Convert-BamPath([string]$Device) {
+    if ($Device -notmatch '^\\Device\\HarddiskVolume\d+(\\.+)$') { return '' }
+    $rest = $matches[1]
+    foreach ($d in @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' })) { $c = $d.Name.TrimEnd('\') + $rest; if (Test-Path -LiteralPath $c) { return $c } }
+    return ($env:SystemDrive + $rest)   # fichier effacé depuis : très probablement sur le disque de Windows
+}
+function Get-SecRecent {
+    $base = @('HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings', 'HKLM:\SYSTEM\CurrentControlSet\Services\bam\UserSettings') | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $base) { Add-SecChecked "Programmes lancés récemment : non disponible sur cette version de Windows"; return }
+    $since = (Get-Date).AddDays(-7); $n = 0
+    $known = @{}; foreach ($x in @($script:SecItems)) { if ($x.Path) { $known[("$($x.Path)" -split ' · ')[0].ToLowerInvariant()] = $true } }
+    foreach ($u in @(Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -match '^S-1-5-21-' })) {
+        foreach ($vn in @($u.GetValueNames() | Where-Object { $_ -like '\Device\*' })) {
+            $data = $u.GetValue($vn)
+            if ($data -isnot [byte[]] -or $data.Length -lt 8) { continue }
+            $when = $null; try { $when = [DateTime]::FromFileTime([BitConverter]::ToInt64($data, 0)) } catch { continue }
+            if ($when -lt $since) { continue }
+            $path = Convert-BamPath $vn
+            if (-not $path) { continue }
+            $zone = Get-PathZone $path @() $env:SystemDrive
+            if (-not $script:SecZoneLabels.ContainsKey($zone)) { continue }
+            $n++
+            if ($known.ContainsKey($path.ToLowerInvariant())) { continue }
+            $name = ($path -split '\\')[-1]
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                $risk = Get-LaunchRisk ('"{0}"' -f $path)
+                if (-not $risk.Sev) { continue }
+                $fix = @(Get-FileFixes $path)
+                Add-SecItem -Rule 'lance-recemment' -Cat 'process' -Sev $risk.Sev -Title ("Lancé récemment : {0}" -f $name) -Path $path -Why ("{0} Dernier lancement le {1:dd/MM à HH:mm}." -f $risk.Why, $when) `
+                    -Todo "Si tu ne le reconnais pas : coche-le (quarantaine), puis lance l'analyse hors ligne." -Fix $fix -FixLabel (Get-FixLabel $fix)
+            } elseif ($zone -in 'temp', 'downloads', 'public' -or (Get-SuspiciousPlacement $path)) {
+                Add-SecItem -Rule 'trace-recente' -Cat 'process' -Sev 'warn' -Title ("Trace : {0} lancé puis effacé" -f $name) -Path $path `
+                    -Why ("Lancé le {0:dd/MM à HH:mm} depuis {1}, puis supprimé. C'est souvent un morceau de virus qui se télécharge, s'exécute et s'efface." -f $when, $script:SecZoneLabels[$zone]) `
+                    -Todo "Si de nouvelles traces apparaissent après un redémarrage, l'infection est toujours là : lance l'analyse hors ligne, ou réinstalle Windows."
+            }
+        }
+    }
+    Add-SecChecked ("Programmes lancés ces 7 derniers jours depuis Temp, AppData ou Téléchargements : {0}" -f $n)
 }
 
 # ---------------------------------------------------------------- d) Accès à distance et comptes
@@ -6676,12 +6922,18 @@ function Get-SecRemote {
 
 # ---------------------------------------------------------------- e) Téléchargements à risque (Téléchargements + Bureau, 60 jours)
 function Get-SecDownloads([string[]]$Dirs = @()) {
-    if (-not @($Dirs | Where-Object { $_ }).Count) { $Dirs = @(@((Get-SessionFolder 'Downloads'), (Get-SessionFolder 'Desktop')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique) }
+    if (-not @($Dirs | Where-Object { $_ }).Count) { $Dirs = @(@((Get-SessionFolder 'Downloads'), (Get-SessionFolder 'Desktop'), (Get-SessionFolder 'Personal')) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique) }
     $since = (Get-Date).AddDays(-60); $n = 0
     foreach ($d in $Dirs) {
         $files = New-Object System.Collections.ArrayList
         foreach ($f in @(Get-ChildItem -LiteralPath $d -File -Force -ErrorAction SilentlyContinue)) { [void]$files.Add($f) }
         foreach ($sub in @(Get-ChildItem -LiteralPath $d -Directory -Force -ErrorAction SilentlyContinue | Where-Object { -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } | Select-Object -First 300)) {
+            # Dossier récent au nom de cheat, de crack ou de mod menu (souvent une archive décompressée)
+            if (($sub.LastWriteTime -ge $since -or $sub.CreationTime -ge $since) -and $sub.Name -match $script:BaitNames) {
+                Add-SecItem -Rule 'dossier-appat' -Cat 'download' -Sev 'warn' -Title ("Dossier de cheat, crack ou mod menu : {0}" -f $sub.Name) -Path $sub.FullName `
+                    -Why "Ce dossier récent porte le nom d'un cheat, d'un crack ou d'un mod menu : le piège n°1 des voleurs de mots de passe (le virus est souvent caché dedans)." `
+                    -Todo "Si tu as lancé un programme de ce dossier : change tes mots de passe depuis ton téléphone et lance l'analyse hors ligne. Dans tous les cas, supprime ce dossier sans rien ouvrir."
+            }
             foreach ($f in @(Get-ChildItem -LiteralPath $sub.FullName -File -Force -ErrorAction SilentlyContinue | Select-Object -First 500)) { [void]$files.Add($f) }
         }
         foreach ($f in $files) {
@@ -6721,7 +6973,7 @@ function Get-SecDownloads([string[]]$Dirs = @()) {
                 -Todo "Si tu l'as ouvert : mets-le en quarantaine, change tes mots de passe depuis ton téléphone et lance l'analyse hors ligne. Sinon, mets-le en quarantaine sans l'ouvrir."
         }
     }
-    Add-SecChecked ("Téléchargements et Bureau (60 derniers jours) : {0} programme(s), archive(s) ou raccourci(s)" -f $n)
+    Add-SecChecked ("Téléchargements, Bureau et Documents (60 derniers jours) : {0} programme(s), archive(s) ou raccourci(s)" -f $n)
 }
 
 # ---------------------------------------------------------------- f) Mots de passe en clair (le nom des fichiers n'est JAMAIS écrit dans le journal)
@@ -6754,7 +7006,8 @@ function Invoke-SecurityScan {
     $script:SecSigCache = @{}
     $script:SecAutoTexts = New-Object System.Collections.ArrayList
     $script:SecProcTexts = New-Object System.Collections.ArrayList
-    $steps = @(@('Antivirus', 'Get-SecDefender'), @('Lancements automatiques cachés', 'Get-SecAutoruns'), @('Programmes en cours', 'Get-SecProcesses'),
+    $script:SecDefOn = Test-DefenderActive
+    $steps = @(@('Antivirus', 'Get-SecDefender'), @('Lancements automatiques cachés', 'Get-SecAutoruns'), @('Programmes en cours', 'Get-SecProcesses'), @('Programmes lancés récemment', 'Get-SecRecent'),
                @('Accès à distance et comptes', 'Get-SecRemote'), @('Téléchargements à risque', 'Get-SecDownloads'), @('Mots de passe en clair', 'Get-SecSecrets'))
     $i = 0
     foreach ($s in $steps) {
@@ -6859,7 +7112,7 @@ function Repair-SecurityItems([string[]]$Ids) {
     $bg = @($acts | Where-Object { $_.Fix.Kind -in 'task', 'service' } | ForEach-Object { if ($_.Fix.Kind -eq 'task') { "task|{0}|{1}|{2}" -f $_.Fix.Path, $_.Fix.Name, ($_.Fix.Label -replace '\|', '/') } else { "service||{0}|{1}" -f $_.Fix.Name, ($_.Fix.Label -replace '\|', '/') } } | Select-Object -Unique)
     if ($bg.Count -and -not $sync.Cancel) { Disable-BgItems -Items $bg }
     # 4. Retraits sans annulation : notés dans l'historique, jamais dans la liste des annulations
-    $other = @($acts | Where-Object { $_.Fix.Kind -in 'exclusion', 'wmi', 'ifeo', 'spe', 'policy' })
+    $other = @($acts | Where-Object { $_.Fix.Kind -in 'exclusion', 'wmi', 'ifeo', 'spe', 'policy', 'mppref', 'runvalue', 'stop' })
     if ($other.Count) { Step "Retrait des réglages dangereux" }
     foreach ($a in $other) {
         if ($sync.Cancel) { return }
@@ -6902,6 +7155,33 @@ function Repair-SecurityItems([string[]]$Ids) {
                     Log ("   ✔ Détournement de « {0} » retiré." -f $fx.Key)
                     Add-Change -Kind 'info' -Title ("Détournement de « {0} » retiré" -f $fx.Key) -Detail ("{0} = {1}" -f $fx.Value, $old)
                 }
+                'mppref' {
+                    Set-MpPreference -DisableRealtimeMonitoring $false -DisableIOAVProtection $false -DisableScriptScanning $false -DisableBehaviorMonitoring $false -DisableBlockAtFirstSeen $false -ErrorAction Stop
+                    Start-Sleep -Seconds 2
+                    $st = Get-MpComputerStatus -ErrorAction Stop
+                    if (-not $st.RealTimeProtectionEnabled) { throw "Windows a gardé la protection coupée (stratégie d'entreprise, ou réglage verrouillé)." }
+                    Log "   ✔ Protections de l'antivirus remises."
+                    Add-Change -Kind 'info' -Title "Protections de Windows Defender remises" -Detail "Protection en temps réel, analyse des téléchargements et des scripts, surveillance des comportements, blocage des fichiers inconnus."
+                }
+                'runvalue' {
+                    # Ligne de démarrage dont le programme n'existe plus : seulement dans les clés Run connues, et si le fichier manque toujours
+                    $okKeys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce',
+                                "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\Run", "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows\CurrentVersion\RunOnce")
+                    if ($okKeys -notcontains $fx.Key) { throw "emplacement inattendu" }
+                    $cmd = "$((Get-ItemProperty -LiteralPath $fx.Key -Name $fx.Name -ErrorAction Stop).($fx.Name))"
+                    $tgt = Resolve-SecPath $cmd
+                    if ($tgt -match '^[A-Za-z]:\\' -and (Test-Path -LiteralPath $tgt)) { throw "le programme existe de nouveau : la ligne est gardée" }
+                    Remove-ItemProperty -LiteralPath $fx.Key -Name $fx.Name -ErrorAction Stop
+                    Log ("   ✔ Ligne de démarrage vide retirée : {0}" -f $fx.Name)
+                    Add-Change -Kind 'info' -Title ("Ligne de démarrage vide retirée : {0}" -f $fx.Name) -Detail ("{0} : {1} = {2}" -f $fx.Key, $fx.Name, $cmd)
+                }
+                'stop' {
+                    $pr = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f [int]$fx.Pid) -ErrorAction SilentlyContinue
+                    if (-not $pr -or "$($pr.Name)" -ne $fx.Name) { Log ("   • « {0} » ne tourne plus." -f $fx.Name); break }
+                    Stop-Process -Id ([int]$fx.Pid) -Force -ErrorAction Stop
+                    Log ("   ✔ « {0} » arrêté." -f $fx.Name)
+                    Add-Change -Kind 'info' -Title ("Programme suspect arrêté : {0}" -f $fx.Name)
+                }
                 'policy' {
                     foreach ($pv in @($fx.Values)) {
                         $kp = $pv.Split('|', 2)
@@ -6935,7 +7215,10 @@ function Get-DefenderTool {
     return $exe
 }
 function Test-DefenderActive {
-    try { $mp = Get-MpComputerStatus -ErrorAction Stop; return [bool]$mp.AntivirusEnabled } catch { return $false }
+    try { $mp = Get-MpComputerStatus -ErrorAction Stop; if ($mp.AntivirusEnabled -or $mp.AMServiceEnabled) { return $true } } catch {}
+    # Deuxième avis : le Centre de sécurité de Windows (ce qu'affiche « Sécurité Windows »)
+    try { foreach ($a in @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | Where-Object { $_.displayName -match 'Defender' })) { if (([int]$a.productState -band 0x1000) -ne 0) { return $true } } } catch {}
+    return $false
 }
 function Start-DefenderFullScan {
     Step "Analyse complète Windows Defender"
@@ -6997,7 +7280,7 @@ function Test-SecQuickSigns {
         }
         if ($bad.Count) {
             $n++
-            Add-Issue -Id 'secu-exclusion' -Sev 'crit' -Title "Une exclusion dangereuse aveugle l'antivirus" -Detail ($bad -join ', ') `
+            Add-Issue -Id 'secu-exclusion' -Sev 'crit' -Title $(if ($bad.Count -gt 1) { "$($bad.Count) exclusions dangereuses aveuglent l'antivirus" } else { "Une exclusion dangereuse aveugle l'antivirus" }) -Detail ((@($bad | Select-Object -First 3) -join ', ') + $(if ($bad.Count -gt 3) { " et $($bad.Count - 3) autre(s)" } else { '' })) `
                 -Cause "Windows Defender a reçu l'ordre de ne pas surveiller une partie importante du PC. Les virus ajoutent ce genre d'exclusion pour ne pas être détectés." `
                 -Effect "Un virus caché là n'est jamais repéré." -FixLabel "Analyser la sécurité" -UiFix 'secscan'
         }
