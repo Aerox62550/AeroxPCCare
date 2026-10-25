@@ -6165,6 +6165,8 @@ function Get-LaunchRisk([string]$Cmd, [string]$UserProfile = '', [string]$Name =
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { $r.Why = ($why -join ' '); return $r }   # fichier absent : rien ne se lance
     $r.Exists = $true
     $sig = Get-SecSig $target
+    # Installateur ou programme officiel d'AEROX (pas encore signé) : reconnu par son empreinte, jamais par son nom seul
+    if (-not $sig.Valid -and (Test-AeroxOfficialFile $target)) { $r.Why = ($why -join ' '); return $r }
     if ($masq -eq 'exact' -and -not $sig.Ms) { $r.Sev = 'crit'; [void]$why.Add(("Porte le nom d'un programme de Windows ({0}) mais n'est pas dans le dossier de Windows : technique classique des virus." -f $name)) }
     elseif ($masq -like 'like:*' -and -not $sig.Valid -and $zone -notin 'programfiles', 'windows') { $r.Sev = 'crit'; [void]$why.Add(("Nom presque identique à « {0}.exe » de Windows, à une lettre près : technique classique des virus." -f $masq.Substring(5))) }
     if (-not $sig.Valid -and $script:SecZoneLabels.ContainsKey($zone)) {
@@ -6181,6 +6183,31 @@ function Get-LaunchRisk([string]$Cmd, [string]$UserProfile = '', [string]$Name =
     $r.Why = ($why -join ' ')
     return $r
 }
+# Fichiers officiels d'AEROX PC Care : empreintes SHA-256 publiées par GitHub pour chaque version (lecture d'une liste
+# publique, rien n'est envoyé). Sans Internet, rien n'est reconnu : le fichier reste signalé comme les autres.
+function Get-AeroxOfficialHashes {
+    if ($null -ne $script:AeroxHashes) { return $script:AeroxHashes }
+    $script:AeroxHashes = @{}
+    try {
+        if (-not $AppInfo.Repo) { return $script:AeroxHashes }
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $all = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases?per_page=100" -f $AppInfo.Repo) -Headers @{ 'User-Agent' = 'AeroxPCCare' } -TimeoutSec 10 -ErrorAction Stop
+        foreach ($rel in @($all | ForEach-Object { $_ })) {
+            foreach ($a in @($rel.assets)) { if ("$($a.digest)" -match '^sha256:([0-9a-fA-F]{64})$') { $script:AeroxHashes[$Matches[1].ToUpperInvariant()] = "$($rel.tag_name)" } }
+        }
+    } catch {}
+    return $script:AeroxHashes
+}
+# Version officielle d'AEROX à laquelle correspond ce fichier ('' si ce n'en est pas une, ou si on ne peut pas le vérifier)
+function Test-AeroxOfficialFile([string]$Path) {
+    if ((($Path -split '\\')[-1]) -notmatch '(?i)^aerox') { return '' }
+    $h = ''; try { $h = (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant() } catch { return '' }
+    $all = Get-AeroxOfficialHashes
+    if ($h -and $all.ContainsKey($h)) { return $all[$h] }
+    return ''
+}
+# Désinstalleur : il se copie dans Temp, se lance puis s'efface (normal, il doit pouvoir supprimer son propre dossier)
+function Test-UninstallerName([string]$Name) { return ($Name -match '(?i)(uninst|unins\d{3}|^un_[a-z]\.exe$|^au_\.exe$|desinstall|désinstall)') }
 # Raccourci .lnk : programme visé et arguments (lecture seule, par l'outil de Windows)
 function Get-ShortcutInfo([string]$Path) {
     try {
@@ -6846,7 +6873,7 @@ function Get-SecRecent {
                 $fix = @(Get-FileFixes $path)
                 Add-SecItem -Rule 'lance-recemment' -Cat 'process' -Sev $risk.Sev -Title ("Lancé récemment : {0}" -f $name) -Path $path -Why ("{0} Dernier lancement le {1:dd/MM à HH:mm}." -f $risk.Why, $when) `
                     -Todo "Si tu ne le reconnais pas : coche-le (quarantaine), puis lance l'analyse hors ligne." -Fix $fix -FixLabel (Get-FixLabel $fix)
-            } elseif ($zone -in 'temp', 'downloads', 'public' -or (Get-SuspiciousPlacement $path)) {
+            } elseif (($zone -in 'temp', 'downloads', 'public' -or (Get-SuspiciousPlacement $path)) -and -not (Test-UninstallerName $name)) {
                 Add-SecItem -Rule 'trace-recente' -Cat 'process' -Sev 'warn' -Title ("Trace : {0} lancé puis effacé" -f $name) -Path $path `
                     -Why ("Lancé le {0:dd/MM à HH:mm} depuis {1}, puis supprimé. C'est souvent un morceau de virus qui se télécharge, s'exécute et s'efface." -f $when, $script:SecZoneLabels[$zone]) `
                     -Todo "Si de nouvelles traces apparaissent après un redémarrage, l'infection est toujours là : lance l'analyse hors ligne, ou réinstalle Windows."
@@ -7004,6 +7031,7 @@ function Invoke-SecurityScan {
     $script:SecItems = New-Object System.Collections.ArrayList
     $script:SecChecked = New-Object System.Collections.ArrayList
     $script:SecSigCache = @{}
+    $script:AeroxHashes = $null
     $script:SecAutoTexts = New-Object System.Collections.ArrayList
     $script:SecProcTexts = New-Object System.Collections.ArrayList
     $script:SecDefOn = Test-DefenderActive

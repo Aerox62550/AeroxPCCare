@@ -2659,6 +2659,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.7.2' = @("Analyse de sécurité : l'installateur officiel d'AEROX PC Care n'est plus signalé (reconnu par son empreinte publiée sur GitHub, jamais par son nom), et un programme désinstallé n'est plus pris pour une trace de virus.")
     '2.7.1' = @("Accueil : l'espace libre du disque se met à jour tout seul quand tu libères de la place en dehors d'AEROX (corbeille vidée, jeu désinstallé…), sans redémarrer le logiciel.")
     '2.7.0' = @("Analyse de sécurité plus fouillée : tâches planifiées cachées, composants de Windows détournés, programmes de Windows où les voleurs de mots de passe se cachent, programmes lancés ces derniers jours depuis Temp (même effacés depuis), protections de l'antivirus coupées en douce, dossiers de cheats et de mod menus dans Documents.",
                 "Les dizaines d'exclusions qu'un virus peut ajouter à l'antivirus sont regroupées en une seule ligne, avec la date à laquelle elles ont été ajoutées.",

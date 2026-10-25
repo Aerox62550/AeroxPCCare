@@ -846,6 +846,15 @@ function Invoke-Smoke {
         [IO.File]::WriteAllText((Join-Path $tmp 'outil.exe'), 'pas un vrai programme')
         & $chk 'sans signature dans Temp' (Get-LaunchRisk ('"{0}"' -f (Join-Path $tmp 'outil.exe'))).Sev 'crit'
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        # Désinstalleurs lancés puis effacés depuis Temp : normal, jamais signalés comme trace de virus
+        foreach ($u in 'ovi-uninstall.exe', 'uninstall.exe', 'unins000.exe', 'Un_A.exe', 'Au_.exe', 'Desinstaller.exe') { & $chk "désinstalleur $u" (Test-UninstallerName $u) $true }
+        foreach ($u in '00138d5f2.exe', 'svchost.exe', 'setup.exe', 'AdobeInputHost.exe') { & $chk "pas un désinstalleur $u" (Test-UninstallerName $u) $false }
+        # Le nom seul ne suffit jamais : un faux « AeroxPCCare_Setup.exe » n'est pas reconnu comme officiel
+        $fake = Join-Path $env:TEMP 'AeroxPCCare_Setup.exe'
+        [IO.File]::WriteAllBytes($fake, [byte[]](1..200))
+        & $chk 'faux installateur AEROX' (Test-AeroxOfficialFile $fake) ''
+        Remove-Item -LiteralPath $fake -Force
+        Write-Host ("        empreintes officielles d'AEROX lues sur GitHub : {0}" -f (Get-AeroxOfficialHashes).Count)
         if ($script:SecBad.Count) { throw ($script:SecBad -join ' | ') }
     }
     Smoke 'Sécurité : faux éléments plantés exprès' {
