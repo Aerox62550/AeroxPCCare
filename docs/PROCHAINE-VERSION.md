@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.7.2 : fausses alertes de l'analyse de sécurité (PC d'un pote, 25/10)
+## Publié en 2.7.2 : fausses alertes de l'analyse de sécurité (PC d'un pote, 25/10)
 
 - `AeroxPCCare_Setup.exe` lancé depuis Téléchargements signalé en critique (pas encore signé) : reconnu maintenant par son empreinte SHA-256, comparée à celles publiées par GitHub pour chaque version (liste publique lue, rien n'est envoyé). Jamais par le nom seul ; sans Internet, il reste signalé. Disparaîtra de toute façon avec la signature du 31/10.
 - « Trace : ovi-uninstall.exe lancé puis effacé » : un désinstalleur se copie dans Temp, se lance et s'efface, c'est normal. Les noms de désinstalleurs (uninstall, unins000, Un_A, Au_, désinstaller) ne sont plus pris pour des traces.
