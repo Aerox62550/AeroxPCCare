@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.7.1 : espace libre de l'accueil relu sans redémarrer
+## Publié en 2.7.1 : espace libre de l'accueil relu sans redémarrer
 
 - Bug signalé le 25/10 : place libérée hors d'AEROX (SSD vidé) invisible sur l'accueil jusqu'au redémarrage. L'espace du disque de Windows est maintenant relu en revenant sur l'accueil, quand la fenêtre reprend la main et toutes les 30 s pendant que l'accueil est affiché ; les autres disques à la demande seulement (un disque USB en veille n'est pas réveillé toutes les 30 s). Test : fichier de 600 Mo écrit puis supprimé, la tuile suit.
 
