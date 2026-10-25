@@ -450,7 +450,7 @@ $script:CardIcons = @{
     deepclean = 'E74D'; space = 'EDA2'; dupes = 'E8C8'; 'Clear-TempFiles' = 'E7C3'; 'Clear-RecycleBinAll' = 'E74D'; 'Enable-StorageSense' = 'E916'; 'Disable-StorageSense' = 'E916'
     appupdates = 'E896'; 'Update-Apps' = 'E895'; 'Update-Windows' = 'E777'; drivers = 'E713'; 'Open-WindowsUpdate' = 'E8A7'
     speedtest = 'EC4A'; 'Repair-Sound' = 'E767'; 'Repair-Microphone' = 'E720'; 'Repair-Webcam' = 'E714'; 'Repair-Printing' = 'E749'; 'Restart-Shell' = 'E72C'
-    browser = 'E7BA'; secscan = 'EA18'; 'Start-DefenderFullScan' = 'E721'; 'Start-DefenderOffline' = 'E777'; hacked = 'E730'; quarantine = 'E72E'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
+    browser = 'E7BA'; secscan = 'EA18'; 'Start-DefenderFullScan' = 'E721'; 'Start-DefenderOffline' = 'E777'; hacked = 'E730'; quarantine = 'E72E'; secview = 'E8A7'; privacy = 'E72E'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
@@ -775,6 +775,7 @@ $PageDefs = [ordered]@{
     @{ G = "Analyser le PC"; T = "Analyse de sécurité approfondie"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'secscan'; UiBusy = $true; StatusFn = { Get-SecCardStatus }; D = "Cherche les signes d'intrusion : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, téléchargements piégés (faux cheats, cracks) et fichiers de mots de passe laissés en clair. Rien n'est modifié : tu choisis ensuite quoi traiter. Environ 1 minute." },
     @{ G = "Analyser le PC"; T = "Analyse complète Windows Defender"; B = "Lancer"; A = "Start-DefenderFullScan"; D = "Fait vérifier chaque fichier du PC par Windows Defender. Long (30 minutes à 2 heures), mais à faire au moindre doute. Tu peux l'arrêter avec « Annuler »."; C = "L'analyse complète vérifie tous les fichiers du PC : 30 minutes à 2 heures. Tu peux continuer à utiliser le PC (un peu plus lent) et l'arrêter avec « Annuler ».`n`nLancer ?" },
     @{ G = "Analyser le PC"; T = "Analyse hors ligne"; B = "Redémarrer et analyser"; A = "Start-DefenderOffline"; D = "Redémarre le PC et analyse Windows avant qu'il démarre, là où les virus ne peuvent pas se cacher (environ 15 minutes). À faire si l'analyse a trouvé quelque chose de critique."; C = $script:OfflineConfirm },
+    @{ G = "Analyser le PC"; Tile = $true; S = "Revoir le résultat de la dernière analyse, cocher et traiter."; T = "Dernier résultat"; B = "Voir"; UI = 'secview'; StatusFn = { Get-SecViewStatus }; D = "Rouvre le résultat de la dernière analyse de sécurité (depuis l'ouverture d'AEROX) pour cocher et traiter, ou l'envoyer au développeur." },
     @{ G = "Arnaques et piratage"; Tile = $true; S = "Les fichiers suspects mis de côté par AEROX."; T = "Quarantaine"; B = "Voir"; UI = 'quarantine'; StatusFn = { Get-QuarCardStatus }; D = "Les fichiers suspects mis de côté par l'analyse de sécurité : ils ne peuvent plus se lancer. Remets-en un à sa place, ou supprime-les définitivement (24 heures après leur mise en quarantaine)." },
     @{ G = "Arnaques et piratage"; T = "Mon compte a été piraté"; B = "Que faire ?"; UI = 'hacked'; D = "Discord, Instagram, Amazon ou ta boîte mail piratés malgré la double authentification ? Les étapes dans le bon ordre pour reprendre la main, puis nettoyer le PC." },
     @{ G = "Arnaques et piratage"; T = "Pubs et fausses alertes de virus"; B = "Analyser"; UI = 'browser'; UiBusy = $true; D = "Des « Ton PC est infecté ! » en bas de l'écran, des pubs partout, une page d'accueil ou une recherche qui a changé toute seule ? Trouve les sites qui t'envoient des notifications, les extensions douteuses et les réglages imposés à Chrome, Edge, Brave et Opera, et les bloque." }) }
@@ -796,6 +797,7 @@ $PageDefs = [ordered]@{
     @{ G = "AEROX PC Care"; Tile = $true; S = "Installe chaque nouvelle version tout seul (10 s pour dire « Plus tard »)."; T = "Mises à jour automatiques"; B = "Changer"; UI = 'autoupd-toggle'; StatusFn = { Get-AutoUpdCardStatus }; D = "Quand une nouvelle version d'AEROX sort, elle s'installe toute seule au lancement après 10 secondes (tu peux toujours dire « Plus tard »). Le fichier est vérifié avant d'être installé. Désactivé : AEROX te la propose et tu choisis quand." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Vérifie s'il y a une nouvelle version et l'installe en un clic."; T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Compteurs anonymes pour corriger d'abord ce qui touche le plus de monde. Jamais ton nom ni tes fichiers."; T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Ce qui est envoyé, ce qui ne l'est jamais, et pourquoi."; T = "Confidentialité"; B = "Lire"; UI = 'privacy'; D = "Ce qu'AEROX PC Care envoie (statistiques anonymes, rapports que tu choisis d'envoyer), ce qu'il n'envoie jamais (nom, fichiers, mots de passe) et ce qui reste sur ce PC." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Les journaux de chaque jour, enregistrés sur ce PC."; T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
 }
 
@@ -1542,7 +1544,9 @@ function Invoke-UiCommand($T) {
                     'bgitems' { Start-BgList $null }
                     'dupes' { Start-DuplicateScan }
                     'browser' { Start-BrowserCheck $null }
-                    'secscan' { if ($sync.SecReport) { Show-SecDialog $null } else { Start-SecScan $null } }
+                    'secscan' { Start-SecScan $null }
+                    'secview' { if ($sync.SecReport) { Show-SecDialog $null } else { [System.Windows.MessageBox]::Show("Aucune analyse de sécurité depuis l'ouverture d'AEROX : lance d'abord « Analyser ».", $AppName, 'OK', 'Information') | Out-Null } }
+                    'privacy' { [void](Open-Url "https://github.com/$GitHubRepo/blob/main/docs/CONFIDENTIALITE.md") }
                     'hacked' { Show-HackedDialog }
                     'quarantine' { Show-QuarantineDialog }
                     'optimize' { Start-Optimize }
@@ -2639,7 +2643,11 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '2.6.2' = @("Onglet Sécurité > Quarantaine : la liste des fichiers mis de côté (avec leur empreinte à vérifier sur virustotal.com). Tu peux en remettre un à sa place, ou les supprimer définitivement 24 heures après leur mise en quarantaine.")
+    '2.7.0' = @("Analyse de sécurité plus fouillée : tâches planifiées cachées, composants de Windows détournés, programmes de Windows où les voleurs de mots de passe se cachent, programmes lancés ces derniers jours depuis Temp (même effacés depuis), protections de l'antivirus coupées en douce, dossiers de cheats et de mod menus dans Documents.",
+                "Les dizaines d'exclusions qu'un virus peut ajouter à l'antivirus sont regroupées en une seule ligne, avec la date à laquelle elles ont été ajoutées.",
+                "Onglet Sécurité > Quarantaine : la liste des fichiers mis de côté (avec leur empreinte à vérifier sur virustotal.com), pour en remettre un à sa place ou les supprimer définitivement 24 heures après. Les fichiers en quarantaine sont mieux protégés.",
+                "« Dernier résultat » pour rouvrir l'analyse, « Nouvelle analyse » toujours disponible, et les lignes de démarrage qui lancent un fichier disparu peuvent être retirées.",
+                "Nouvelle page « Confidentialité » (onglet Aide) : ce qui est envoyé, ce qui ne l'est jamais.")
     '2.6.1' = @("Analyse de sécurité : le bouton « Traiter la sélection » est toujours visible en bas de la fenêtre (il pouvait être caché quand la liste était longue).",
                 "Les cachettes typiques des voleurs de mots de passe sont maintenant critiques et cochées d'office : programme au nom terminé par des caractères au hasard, dossier camouflé qui s'affiche comme « Ce PC », faux dossier « Windows » dans AppData ou ProgramData, faux nom Adobe ou Microsoft sans signature.")
     '2.6.0' = @("Nouvel onglet Sécurité : une analyse anti-intrusion approfondie (environ 1 minute) cherche les voleurs de mots de passe et leurs traces : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, faux cheats et cracks téléchargés, fichiers de mots de passe laissés en clair. Pour chaque élément : pourquoi c'est suspect et quoi faire. Tu coches, AEROX s'en occupe, sans jamais supprimer de fichier.",
@@ -4258,7 +4266,12 @@ function Start-SecScan($Issue) {
 function Get-SecCardStatus {
     $r = $sync.SecReport
     if (-not $r) { return $null }
-    return @{ StatusText = ("Dernière analyse à {0:HH:mm} · {1} · code {2}" -f $r.Date, $r.Verdict.Title, $r.Code); StatusKind = $(switch ($r.Verdict.Level) { 'crit' { 'warn' } 'warn' { 'warn' } default { 'on' } }); B = 'Voir le résultat' }
+    return @{ StatusText = ("Dernière analyse à {0:HH:mm} · {1} · code {2}" -f $r.Date, $r.Verdict.Title, $r.Code); StatusKind = $(switch ($r.Verdict.Level) { 'crit' { 'warn' } 'warn' { 'warn' } default { 'on' } }); B = 'Nouvelle analyse' }
+}
+function Get-SecViewStatus {
+    $r = $sync.SecReport
+    if (-not $r) { return @{ StatusText = "Aucune analyse depuis l'ouverture d'AEROX"; StatusKind = 'off' } }
+    return @{ StatusText = ("{0:HH:mm} · {1}" -f $r.Date, $r.Verdict.Title); StatusKind = $(if ($r.Verdict.Level -eq 'ok') { 'on' } else { 'warn' }) }
 }
 function Get-SecSevColor([string]$Sev) { switch ($Sev) { 'crit' { return $Pal.Bad } 'warn' { return $Pal.Warn } 'ok' { return $Pal.Ok } default { return $Pal.Muted } } }
 function Show-SecDialog($Issue) {

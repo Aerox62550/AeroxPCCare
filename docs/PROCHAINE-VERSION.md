@@ -2,7 +2,16 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.6.2 : vider la quarantaine (demande de Sam, 23/10/2026)
+## Prêt pour 2.7.0 : analyse de sécurité plus fouillée (audit du 25/10/2026, PC réinfecté du frère de Sam)
+
+- Quarantaine : propriétaire Administrateurs et droits du dossier protégé remis après le déplacement (le fichier gardait ceux de son ancien dossier) ; remise en place refusée si l'empreinte a changé ou si un dossier du chemin d'origine est un lien.
+- Nouvelles cachettes : tâches planifiées cachées (lues dans `System32\Tasks`), actions « COM » des tâches, composants COM détournés dans le compte, cible de `rundll32` quelle que soit son extension, programmes .NET de Windows détournés (RegAsm, AppLaunch, MSBuild…) lancés sans outil de développement, programmes lancés ces 7 derniers jours depuis Temp/AppData d'après le registre BAM (y compris effacés depuis).
+- Defender : protections coupées par `Set-MpPreference` (temps réel, téléchargements, scripts, comportements, blocage à la première vue) signalées et remises ; exclusions regroupées au-delà de 3, avec leur date d'ajout (événement 5007) et le nombre de programmes exclus qui n'existent plus ; Defender considéré actif aussi d'après le Centre de sécurité.
+- Appâts : Documents parcouru, dossiers récents au nom de cheat ou de mod menu, noms connus (modest menu, Kiddion, YimMenu, 2Take1, Cherax, Solara, Krnl, Fluxus…).
+- Interface : carte « Dernier résultat », « Nouvelle analyse » toujours disponible, lignes de démarrage vides retirables, signe fort du diagnostic tronqué, correction Defender masquée quand Defender ne peut pas analyser. Test : aucun bouton coupé dans AUCUNE fenêtre sur 1024 × 720.
+- Page de confidentialité (`docs/CONFIDENTIALITE.md`, carte dans l'onglet Aide).
+
+### Inclus aussi : vider la quarantaine (prévu en 2.6.2, jamais publiée)
 
 - Carte « Quarantaine » (onglet Sécurité) : liste des fichiers mis en quarantaine (nom, emplacement d'origine, date, taille, empreinte SHA-256 à chercher sur VirusTotal), « Remettre à sa place » (confirmation) et « Supprimer définitivement » (confirmation, seulement 24 heures après la mise en quarantaine, et seulement les fichiers qu'AEROX y a mis). Suppression notée dans l'historique.
 
