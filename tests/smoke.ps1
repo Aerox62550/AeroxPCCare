@@ -896,6 +896,8 @@ function Invoke-Smoke {
         [IO.File]::WriteAllText($tf, ('<?xml version="1.0" encoding="UTF-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>{0}</Command></Exec></Actions></Task>' -f $evilExe), [Text.Encoding]::Unicode)
         $rk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
         Set-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -Value '"C:\aerox\absent\rien.exe" --x'
+        # Deux lignes vides de suite : la 2e doit être lue aussi (bug 2.7.2 : l'analyse du registre s'arrêtait après la 1re)
+        Set-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide2' -Value '"C:\aerox\absent\rien2.exe"'
         try {
             $script:SecItems = New-Object System.Collections.ArrayList; $script:SecChecked = New-Object System.Collections.ArrayList; $script:SecSigCache = @{}; $script:SecDefOn = $true
             Get-SecAutoruns
@@ -904,6 +906,7 @@ function Invoke-Smoke {
             if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'tache-cachee' -and $_.Path -eq $evilExe -and $_.Sev -eq 'crit' }).Count) { throw "tâche cachée pas trouvée" }
             $lv = @($script:SecItems | Where-Object { $_.Rule -eq 'demarrage-vide' -and $_.Title -match 'AeroxTestLigneVide' })[0]
             if (-not $lv -or $lv.Sev -ne 'info' -or -not $lv.Fix) { throw "ligne de démarrage vide pas trouvée (ou sans correction)" }
+            if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'demarrage-vide' -and $_.Title -match 'AeroxTestLigneVide2' }).Count) { throw "2e ligne de démarrage vide pas lue : l'analyse du registre s'est arrêtée en route" }
             if (@($script:SecItems | Where-Object { $_.Rule -in 'demarrage-vide' -and $_.Default }).Count) { throw "une ligne vide est cochée d'office" }
             $sync.SecReport = @{ Items = @($script:SecItems); Checked = @(); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date); Code = 'TEST27' }
             Repair-SecurityItems -Ids @($lv.Id)
@@ -921,6 +924,7 @@ function Invoke-Smoke {
             Remove-Item -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue
             Remove-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide2' -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

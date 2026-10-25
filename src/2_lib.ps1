@@ -6554,11 +6554,11 @@ function Get-SecAutoruns {
                     # Ligne qui lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé)
                     $tgt = Resolve-SecPath $cmd $rt.Profile
                     if ($tgt -match '^[A-Za-z]:\\' -and ($tgt -split '\\')[-1] -notmatch $script:SecHostExe -and (Test-Path -LiteralPath $tgt.Substring(0, 3)) -and -not (Test-Path -LiteralPath $tgt)) {
-                        $key = "{0}\{1}" -f $(if ($rt.Session) { $su.Hkcu } else { $rt.Hk }), $s[0]
+                        $fixKey = "{0}\{1}" -f $(if ($rt.Session) { $su.Hkcu } else { $rt.Hk }), $s[0]
                         $canFix = ($rt.Machine -or $rt.Session) -and $s[0] -notmatch 'Policies'
                         Add-SecItem -Rule 'demarrage-vide' -Cat 'autorun' -Sev 'info' -Title ("Ligne de démarrage vide : {0}" -f $n) -Path $tgt `
                             -Why "Elle lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé). Elle ne lance rien, mais un virus pourrait la réutiliser." `
-                            -Todo "Retire-la si tu ne reconnais pas ce nom." -Fix $(if ($canFix) { @(@{ Kind = 'runvalue'; Key = $key; Name = $n }) } else { @() }) -FixLabel 'Retirer la ligne'
+                            -Todo "Retire-la si tu ne reconnais pas ce nom." -Fix $(if ($canFix) { @(@{ Kind = 'runvalue'; Key = $fixKey; Name = $n }) } else { @() }) -FixLabel 'Retirer la ligne'
                     }
                     continue
                 }
