@@ -744,7 +744,8 @@ function New-IssueCard($I, [switch]$IsError) {
 $script:OfflineConfirm = "Le PC va REDÉMARRER TOUT DE SUITE pour analyser Windows avant son démarrage, là où les virus ne peuvent pas se cacher (environ 15 minutes).`n`nEnregistre ton travail et ferme tes logiciels avant.`n`nRedémarrer maintenant ?"
 $PageDefs = [ordered]@{
  clean = @{ Title = "Nettoyage"; Sub = "Libère de la place et supprime les fichiers inutiles. Tes fichiers perso (photos, documents, téléchargements, jeux) ne sont jamais touchés."; Cards = @(
-    @{ G = "Libérer de la place"; T = "Nettoyage approfondi"; Badge = "Recommandé"; P = $true; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
+    @{ G = "Libérer de la place"; T = "Libérer de la place"; Badge = "Le plus simple"; P = $true; B = "Commencer"; UI = 'freespace'; UiBusy = $true; D = "Tout ce qui peut libérer de la place en une seule liste, du plus gros au plus petit : fichiers inutiles, place gardée par Windows, vieux installateurs, corbeille, jeux et logiciels pas utilisés depuis 3 mois. Ce qui est sans risque est déjà coché, tu ajoutes le reste, un bouton et AEROX enchaîne tout." },
+    @{ G = "Libérer de la place"; T = "Nettoyage approfondi"; P = $false; B = "Analyser"; UI = 'deepclean'; UiBusy = $true; D = "Analyse tout ce qui peut être supprimé (temporaires, caches des navigateurs et des applis, mises à jour, rapports de plantage, nettoyage Windows, anciens composants…) et t'affiche la taille de chaque catégorie. Tu choisis, ça nettoie." },
     @{ G = "Libérer de la place"; T = "Ce qui prend de la place"; B = "Analyser le disque"; UI = 'space'; UiBusy = $true; D = "Trouve ce qui remplit le disque et te dit quoi en faire : place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes), OneDrive en double, jeux et logiciels oubliés, plus gros fichiers et dossiers. 1 à 3 minutes." },
     @{ G = "Libérer de la place"; T = "Fichiers en double"; B = "Chercher"; UI = 'dupes'; UiBusy = $true; D = "Photos, vidéos, documents et installateurs présents en plusieurs exemplaires dans tes dossiers. Tu choisis ce qui part à la corbeille, un exemplaire est toujours gardé." },
     @{ G = "En un clic"; Tile = $true; S = "Temporaires et miniatures, en quelques secondes."; T = "Fichiers temporaires (rapide)"; B = "Nettoyer"; A = "Clear-TempFiles"; D = "Juste les fichiers temporaires et le cache des miniatures, en quelques secondes." },
@@ -897,6 +898,19 @@ function Build-HomePage {
         Add-Child $dp $t
     }
     $h.Child = $dp; Add-Child $sp $h
+    # Disque de Windows presque plein : l'assistant « Libérer de la place » mis en avant
+    $dFree = 0.0; $dSize = 0.0; try { $di = New-Object IO.DriveInfo $env:SystemDrive; $dFree = [double]$di.TotalFreeSpace; $dSize = [double]$di.TotalSize } catch {}
+    $dLvl = Get-SystemDiskLevel $dFree $dSize
+    if ($dLvl -in 'crit', 'warn') {
+        $fc = New-CardBorder $(if ($dLvl -eq 'crit') { $Pal.Bad } else { $Pal.Warn })
+        $fg = New-Object System.Windows.Controls.DockPanel
+        $fb = New-Button "Libérer de la place" 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'freespace'; UiBusy = $true } }
+        [System.Windows.Controls.DockPanel]::SetDock($fb, 'Right'); $fb.VerticalAlignment = 'Center'; Add-Child $fg $fb
+        $ft = New-Object System.Windows.Controls.StackPanel
+        Add-Child $ft (New-Text ("Ton disque {0} est presque plein : {1} libres" -f $env:SystemDrive, (Format-Size $dFree)) $Typo.Title $(if ($dLvl -eq 'crit') { $Pal.Bad } else { $Pal.Warn }) 'SemiBold')
+        Add-Child $ft (New-Text "Windows ralentit et les mises à jour échouent. Un clic : AEROX te montre tout ce qui peut partir, ce qui est sans risque est déjà coché." $Typo.Body $Pal.Muted)
+        Add-Child $fg $ft; $fc.Child = $fg; Add-Child $sp $fc
+    }
     # Tuiles
     $tiles = New-Object System.Windows.Controls.Primitives.UniformGrid; $tiles.Columns = 4; $tiles.Margin = Th 0 0 0 4
     foreach ($k in 'OS', 'CPU', 'RAM', 'DISK') {
@@ -917,6 +931,9 @@ function Build-HomePage {
            S = "En un clic : temporaires, caches, DNS et mise à jour des logiciels."
            D = "En un clic : point de restauration, fichiers temporaires, cache des navigateurs et du DNS, mise à jour des logiciels."
            C = "L'optimisation rapide va :`n`n• créer un point de restauration (sécurité)`n• supprimer les fichiers temporaires`n• vider le cache des navigateurs fermés`n• mettre à jour tes logiciels`n`nFerme tes logiciels ouverts avant. Tes fichiers perso ne sont pas touchés.`n`nOn y va ?" },
+        @{ G = 'Optimiser ton PC'; Tile = $true; T = "Libérer de la place"; B = "Libérer"; UI = 'freespace'; UiBusy = $true
+           S = $(if ($dSize -gt 0) { "{0} libres sur {1}. Tout ce qui peut partir, en une liste." -f (Format-Size $dFree), $env:SystemDrive } else { "Tout ce qui peut partir, en une liste." })
+           D = "Fichiers inutiles, place gardée par Windows, vieux installateurs, jeux et logiciels pas utilisés depuis 3 mois : une seule liste, ce qui est sans risque déjà coché, un seul bouton." }
         @{ G = 'Optimiser ton PC'; Tile = $true; T = "Historique des changements"; B = "Voir"; UI = 'history'
            S = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX, annulables en un clic." } else { "Tout ce qu'AEROX change est noté ici, avec un bouton pour l'annuler." })
            D = "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." })
@@ -1362,6 +1379,8 @@ function Complete-Job {
     if ($job.OnDone -eq 'appdialog' -and $sync.AppList) { Show-AppUpdatesDialog $script:AppsIssue; $script:AppsIssue = $null }
     elseif ($job.OnDone -eq 'cleandialog' -and $sync.CleanList) { Show-CleanDialog $script:CleanIssue; $script:CleanIssue = $null }
     elseif ($job.OnDone -eq 'spacedialog' -and $sync.SpaceScan) { Show-SpaceDialog }
+    elseif ($job.OnDone -eq 'freedialog' -and $sync.FreePlan) { Show-FreeSpaceDialog }
+    elseif ($job.OnDone -eq 'freedone') { Start-FreeUninstalls }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
     elseif ($job.OnDone -eq 'biospage' -and $sync.BiosUrl) { [void](Open-Url $sync.BiosUrl.Url) }
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
@@ -1462,6 +1481,7 @@ function Invoke-UiCommand($T) {
                 if ($i.UiFix -eq 'display') { $d = @(Get-Displays) | Where-Object { $_.Device -eq $i.Display.Device } | Select-Object -First 1; Set-DisplayWithConfirm $d $i; return }
                 if ($i.UiFix -eq 'apps') { Start-AppUpdatesList $i; return }
                 if ($i.UiFix -eq 'clean') { Start-CleanAnalysis $i; return }
+                if ($i.UiFix -eq 'freespace') { Start-FreeSpace $i; return }
                 if ($i.UiFix -eq 'uninstall') { Start-UninstallList $i; return }
                 if ($i.UiFix -eq 'drivers') { Start-DriverCheck $i; return }
                 if ($i.UiFix -eq 'bgitems') { Start-BgList $i; return }
@@ -1570,6 +1590,7 @@ function Invoke-UiCommand($T) {
                     'deepclean' { Start-CleanAnalysis $null }
                     'uninstall' { Start-UninstallList $null }
                     'space' { Start-SpaceScan }
+                    'freespace' { Start-FreeSpace $null }
                     'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
@@ -2659,6 +2680,9 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.8.0' = @("Nouveau : « Libérer de la place » (accueil et onglet Nettoyage). Une seule liste de tout ce qui peut partir, du plus gros au plus petit : ce qui est sans risque est déjà coché, tu ajoutes les jeux et logiciels que tu n'utilises plus, un bouton et AEROX enchaîne tout, avec un bilan à la fin.",
+                "Quand le disque de Windows est presque plein, l'accueil te le dit et te propose de libérer de la place en un clic.",
+                "Analyse de sécurité : correction d'un bug qui arrêtait la lecture du registre de démarrage après une ligne vide.")
     '2.7.2' = @("Analyse de sécurité : l'installateur officiel d'AEROX PC Care n'est plus signalé (reconnu par son empreinte publiée sur GitHub, jamais par son nom), et un programme désinstallé n'est plus pris pour une trace de virus.")
     '2.7.1' = @("Accueil : l'espace libre du disque se met à jour tout seul quand tu libères de la place en dehors d'AEROX (corbeille vidée, jeu désinstallé…), sans redémarrer le logiciel.")
     '2.7.0' = @("Analyse de sécurité plus fouillée : tâches planifiées cachées, composants de Windows détournés, programmes de Windows où les voleurs de mots de passe se cachent, programmes lancés ces derniers jours depuis Temp (même effacés depuis), protections de l'antivirus coupées en douce, dossiers de cheats et de mod menus dans Documents.",
@@ -3799,6 +3823,214 @@ function Add-SpaceAdvice($Body, $Scan, $Big) {
         Add-Child $dp $cs
         $card.Child = $dp; Add-Child $Body $card
     }
+}
+
+# ---------------------------------------------------------------- Assistant « Libérer de la place »
+# Une seule liste triée par gain, ce qui est sans risque déjà coché, un seul bouton : tout s'enchaîne, puis un bilan.
+$script:FreeGroups = [ordered]@{ auto = 'SANS RISQUE · DÉJÀ COCHÉ POUR TOI'; windows = 'PLACE GARDÉE PAR WINDOWS'; files = 'TES FICHIERS (VONT À LA CORBEILLE)'; apps = 'JEUX ET LOGICIELS PAS UTILISÉS DEPUIS 3 MOIS' }
+function Start-FreeSpace($Issue) {
+    $script:FreeIssue = $Issue
+    $script:FreeStart = $null; try { $script:FreeStart = [double](New-Object IO.DriveInfo $env:SystemDrive).TotalFreeSpace } catch {}
+    [void](Start-AeroxTask 'Get-FreeSpacePlan' 'Libérer de la place' 'freedialog')
+}
+# Gain des lignes cochées. La place des vieux installateurs n'est récupérée que si la corbeille est vidée aussi.
+function Get-FreeGain($Items) {
+    $sel = @($Items | Where-Object { $_ })
+    $rec = @($sel | Where-Object { $_.Id -eq 'recycle' }).Count -gt 0
+    $t = [double]0; $unk = $false
+    foreach ($x in $sel) {
+        if ($x.Kind -eq 'oldinst' -and -not $rec) { continue }
+        if ($x.S -gt 0) { $t += [double]$x.S }
+        if ($x.Id -eq 'junk') { $unk = $true }
+    }
+    return @{ Bytes = $t; Unknown = $unk; Count = $sel.Count }
+}
+function Show-FreeSpaceDialog {
+    $plan = $sync.FreePlan
+    if (-not $plan) { return }
+    $w = New-Dialog "$AppName : libérer de la place" 780
+    $script:FreeWin = $w; $script:FreeChoice = $null; $script:FreeGo = ''; $script:FreeRows = New-Object System.Collections.ArrayList; $script:FreeNow = $plan
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 8
+    Add-Child $sp (New-Text "Libérer de la place" $Typo.H2 $Pal.White 'Bold')
+    $lvl = Get-SystemDiskLevel ([double]$plan.Free) ([double]$plan.Size)
+    $hd = New-Text ("Disque {0} : {1} libres sur {2}" -f $plan.Drive, (Format-Size $plan.Free), (Format-Size $plan.Size)) $Typo.Strong $(switch ($lvl) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.Text } }) 'SemiBold'
+    $hd.Margin = Th 0 6 0 0; Add-Child $sp $hd
+    $p = New-Text "Ce qui est coché est sans risque. Pour le reste, coche ce qui ne te sert plus. Ensuite un seul bouton : AEROX enchaîne tout. Rien de perso n'est supprimé directement : tes fichiers vont à la corbeille, les jeux et logiciels passent par leur vrai désinstalleur." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 4 0 8; Add-Child $sp $p
+    if ($plan.RebootPending) { $rb = New-Text "⚠ Une mise à jour Windows attend un redémarrage : le stockage réservé ne peut pas être libéré avant. Si tu peux, redémarre d'abord le PC, puis relance l'assistant." $Typo.Body $Pal.Warn; $rb.Margin = Th 0 0 0 8; Add-Child $sp $rb }
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $list; $sv.Margin = Th 24 0 24 0
+    foreach ($gk in $script:FreeGroups.Keys) {
+        $g = @($plan.Items | Where-Object { $_ -and $_.Group -eq $gk })
+        if (-not $g.Count) { continue }
+        $h = New-Text $script:FreeGroups[$gk] $Typo.Small $(if ($gk -eq 'auto') { $Pal.Ok } else { $Pal.Faint }) 'Bold'; $h.Margin = Th 2 10 0 8; Add-Child $list $h
+        foreach ($x in $g) {
+            $txt = New-Object System.Windows.Controls.StackPanel; $txt.Margin = Th 8 0 0 0
+            Add-Child $txt (New-Text $x.T $Typo.Strong $Pal.White 'SemiBold')
+            $d = New-Text $x.D $Typo.Small $Pal.Muted; $d.Margin = Th 0 2 0 0; Add-Child $txt $d
+            $szt = if ($x.S -gt 0) { $(if ($x.Est) { '≈ ' } else { '' }) + (Format-Size $x.S) } elseif ($x.Id -eq 'junk') { 'calculé par Windows' } else { '' }
+            $st = New-Text $szt $Typo.Strong $(if ($x.S -ge 1GB) { $Pal.Ok } else { $Pal.Text2 }) 'SemiBold'; $st.VerticalAlignment = 'Center'; $st.MinWidth = 80; $st.TextAlignment = 'Right'; $st.Margin = Th 12 0 0 0
+            $r = New-CheckRow ([bool]$x.Check) $txt $st
+            $r.Check.Add_Click({ & $script:CountFree })
+            Add-Child $list $r.Row
+            [void]$script:FreeRows.Add(@{ Item = $x; Check = $r.Check })
+        }
+    }
+    $more = New-Text "Tes gros fichiers perso (vidéos, images disque, sauvegardes) ne sont jamais touchés ici : « Voir tous les dossiers » les montre, du plus gros au plus petit." $Typo.Small $Pal.Faint; $more.Margin = Th 2 6 0 8; Add-Child $list $more
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 24 10 24 18
+    $rightBar = New-Object System.Windows.Controls.StackPanel; $rightBar.Orientation = 'Horizontal'; $rightBar.HorizontalAlignment = 'Right'; $rightBar.VerticalAlignment = 'Center'
+    $bAll = New-DlgButton 'Voir tous les dossiers' 'TextBtn'; $bAll.Margin = Th 0 0 8 0
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Margin = Th 0 0 8 0
+    $bApply = New-DlgButton 'Libérer' 'PrimaryBtn'; $script:FreeApply = $bApply
+    Add-Child $rightBar $bAll; Add-Child $rightBar $bClose; Add-Child $rightBar $bApply
+    [System.Windows.Controls.DockPanel]::SetDock($rightBar, 'Right'); Add-Child $bar $rightBar
+    $script:FreeAfter = New-Text '' $Typo.Strong $Pal.Ok 'SemiBold'; $script:FreeAfter.VerticalAlignment = 'Center'; $script:FreeAfter.Margin = Th 0 0 12 0
+    Add-Child $bar $script:FreeAfter
+    $script:CountFree = {
+        $gain = Get-FreeGain @($script:FreeRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item })
+        $script:FreeApply.IsEnabled = ($gain.Count -gt 0)
+        $script:FreeApply.Content = $(if ($gain.Bytes -gt 0) { "Libérer ≈ {0}" -f (Format-Size $gain.Bytes) } elseif ($gain.Count) { "Lancer ({0})" -f $gain.Count } else { 'Libérer' })
+        $script:FreeAfter.Text = $(if ($gain.Count) { "Après : ≈ {0} libres{1}" -f (Format-Size ([double]$script:FreeNow.Free + $gain.Bytes)), $(if ($gain.Unknown) { ' (et plus)' } else { '' }) } else { 'Coche ce que tu veux libérer.' })
+    }
+    $bAll.Add_Click({ $script:FreeGo = 'all'; $script:FreeWin.Close() })
+    $bClose.Add_Click({ $script:FreeWin.Close() })
+    $bApply.Add_Click({ $script:FreeChoice = @($script:FreeRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Item }); $script:FreeWin.Close() })
+    & $script:CountFree
+    $g2 = New-Object System.Windows.Controls.Grid
+    foreach ($hh in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($hh); $g2.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($sp, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($bar, 2)
+    Add-Child $g2 $sp; Add-Child $g2 $sv; Add-Child $g2 $bar
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight
+    $w.Content = $g2
+    [void]$w.ShowDialog()
+    if ($script:FreeGo -eq 'all') { Start-SpaceScan; return }
+    $sel = @($script:FreeChoice | Where-Object { $_ })
+    if (-not $sel.Count) { return }
+    $gain = Get-FreeGain $sel
+    $apps = @($sel | Where-Object { $_.Kind -in 'app', 'steam' })
+    $msg = "Libérer environ {0} ?`n`n{1}" -f (Format-Size $gain.Bytes), ((@($sel | ForEach-Object { "•  " + $_.T }) -join "`n"))
+    if ($apps.Count) { $msg += "`n`nLes {0} désinstallation(s) s'ouvriront l'une après l'autre à la fin : suis les étapes de chaque désinstalleur (ou de Steam)." -f $apps.Count }
+    if (@($sel | Where-Object { $_.Id -eq 'junk' }).Count) { $msg += "`n`nLe nettoyage de Windows peut prendre 10 à 30 minutes : laisse AEROX ouvert." }
+    if (@($sel | Where-Object { $_.Id -in 'recycle', 'winold' }).Count) { $msg += "`n`n⚠ Irréversible : " + ((@($sel | Where-Object { $_.Id -in 'recycle', 'winold' } | ForEach-Object { $_.T })) -join ', ') + '.' }
+    if (@($sel | Where-Object { $_.Id -eq 'win-drivers' }).Count) { $msg += "`n`nUn point de restauration est créé avant de supprimer les anciens pilotes." }
+    if (-not (Confirm-Box ($msg + "`n`nContinuer ?"))) { return }
+    # 1. Vieux installateurs → corbeille (avant le vidage de la corbeille, s'il est coché)
+    $script:FreeRecycled = [double]0
+    foreach ($o in @($sel | Where-Object { $_.Kind -eq 'oldinst' })) { $script:FreeRecycled += Send-FilesToRecycle @($o.Arg) }
+    # 2. Nettoyage et place gardée par Windows en arrière-plan, 3. désinstallations ensuite, une par une
+    $script:FreeQueue = New-Object System.Collections.ArrayList; foreach ($a in $apps) { [void]$script:FreeQueue.Add($a) }
+    $script:FreeEmptied = (@($sel | Where-Object { $_.Id -eq 'recycle' }).Count -gt 0)
+    $clean = @($sel | Where-Object { $_.Kind -eq 'clean' } | ForEach-Object { @($_.Arg) } | Where-Object { $_ } | Select-Object -Unique)
+    $win = @($sel | Where-Object { $_.Kind -eq 'win' } | ForEach-Object { "$($_.Arg)" })
+    if ($clean.Count -or $win.Count) {
+        $pre = if (@($sel | Where-Object { $_.Id -eq 'win-drivers' }).Count) { 'New-RestorePoint; ' } else { '' }
+        $act = $pre + "Invoke-FreeSpacePlan" + $(if ($clean.Count) { " -Clean " + (ConvertTo-PsList $clean) } else { '' }) + $(if ($win.Count) { " -Win " + (ConvertTo-PsList $win) } else { '' })
+        if ($script:FreeIssue) { $script:FreeIssue.Status = 'fixing'; $script:FixingIssue = $script:FreeIssue }
+        if (-not (Start-AeroxTask $act 'Libérer de la place' 'freedone')) { if ($script:FreeIssue) { $script:FreeIssue.Status = 'open'; $script:FixingIssue = $null } }
+    } else { Start-FreeUninstalls }
+}
+# Met des fichiers à la corbeille sans nouvelle question (choix déjà confirmé dans l'assistant) ; renvoie la taille déplacée
+function Send-FilesToRecycle($Files) {
+    $files = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_.Path) -and [AeroxSafeDelete]::IsDirectPath($_.Path) })
+    if (-not $files.Count) { return [double]0 }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $ok = 0; $moved = [double]0
+    foreach ($f in $files) {
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($f.Path, 'OnlyErrorDialogs', 'SendToRecycleBin'); if (-not (Test-Path -LiteralPath $f.Path)) { $ok++; $moved += $f.Size } } catch {}
+    }
+    Write-UiLog ("🗑 {0} vieux installateur(s) mis à la corbeille ({1})." -f $ok, (Format-Size $moved))
+    if ($ok) { Add-Change -Kind 'info' -Title ("{0} vieux installateur(s) mis à la corbeille ({1})" -f $ok, (Format-Size $moved)) -Detail "Récupérables depuis la corbeille tant qu'elle n'est pas vidée." }
+    return $moved
+}
+# Désinstallations choisies dans l'assistant : une à la fois, la suivante s'ouvre dès que la précédente est vraiment finie
+function Start-FreeUninstalls {
+    $q = @($script:FreeQueue | Where-Object { $_ })
+    if (-not $q.Count) { Show-FreeSummary; return }
+    $w = New-Dialog "$AppName : désinstallations" 620
+    $script:FqWin = $w; $script:FqRows = New-Object System.Collections.ArrayList; $script:FqIdx = -1
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Désinstallations" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Une fenêtre s'ouvre pour chaque jeu ou logiciel (son désinstalleur, ou Steam) : clique sur Désinstaller / Oui / Suivant dedans. Dès qu'il a vraiment disparu, le suivant s'ouvre tout seul." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    foreach ($x in $q) {
+        $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 0 0 6
+        $stt = New-Text 'En attente' $Typo.Small $Pal.Faint; $stt.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($stt, 'Right'); Add-Child $row $stt
+        Add-Child $row (New-Text ("{0}  ·  {1}" -f $x.T, (Format-Size $x.S)) $Typo.Body $Pal.Text)
+        Add-Child $sp $row
+        [void]$script:FqRows.Add(@{ Item = $x; Status = $stt; State = 'wait' })
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bSkip = New-DlgButton 'Passer au suivant' 'TextBtn'; $bSkip.Margin = Th 0 0 8 0
+    $bEnd = New-DlgButton 'Terminer' 'PrimaryBtn'
+    Add-Child $bar $bSkip; Add-Child $bar $bEnd; Add-Child $sp $bar
+    $script:FqNext = {
+        if ($script:FqIdx -ge 0) { $cur = $script:FqRows[$script:FqIdx]; if ($cur.State -eq 'run') { $cur.State = 'skip'; $cur.Status.Text = 'Passé'; $cur.Status.Foreground = Brush $Pal.Faint } }
+        $script:FqIdx++
+        while ($script:FqIdx -lt $script:FqRows.Count) {
+            $r = $script:FqRows[$script:FqIdx]; $x = $r.Item
+            try {
+                if ($x.Kind -eq 'steam') { Open-WinUri ("steam://uninstall/{0}" -f $x.Arg.AppId) }
+                else { Uninstall-App 'win32' $x.Arg.Cmd $x.Arg.Name ([bool]$x.Arg.PerUser) }
+                $r.State = 'run'; $r.Status.Text = 'Désinstalleur ouvert…'; $r.Status.Foreground = Brush $Pal.AccentText
+                Write-UiLog ("Désinstallation de « {0} » : suis les étapes de la fenêtre qui s'est ouverte." -f $x.T)
+                return
+            } catch {
+                $r.State = 'fail'; $r.Status.Text = 'Impossible ici'; $r.Status.Foreground = Brush $Pal.Warn; $r.Status.ToolTip = $_.Exception.Message
+                Write-UiLog ("❌ « {0} » : {1}" -f $x.T, $_.Exception.Message)
+                $script:FqIdx++
+            }
+        }
+        $script:FqWin.Close()
+    }
+    $bSkip.Add_Click({ & $script:FqNext })
+    $bEnd.Add_Click({ $script:FqWin.Close() })
+    $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromSeconds(2)
+    $t.Add_Tick({
+        try {
+            if ($script:FqIdx -lt 0 -or $script:FqIdx -ge $script:FqRows.Count) { return }
+            $r = $script:FqRows[$script:FqIdx]
+            if ($r.State -ne 'run') { return }
+            $gone = if ($r.Item.Kind -eq 'steam') { -not (Test-Path -LiteralPath $r.Item.Arg.Manifest) } else { -not $r.Item.Arg.Key -or -not (Test-Path -LiteralPath $r.Item.Arg.Key) }
+            if ($gone) {
+                $r.State = 'done'; $r.Status.Text = 'Désinstallé ✓'; $r.Status.Foreground = Brush $Pal.Ok
+                Add-Change -Kind 'info' -Title ("Désinstallation de « {0} »" -f $r.Item.T) -Detail "Pour le récupérer : réinstalle-le (depuis Steam ou son site officiel)."
+                & $script:FqNext
+            }
+        } catch {}
+    })
+    $w.Content = $sp
+    $w.Add_ContentRendered({ & $script:FqNext })
+    $t.Start()
+    [void]$w.ShowDialog()
+    $t.Stop()
+    Show-FreeSummary
+}
+# Bilan : place libérée depuis l'ouverture de l'assistant (tout compris : nettoyage, Windows, désinstallations)
+function Show-FreeSummary {
+    $now = $null; try { $now = [double](New-Object IO.DriveInfo $env:SystemDrive).TotalFreeSpace } catch {}
+    Update-HomeStats -KeepDrives; Refresh-Page
+    if ($null -eq $now) { return }
+    $freed = if ($null -ne $script:FreeStart) { [math]::Max([double]0, $now - [double]$script:FreeStart) } else { 0 }
+    $msg = "✅ {0} libérés.`n`nIl reste maintenant {1} de libre sur {2}." -f (Format-Size $freed), (Format-Size $now), $env:SystemDrive
+    if ($script:FreeRecycled -gt 0 -and -not $script:FreeEmptied) { $msg += "`n`nLes vieux installateurs ({0}) sont dans la corbeille : vide-la pour récupérer cette place aussi." -f (Format-Size $script:FreeRecycled) }
+    $msg += "`n`nUne désinstallation que tu as annulée ne compte pas : relance l'assistant quand tu veux."
+    Write-UiLog ("✅ Libérer de la place : {0} libérés, {1} libres sur {2}." -f (Format-Size $freed), (Format-Size $now), $env:SystemDrive)
+    if ($freed -gt 0) { Add-Change -Kind 'info' -Title ("Libérer de la place : {0} libérés" -f (Format-Size $freed)) -Detail ("Il reste {0} de libre sur {1}." -f (Format-Size $now), $env:SystemDrive) }
+    # Problème « disque presque plein » du diagnostic : réglé seulement si le disque n'est vraiment plus presque plein
+    if ($script:FreeIssue) {
+        $sz = 0.0; try { $sz = [double](New-Object IO.DriveInfo $env:SystemDrive).TotalSize } catch {}
+        $script:FreeIssue.Status = $(if ($sz -gt 0 -and (Get-SystemDiskLevel $now $sz) -notin 'crit', 'warn') { 'done' } else { 'open' })
+        $script:FreeIssue = $null; Update-DiagBadge; Refresh-Page
+    }
+    $script:FreeQueue = $null; $script:FreeRecycled = [double]0
+    $w = New-Dialog "$AppName : place libérée" 520
+    $script:FsWin = $w
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text ("{0} libérés" -f (Format-Size $freed)) $Typo.H2 $(if ($freed -gt 0) { $Pal.Ok } else { $Pal.White }) 'Bold')
+    $t = New-Text ($msg -replace '^✅ [^\n]*\n\n', '') $Typo.Body $Pal.Text2; $t.Margin = Th 0 8 0 14; Add-Child $sp $t
+    $b = New-DlgButton 'OK' 'PrimaryBtn'; $b.HorizontalAlignment = 'Right'; $b.Add_Click({ $script:FsWin.Close() }); Add-Child $sp $b
+    $w.Content = $sp
+    [void]$w.ShowDialog()
 }
 
 # Vieux installateurs des Téléchargements : à la corbeille (récupérables), après confirmation

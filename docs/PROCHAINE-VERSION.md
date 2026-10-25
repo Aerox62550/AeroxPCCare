@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 2.8.0 : assistant « Libérer de la place » (frère de Sam, disque plein, 25/10)
+
+- Demande de Sam : « une vraie option pour faciliter et vraiment retirer ce qui sert à rien sans galère ». Une seule fenêtre, liste triée par gain, groupes : sans risque (coché : fichiers inutiles, Windows.old), place gardée par Windows (cochée selon les règles existantes ; stockage réservé décoché si un redémarrage est en attente), tes fichiers (vieux installateurs → corbeille, corbeille ; jamais cochés), jeux Steam (lus dans les manifestes de toutes les bibliothèques, dernière partie notée par Steam) et logiciels pas lancés depuis 3 mois (jamais cochés). « Après : X libres » en direct, un seul bouton, une confirmation, nettoyage en arrière-plan puis désinstallations une par une (la suivante s'ouvre quand la précédente a vraiment disparu), bilan final.
+- Accueil : bandeau quand le disque de Windows est presque plein + tuile ; onglet Nettoyage : première carte ; le problème « disque presque plein » du diagnostic ouvre l'assistant.
+- Bug (rapport #27) : l'analyse de sécurité s'arrêtait de lire une clé Run après une ligne de démarrage vide (variable réutilisée). Test : deux lignes vides de suite.
+
 ## Publié en 2.7.2 : fausses alertes de l'analyse de sécurité (PC d'un pote, 25/10)
 
 - `AeroxPCCare_Setup.exe` lancé depuis Téléchargements signalé en critique (pas encore signé) : reconnu maintenant par son empreinte SHA-256, comparée à celles publiées par GitHub pour chaque version (liste publique lue, rien n'est envoyé). Jamais par le nom seul ; sans Internet, il reste signalé. Disparaîtra de toute façon avec la signature du 31/10.

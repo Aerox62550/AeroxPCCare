@@ -896,6 +896,8 @@ function Invoke-Smoke {
         [IO.File]::WriteAllText($tf, ('<?xml version="1.0" encoding="UTF-16"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Settings><Enabled>true</Enabled></Settings><Actions Context="Author"><Exec><Command>{0}</Command></Exec></Actions></Task>' -f $evilExe), [Text.Encoding]::Unicode)
         $rk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
         Set-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -Value '"C:\aerox\absent\rien.exe" --x'
+        # Deux lignes vides de suite : la 2e doit être lue aussi (bug 2.7.2 : l'analyse du registre s'arrêtait après la 1re)
+        Set-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide2' -Value '"C:\aerox\absent\rien2.exe"'
         try {
             $script:SecItems = New-Object System.Collections.ArrayList; $script:SecChecked = New-Object System.Collections.ArrayList; $script:SecSigCache = @{}; $script:SecDefOn = $true
             Get-SecAutoruns
@@ -904,6 +906,7 @@ function Invoke-Smoke {
             if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'tache-cachee' -and $_.Path -eq $evilExe -and $_.Sev -eq 'crit' }).Count) { throw "tâche cachée pas trouvée" }
             $lv = @($script:SecItems | Where-Object { $_.Rule -eq 'demarrage-vide' -and $_.Title -match 'AeroxTestLigneVide' })[0]
             if (-not $lv -or $lv.Sev -ne 'info' -or -not $lv.Fix) { throw "ligne de démarrage vide pas trouvée (ou sans correction)" }
+            if (-not @($script:SecItems | Where-Object { $_.Rule -eq 'demarrage-vide' -and $_.Title -match 'AeroxTestLigneVide2' }).Count) { throw "2e ligne de démarrage vide pas lue : l'analyse du registre s'est arrêtée en route" }
             if (@($script:SecItems | Where-Object { $_.Rule -in 'demarrage-vide' -and $_.Default }).Count) { throw "une ligne vide est cochée d'office" }
             $sync.SecReport = @{ Items = @($script:SecItems); Checked = @(); Verdict = (Get-SecVerdict $script:SecItems); Date = (Get-Date); Code = 'TEST27' }
             Repair-SecurityItems -Ids @($lv.Id)
@@ -921,6 +924,7 @@ function Invoke-Smoke {
             Remove-Item -LiteralPath "HKCU:\Software\Classes\CLSID\$clsid" -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tf -Force -ErrorAction SilentlyContinue
             Remove-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide' -ErrorAction SilentlyContinue
+            Remove-ItemProperty -LiteralPath $rk -Name 'AeroxTestLigneVide2' -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1133,6 +1137,52 @@ function Invoke-Smoke {
     Smoke 'Fenêtre : doublons' { Show-DuplicatesDialog }
     Smoke 'Espace disque' { Get-SpaceUsage 'C:'; foreach ($x in @($sync.SpaceScan.Win)) { Write-Host ("        Windows : {0} ≈ {1} (coché={2})" -f $x.T, (Format-Size $x.S), $x.Check) }; foreach ($x in @($sync.SpaceScan.Forgotten | Select-Object -First 5)) { if ($x.Name -isnot [string]) { throw "liste des logiciels oubliés mal construite" }; Write-Host ("        oublié : {0} {1}" -f $x.Name, (Format-Size $x.Size)) } }
     Smoke 'Fenêtre : espace disque' { Show-SpaceDialog }
+    # ---------------- Assistant « Libérer de la place » (2.8.0) : faux jeu Steam pas lancé depuis 6 mois, vieux installateur
+    $stRoot = 'C:\aerox\steamtest'; $stKey = "$((Get-SessionUser).Hkcu)\Software\Valve\Steam"
+    $stOld = $null; try { $stOld = (Get-ItemProperty -LiteralPath $stKey -Name SteamPath -ErrorAction Stop).SteamPath } catch {}
+    $oldInst = Join-Path (Get-SessionFolder 'Downloads') 'vieux-setup-test.exe'
+    try {
+        New-Item -ItemType Directory -Force -Path "$stRoot\steamapps\common\JeuTest" | Out-Null
+        $lp = [DateTimeOffset]::new((Get-Date).AddDays(-180)).ToUnixTimeSeconds()
+        [IO.File]::WriteAllText("$stRoot\steamapps\appmanifest_4242.acf", ("`"AppState`"`n{{`n`t`"appid`"`t`t`"4242`"`n`t`"name`"`t`t`"Jeu Test`"`n`t`"installdir`"`t`t`"JeuTest`"`n`t`"SizeOnDisk`"`t`t`"5368709120`"`n`t`"LastPlayed`"`t`t`"{0}`"`n}}" -f $lp))
+        [IO.File]::WriteAllText("$stRoot\steamapps\appmanifest_228980.acf", "`"AppState`"`n{`n`t`"appid`"`t`t`"228980`"`n`t`"name`"`t`t`"Steamworks Common Redistributables`"`n`t`"installdir`"`t`t`"Steamworks Shared`"`n`t`"SizeOnDisk`"`t`t`"2147483648`"`n}")
+        New-Item -Path $stKey -Force | Out-Null; Set-ItemProperty -LiteralPath $stKey -Name SteamPath -Value ($stRoot -replace '\\', '/')
+        $fs = [IO.File]::Create($oldInst); $fs.SetLength(30MB); $fs.Close(); (Get-Item -LiteralPath $oldInst).LastWriteTime = (Get-Date).AddDays(-60)
+        Smoke 'Libérer de la place : jeux Steam' {
+            $g = @(Get-SteamGames)
+            foreach ($x in $g) { Write-Host ("        {0} · {1} · dernière partie {2}" -f $x.Name, (Format-Size $x.Size), $x.LastUsed) }
+            $t = @($g | Where-Object { $_.AppId -eq '4242' })[0]
+            if (-not $t -or $t.Size -ne 5GB -or -not $t.LastUsed -or $t.LastUsed -gt (Get-Date).AddDays(-170)) { throw "faux jeu Steam mal lu" }
+            if (@($g | Where-Object { $_.AppId -eq '228980' }).Count) { throw "les composants Steam (Redistributables) ne sont pas des jeux" }
+        }
+        Smoke 'Libérer de la place : analyse' {
+            Get-FreeSpacePlan
+            $p = $sync.FreePlan; if (-not $p) { throw "pas de plan" }
+            foreach ($x in $p.Items) { Write-Host ("        [{0}] {1} · {2} · coché={3}" -f $x.Group, $x.T, $(if ($x.S -gt 0) { Format-Size $x.S } else { '?' }), $x.Check) }
+            $j = @($p.Items | Where-Object { $_.Id -eq 'junk' })[0]; if (-not $j -or -not $j.Check) { throw "fichiers inutiles absents ou pas cochés" }
+            $st = @($p.Items | Where-Object { $_.Id -eq 'steam-4242' })[0]; if (-not $st) { throw "jeu pas utilisé depuis 6 mois absent" }
+            if ($st.Check) { throw "un jeu ne doit jamais être coché d'office" }
+            $oi = @($p.Items | Where-Object { $_.Id -eq 'oldinst' })[0]; if (-not $oi -or $oi.Check) { throw "vieux installateur absent, ou coché d'office" }
+            $rc = @($p.Items | Where-Object { $_.Id -eq 'recycle' })[0]; if (-not $rc -or $rc.Check) { throw "corbeille absente, ou cochée d'office" }
+            if (@($p.Items | Where-Object { $_.Group -in 'files', 'apps' -and $_.Check }).Count) { throw "un fichier perso, un jeu ou un logiciel est coché d'office" }
+            # Le gain des vieux installateurs ne compte que si la corbeille est vidée aussi
+            if ((Get-FreeGain @($oi)).Bytes -ne 0) { throw "vieux installateurs comptés sans vider la corbeille" }
+            if ((Get-FreeGain @($oi, $rc)).Bytes -lt 30MB) { throw "vieux installateurs pas comptés avec la corbeille" }
+        }
+        Smoke 'Fenêtre : libérer de la place' { Show-FreeSpaceDialog }
+        Smoke 'Libérer de la place : désinstallations et bilan' {
+            $script:FreeStart = [double](New-Object IO.DriveInfo $env:SystemDrive).TotalFreeSpace
+            $script:FreeQueue = New-Object System.Collections.ArrayList
+            [void]$script:FreeQueue.Add(@{ Kind = 'app'; T = 'Logiciel test'; S = 1GB; Arg = @{ Name = 'Logiciel test'; Cmd = 'commande-inconnue'; Key = ''; PerUser = $false } })
+            Start-FreeUninstalls
+            if ($script:FreeQueue) { throw "file des désinstallations pas vidée après le bilan" }
+        }
+        if (Test-Path -LiteralPath $oldInst) { Write-Host "        vieux installateur toujours là (normal : la confirmation est refusée par le test)" }
+    } finally {
+        Remove-Item -LiteralPath $stRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $oldInst -Force -ErrorAction SilentlyContinue
+        if ($stOld) { Set-ItemProperty -LiteralPath $stKey -Name SteamPath -Value $stOld } else { Remove-ItemProperty -LiteralPath $stKey -Name SteamPath -ErrorAction SilentlyContinue }
+    }
     Smoke 'Bilan avant/après' {
         $s = Get-PcSnapshot; Write-Host ("        démarrage={0}s, démarrage auto={1}, fond={2}, autres disques={3}" -f $s.BootSec, $s.Startup, $s.Procs, (@($s.Drives.Keys) -join ' '))
         $r = ConvertTo-Hash ($s | ConvertTo-Json -Depth 4 | ConvertFrom-Json)

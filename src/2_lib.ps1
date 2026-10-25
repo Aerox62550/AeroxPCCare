@@ -82,7 +82,7 @@ function Start-AsSessionUser([string]$Exe, [string]$Arguments = '') {
 # sans droits admin. On passe par l'Explorateur, qui l'ouvre dans la session normale (sans droits admin).
 # Seulement les liens qu'AEROX utilise vraiment, en entier (pages des Paramètres, Sécurité Windows, Store, Steam, Caméra)
 function Test-WinUriAllowed([string]$Uri) {
-    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|microsoft\.windows\.camera:)\z')
+    return ($Uri -cmatch '^(ms-settings:[a-z0-9-]+|windowsdefender:(//[a-z]+)?|ms-windows-store://pdp/\?ProductId=[A-Z0-9]{12}|ms-availablenetworks:|steam://open/games|steam://uninstall/\d{1,10}|microsoft\.windows\.camera:)\z')
 }
 function Open-WinUri {
     [CmdletBinding()] param([string]$Uri)
@@ -2997,8 +2997,8 @@ function Test-Storage {
         $cause = if ($parts) { ($parts -join ', ') + " prennent de la place pour rien." } else { "Le disque est rempli par tes fichiers, jeux et logiciels." }
         Add-Issue -Id 'disk' -Sev $level -Title "Le disque $env:SystemDrive est presque plein" -Detail $detail -Cause $cause `
             -Effect "Avec si peu de place libre, Windows ralentit et les mises à jour peuvent échouer." `
-            -FixLabel "Nettoyer en profondeur" -UiFix 'clean' `
-            -Steps @("Lance le nettoyage approfondi (bouton vert) : tu choisis quoi supprimer, avec la taille de chaque catégorie.", "Onglet Nettoyage > « Ce qui prend de la place » : trouve les plus gros dossiers (jeux, vidéos, téléchargements).", "Désinstalle les jeux et logiciels que tu n'utilises plus, déplace vidéos et photos sur un autre disque.")
+            -FixLabel "Libérer de la place" -UiFix 'freespace' `
+            -Steps @("Clique sur « Libérer de la place » (bouton vert) : tout ce qui est sans risque est déjà coché, tu ajoutes les jeux et logiciels que tu n'utilises plus, et AEROX enchaîne tout.", "Pour voir tes plus gros dossiers et fichiers perso : « Voir tous les dossiers » dans la même fenêtre.", "Désinstalle les jeux et logiciels que tu n'utilises plus, déplace vidéos et photos sur un autre disque.")
     } else { Add-Ok "Disque $env:SystemDrive : $detail" }
     Log "   • Disque $env:SystemDrive (Windows) : $detail"
     # Les autres disques : internes et externes (USB), chacun affiché ; alerte si un disque interne ou externe fixe est plein
@@ -5048,6 +5048,147 @@ function Get-SpaceUsage([string]$Drive = $env:SystemDrive) {
     Log ("   ✔ Analyse terminée : {0} dossiers mesurés." -f @($lines | Where-Object { $_ -notmatch '^[FB]\|' }).Count)
 }
 
+# ---------------------------------------------------------------- ASSISTANT « LIBÉRER DE LA PLACE »
+# Tout ce qui peut libérer de la place sur le disque de Windows, en une seule liste triée par gain, avec ce qui est sans
+# risque coché d'office. Rien de perso n'est supprimé directement : corbeille seulement, et les jeux et logiciels passent
+# par leur vrai désinstalleur (ou par Steam).
+
+# Jeux Steam installés (toutes les bibliothèques) : nom, taille, dernière partie (notée par Steam)
+function Get-SteamGames {
+    $out = New-Object System.Collections.ArrayList
+    $roots = New-Object System.Collections.ArrayList
+    foreach ($k in @("$((Get-SessionUser).Hkcu)\Software\Valve\Steam", 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam', 'HKLM:\SOFTWARE\Valve\Steam')) {
+        try {
+            $v = Get-ItemProperty -LiteralPath $k -ErrorAction Stop
+            foreach ($p in @($v.SteamPath, $v.InstallPath)) { if ($p) { $q = ("$p" -replace '/', '\').TrimEnd('\'); if ($roots -notcontains $q -and (Test-Path -LiteralPath $q)) { [void]$roots.Add($q) } } }
+        } catch {}
+    }
+    $libs = New-Object System.Collections.ArrayList
+    foreach ($r in $roots) {
+        if ($libs -notcontains $r) { [void]$libs.Add($r) }
+        $vdf = Join-Path $r 'steamapps\libraryfolders.vdf'
+        if (-not (Test-Path -LiteralPath $vdf)) { continue }
+        foreach ($m in [regex]::Matches([IO.File]::ReadAllText($vdf), '"path"\s+"([^"]+)"')) {
+            $l = ($m.Groups[1].Value -replace '\\\\', '\').TrimEnd('\')
+            if ($l -and $libs -notcontains $l -and (Test-Path -LiteralPath $l)) { [void]$libs.Add($l) }
+        }
+    }
+    $seen = @{}
+    foreach ($l in $libs) {
+        foreach ($f in @(Get-ChildItem -LiteralPath (Join-Path $l 'steamapps') -Filter 'appmanifest_*.acf' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $t = [IO.File]::ReadAllText($f.FullName)
+                $g = @{}; foreach ($m in [regex]::Matches($t, '"(appid|name|installdir|SizeOnDisk|LastPlayed)"\s+"([^"]*)"')) { if (-not $g.ContainsKey($m.Groups[1].Value)) { $g[$m.Groups[1].Value] = $m.Groups[2].Value } }
+                if ("$($g.appid)" -notmatch '^\d{1,10}$' -or $seen.ContainsKey($g.appid)) { continue }
+                $seen[$g.appid] = $true
+                if ("$($g.name)" -match '(?i)redistributable|steamworks|proton|steam linux runtime') { continue }
+                $dir = Join-Path $l ("steamapps\common\{0}" -f $g.installdir)
+                $last = $null
+                if ("$($g.LastPlayed)" -match '^\d+$' -and [int64]$g.LastPlayed -gt 0) { $last = [DateTimeOffset]::FromUnixTimeSeconds([int64]$g.LastPlayed).LocalDateTime }
+                if ($null -eq $last) { $last = Get-FolderLastUsed $dir }
+                [void]$out.Add(@{ AppId = $g.appid; Name = "$($g.name)"; Size = [double]("0$($g.SizeOnDisk)" -replace '\D', ''); LastUsed = $last; Path = $dir; Manifest = $f.FullName
+                                  Drive = $(if ($dir -match '^([A-Za-z]:)') { $matches[1].ToUpper() } else { '' }) })
+            } catch {}
+        }
+    }
+    return @($out | Sort-Object { - $_.Size })
+}
+
+# Une ligne de l'assistant : Id (unique), Kind (clean, win, oldinst, recycle, steam, app), T (titre), D (explication),
+# S (octets, -1 si Windows le calcule), Est (estimation), Check (coché d'office), Arg, Group
+# Mise à jour Windows qui attend un redémarrage (Windows refuse alors de toucher au stockage réservé)
+function Test-RebootPending {
+    return ((Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
+            (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired'))
+}
+function New-FreeItem([string]$Id, [string]$Kind, [string]$Group, [string]$T, [string]$D, [double]$S, [bool]$Check, $Arg = $null, [bool]$Est = $false) {
+    return @{ Id = $Id; Kind = $Kind; Group = $Group; T = $T; D = $D; S = $S; Check = $Check; Arg = $Arg; Est = $Est }
+}
+function Get-FreeSpacePlan {
+    Step ("Recherche de tout ce qui peut libérer de la place sur {0}" -f $env:SystemDrive)
+    $sync.FreePlan = $null
+    $sd = $env:SystemDrive
+    $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$sd'"
+    $items = New-Object System.Collections.ArrayList
+    # 1. Fichiers inutiles (même analyse que le nettoyage approfondi) : une seule ligne pour tout ce qui est sans risque
+    $sync.CleanList = $null
+    try { Get-CleanupAnalysis } catch {}
+    $cl = @($sync.CleanList | Where-Object { $_ })
+    $safe = @($cl | Where-Object { $_.Id -in 'temp', 'browser', 'apps', 'wupdate', 'errors', 'windows', 'components' })
+    if ($safe.Count) {
+        $sz = [double](($safe | Where-Object { $_.Size -gt 0 } | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+        $open = @(Get-BrowserCacheDirs | Where-Object { Get-Process -Name $_.Proc -ErrorAction SilentlyContinue } | ForEach-Object { $_.Name })
+        [void]$items.Add((New-FreeItem 'junk' 'clean' 'auto' 'Fichiers inutiles de Windows et des logiciels' ("Temporaires, caches des navigateurs et des applis, mises à jour déjà installées, rapports de plantage, anciens composants de Windows. Aucun risque : tes fichiers, mots de passe et connexions ne sont pas touchés." + $(if ($open.Count) { " Ferme d'abord " + ($open -join ', ') + " pour que son cache soit vidé aussi." } else { '' })) $sz $true @($safe | ForEach-Object { $_.Id })))
+    }
+    $wo = @($cl | Where-Object { $_.Id -eq 'winold' })[0]
+    if ($wo -and $wo.Size -ge 100MB) {
+        [void]$items.Add((New-FreeItem 'winold' 'clean' 'auto' 'Ancienne version de Windows (Windows.old)' "Copie de l'ancien Windows gardée après une grosse mise à jour, pour revenir en arrière. Si le PC marche bien depuis, elle ne sert plus. Après, impossible de revenir à la version d'avant." ([double]$wo.Size) $true @('winold')))
+    }
+    if ($sync.Cancel) { return }
+    # 2. Place gardée par Windows (stockage réservé, veille prolongée, points de restauration, anciens pilotes, compression)
+    Log "   • Place gardée par Windows…"
+    try {
+        foreach ($w in @(Get-WindowsSpaceItems)) {
+            $arg = if ($w.Arg) { "{0}:{1}" -f $w.Id, $w.Arg } else { $w.Id }
+            $d = $w.D
+            if ($w.Id -eq 'reserved' -and (Test-RebootPending)) { $d = "Une mise à jour attend un redémarrage : Windows refusera de la libérer tant que le PC n'a pas redémarré. Redémarre, puis relance l'assistant." }
+            [void]$items.Add((New-FreeItem ("win-" + $w.Id) 'win' 'windows' $w.T $d ([double]$w.S) ([bool]$w.Check -and -not ($w.Id -eq 'reserved' -and (Test-RebootPending))) $arg ([bool]$w.Est)))
+        }
+    } catch {}
+    if ($sync.Cancel) { return }
+    # 3. Vieux installateurs et archives des Téléchargements (plus de 30 jours) → corbeille
+    Log "   • Téléchargements…"
+    $old = New-Object System.Collections.ArrayList
+    try {
+        $dl = Get-SessionFolder 'Downloads'
+        if ($dl -and $dl.StartsWith($sd, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $dl)) {
+            foreach ($f in @(Get-ChildItem -LiteralPath $dl -File -Force -ErrorAction SilentlyContinue)) {
+                if ($f.Extension -match '(?i)^\.(exe|msi|iso|img|zip|rar|7z)$' -and $f.LastWriteTime -lt (Get-Date).AddDays(-30) -and [AeroxSafeDelete]::IsDirectPath($f.FullName)) { [void]$old.Add(@{ Path = $f.FullName; Size = [double]$f.Length; Date = $f.LastWriteTime }) }
+            }
+        }
+    } catch {}
+    $ot = [double](($old | ForEach-Object { $_.Size } | Measure-Object -Sum).Sum)
+    if ($old.Count -and $ot -ge 20MB) {
+        $names = (@($old | Sort-Object { - $_.Size } | Select-Object -First 3 | ForEach-Object { [IO.Path]::GetFileName($_.Path) }) -join ', ') + $(if ($old.Count -gt 3) { " et $($old.Count - 3) autre(s)" } else { '' })
+        [void]$items.Add((New-FreeItem 'oldinst' 'oldinst' 'files' ("{0} vieux installateur(s) et archive(s) dans Téléchargements" -f $old.Count) ("Fichiers d'installation de plus d'un mois, déjà utilisés : {0}. Ils vont à la corbeille (récupérables tant qu'elle n'est pas vidée)." -f $names) $ot $false @($old)))
+    }
+    # 4. Corbeille
+    $rc = @($cl | Where-Object { $_.Id -eq 'recycle' })[0]
+    $rsz = if ($rc) { [double]$rc.Size } else { 0.0 }
+    [void]$items.Add((New-FreeItem 'recycle' 'clean' 'files' 'Vider la corbeille' "Les fichiers déjà supprimés prennent encore de la place tant que la corbeille n'est pas vidée. Vérifie avant qu'il n'y a rien dedans dont tu as besoin : après, ils ne sont plus récupérables." $rsz $false @('recycle')))
+    if ($sync.Cancel) { return }
+    # 5. Jeux Steam et logiciels pas lancés depuis 3 mois (sur le disque de Windows)
+    Log "   • Jeux et logiciels pas utilisés depuis 3 mois…"
+    $limit = (Get-Date).AddDays(-90)
+    $fmtLast = { param($d) if ($d) { "dernière utilisation le " + (Format-Date $d) } else { "pas lancé depuis au moins 3 mois" } }
+    try {
+        foreach ($g in @(Get-SteamGames | Where-Object { $_.Drive -eq $sd.ToUpper() -and $_.Size -ge 1GB })) {
+            if ($null -ne $g.LastUsed -and $g.LastUsed -ge $limit) { continue }
+            [void]$items.Add((New-FreeItem ("steam-" + $g.AppId) 'steam' 'apps' ("{0} (jeu Steam)" -f $g.Name) ((& $fmtLast $g.LastUsed) + ". Steam te demandera de confirmer. Tes sauvegardes restent sur ton compte Steam : tu pourras le retélécharger quand tu veux.") $g.Size $false @{ AppId = $g.AppId; Name = $g.Name; Manifest = $g.Manifest }))
+        }
+    } catch {}
+    try {
+        $inst = @(Get-InstalledApps | ForEach-Object { $_ })
+        foreach ($a in @(Get-ForgottenApps $sd @() | Where-Object { $_.Kind -eq 'app' })) {
+            $full = @($inst | Where-Object { $_.Name -eq $a.Name -and $_.Kind -eq 'win32' })[0]
+            if (-not $full -or -not $full.Cmd) { continue }
+            [void]$items.Add((New-FreeItem ("app-" + [math]::Abs($a.Name.GetHashCode())) 'app' 'apps' $a.Name ((& $fmtLast $a.LastUsed) + ". Son désinstalleur officiel s'ouvrira : suis ses étapes.") ([double]$a.Size) $false @{ Name = $full.Name; Cmd = $full.Cmd; Key = $full.Key; PerUser = [bool]$full.PerUser }))
+        }
+    } catch {}
+    $sync.FreePlan = @{ Drive = $sd; Size = [double]$disk.Size; Free = [double]$disk.FreeSpace; Items = @($items | Sort-Object { - $_.S }); RebootPending = (Test-RebootPending) }
+    $tot = [double](($items | Where-Object { $_.Check -and $_.S -gt 0 } | ForEach-Object { $_.S } | Measure-Object -Sum).Sum)
+    Log ("   ✔ {0} piste(s) trouvée(s), environ {1} libérables sans risque." -f $items.Count, (Format-Size $tot))
+}
+# Fait le ménage choisi dans l'assistant : fichiers inutiles et place gardée par Windows (les désinstallations suivent dans la fenêtre)
+function Invoke-FreeSpacePlan([string[]]$Clean = @(), [string[]]$Win = @()) {
+    $free0 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
+    $Clean = @($Clean | Where-Object { $_ -in 'temp', 'browser', 'apps', 'wupdate', 'errors', 'windows', 'components', 'winold', 'recycle' })
+    if ($Clean.Count -and -not $sync.Cancel) { Invoke-DeepClean -Ids $Clean }
+    if (@($Win).Count -and -not $sync.Cancel) { Invoke-WindowsSpace -Items $Win }
+    $free1 = [double](Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'").FreeSpace
+    $sync.FreeDone = @{ Freed = [math]::Max([double]0, $free1 - $free0); Free = $free1 }
+}
+
 # ---------------------------------------------------------------- ÉTATS (affichés sur les cartes)
 $script:PowerBalanced = '381b4222-f694-41f0-9685-ff5bb260df2e'
 function Get-PowerStatus {
@@ -6554,11 +6695,11 @@ function Get-SecAutoruns {
                     # Ligne qui lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé)
                     $tgt = Resolve-SecPath $cmd $rt.Profile
                     if ($tgt -match '^[A-Za-z]:\\' -and ($tgt -split '\\')[-1] -notmatch $script:SecHostExe -and (Test-Path -LiteralPath $tgt.Substring(0, 3)) -and -not (Test-Path -LiteralPath $tgt)) {
-                        $key = "{0}\{1}" -f $(if ($rt.Session) { $su.Hkcu } else { $rt.Hk }), $s[0]
+                        $fixKey = "{0}\{1}" -f $(if ($rt.Session) { $su.Hkcu } else { $rt.Hk }), $s[0]
                         $canFix = ($rt.Machine -or $rt.Session) -and $s[0] -notmatch 'Policies'
                         Add-SecItem -Rule 'demarrage-vide' -Cat 'autorun' -Sev 'info' -Title ("Ligne de démarrage vide : {0}" -f $n) -Path $tgt `
                             -Why "Elle lance un fichier qui n'existe plus (reste d'un programme désinstallé ou d'un virus supprimé). Elle ne lance rien, mais un virus pourrait la réutiliser." `
-                            -Todo "Retire-la si tu ne reconnais pas ce nom." -Fix $(if ($canFix) { @(@{ Kind = 'runvalue'; Key = $key; Name = $n }) } else { @() }) -FixLabel 'Retirer la ligne'
+                            -Todo "Retire-la si tu ne reconnais pas ce nom." -Fix $(if ($canFix) { @(@{ Kind = 'runvalue'; Key = $fixKey; Name = $n }) } else { @() }) -FixLabel 'Retirer la ligne'
                     }
                     continue
                 }
