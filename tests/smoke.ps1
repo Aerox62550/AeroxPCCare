@@ -775,6 +775,20 @@ function Invoke-Smoke {
     if ($script:Diag) { foreach ($i in $script:Diag.Issues) { Write-Host ("        problème : [{0}] {1} — {2}" -f $i.Cat, $i.Title, $i.Detail) } }
     Smoke-Page 'diag'
     Smoke-Page 'home'
+    # Place libérée hors d'AEROX (corbeille vidée, jeu désinstallé) : la tuile de l'accueil doit suivre sans redémarrer
+    Smoke 'Accueil : espace libre relu sans redémarrer' {
+        $big = Join-Path $env:TEMP 'aerox-smoke-espace.bin'
+        Show-Page 'home'; Update-HomeStats -KeepDrives; $avant = $script:SysDiskSig
+        $fs = [IO.File]::Create($big); $fs.SetLength(600MB); $fs.Close()
+        $script:DiskCheckAt = (Get-Date).AddMinutes(-1); Sync-HomeDisk
+        $plein = $script:SysDiskSig
+        Remove-Item -LiteralPath $big -Force
+        Show-Page 'clean'; Show-Page 'home'
+        $apres = $script:SysDiskSig
+        Write-Host ("        espace libre (x 100 Mo) : avant {0}, fichier de 600 Mo {1}, supprimé {2} ; tuile « {3} »" -f $avant, $plein, $apres, $script:Stats.DISK.V)
+        if ($avant - $plein -lt 5) { throw "la tuile n'a pas suivi les 600 Mo écrits" }
+        if ($apres - $plein -lt 5) { throw "la tuile n'a pas suivi la place libérée" }
+    }
     # Faux profil Chrome : vérifie le blocage des notifications sur un vrai Windows
     $chrome = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data\Default'
     New-Item -ItemType Directory -Force -Path $chrome | Out-Null
