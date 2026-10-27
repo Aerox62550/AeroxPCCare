@@ -3647,7 +3647,9 @@ function Get-Displays {
         $n++
         $mon = $f[1]; if ($mon -match '(?i)generic|générique|^$|pnp') { $mon = '' }
         $label = $(if ($f[6] -eq '1') { 'Écran principal' } else { "Écran $n" }) + $(if ($mon) { " ($mon)" } else { '' })
-        [void]$list.Add(@{ Device = $f[0]; Name = $label; Width = [int]$f[2]; Height = [int]$f[3]; Hz = [int]$f[4]; MaxHz = [int]$f[5]; Primary = ($f[6] -eq '1') })
+        [void]$list.Add(@{ Device = $f[0]; Name = $label; Width = [int]$f[2]; Height = [int]$f[3]; Hz = [int]$f[4]; MaxHz = [int]$f[5]; Primary = ($f[6] -eq '1')
+                           MaxW = $(if ($f.Count -gt 8) { [int]$f[7] } else { 0 }); MaxH = $(if ($f.Count -gt 8) { [int]$f[8] } else { 0 })
+                           MonId = $(if ($f.Count -gt 9) { $f[9] } else { '' }); Gpu = $(if ($f.Count -gt 10) { $f[10] } else { '' }) })
     }
     return $list.ToArray()
 }
@@ -3668,6 +3670,48 @@ function Get-GameContext([string]$Device = '') {
     } catch {}
     $sync.GameCtx = $c
 }
+# Vraie résolution d'un écran, lue dans sa fiche EDID (écrite par le fabricant dans l'écran) : le mode « préféré ».
+# Fiche de base (1re description détaillée, 4095 pixels de large au plus) puis extension DisplayID (écrans 5K, 8K…),
+# où seul un mode marqué « préféré » compte. Renvoie @{ W; H } ou $null si la fiche est illisible.
+function Get-EdidNative([byte[]]$E) {
+    if (-not $E -or $E.Length -lt 128) { return $null }
+    if ($E[0] -ne 0 -or $E[1] -ne 0xFF -or $E[7] -ne 0) { return $null }   # en-tête EDID 00 FF FF FF FF FF FF 00
+    $best = $null
+    if (($E[54] -bor $E[55]) -ne 0) {
+        $w = [int]$E[56] + (([int]$E[58] -shr 4) -shl 8); $h = [int]$E[59] + (([int]$E[61] -shr 4) -shl 8)
+        if ($w -ge 320 -and $h -ge 200) { $best = @{ W = $w; H = $h } }
+    }
+    for ($b = 128; $b + 128 -le $E.Length; $b += 128) {
+        if ($E[$b] -ne 0x70) { continue }   # extension DisplayID
+        $end = [math]::Min($b + 5 + [int]$E[$b + 2], $b + 127)
+        $o = $b + 5
+        while ($o + 3 -le $end) {
+            $tag = [int]$E[$o]; $len = [int]$E[$o + 2]
+            if ($tag -eq 0 -and $len -eq 0) { break }
+            if ($tag -in 0x03, 0x22) {   # descriptions détaillées (DisplayID 1.x type I, 2.0 type VII), 20 octets chacune
+                for ($t = $o + 3; $t + 20 -le [math]::Min($o + 3 + $len, $end + 1); $t += 20) {
+                    if (($E[$t + 3] -band 0x80) -eq 0) { continue }   # pas le mode préféré
+                    $w = [int]$E[$t + 4] + ([int]$E[$t + 5] -shl 8) + 1; $h = [int]$E[$t + 12] + ([int]$E[$t + 13] -shl 8) + 1
+                    if ($w -ge 320 -and $h -ge 200 -and (-not $best -or $w * $h -gt $best.W * $best.H)) { $best = @{ W = $w; H = $h } }
+                }
+            }
+            $o += 3 + $len
+        }
+    }
+    return $best
+}
+# Fiche EDID d'un écran branché, d'après son identifiant Windows (\\?\DISPLAY#GSM5B7F#5&…#{…})
+function Get-MonitorEdid([string]$MonId) {
+    if ($MonId -notmatch '(?i)^\\\\\?\\DISPLAY#([^#]+)#([^#]+)#') { return $null }
+    $k = "HKLM:\SYSTEM\CurrentControlSet\Enum\DISPLAY\{0}\{1}\Device Parameters" -f $matches[1], $matches[2]
+    try { $v = (Get-ItemProperty -LiteralPath $k -Name EDID -ErrorAction Stop).EDID; if ($v -is [byte[]]) { return $v } } catch {}
+    return $null
+}
+# Écran bridé : Windows ne propose même pas sa vraie résolution (câble, port ou carte graphique qui ne suivent pas)
+function Test-DisplayCapped($Native, [int]$MaxW, [int]$MaxH) {
+    if (-not $Native -or $MaxW -le 0 -or $MaxH -le 0) { return $false }
+    return ([double]$MaxW * $MaxH -lt 0.95 * [double]$Native.W * $Native.H)
+}
 function Test-DisplayHzLow($d) { return ($d.MaxHz -ge 100 -and ($d.MaxHz - $d.Hz) -ge 20) }
 function Test-Display {
     foreach ($d in @(Get-Displays)) {
@@ -3679,6 +3723,15 @@ function Test-Display {
                 -Steps @("Clique sur le bouton : l'écran passe à $($d.MaxHz) Hz. Si l'image ne s'affiche pas bien, ne touche à rien : l'ancien réglage revient tout seul au bout de 15 secondes.", "Si l'option n'apparaît pas ou ne tient pas : vérifie le câble (DisplayPort ou HDMI 2.0 minimum pour les hautes fréquences).")
             $script:Issues[$script:Issues.Count - 1].Display = $d
         } else { Add-Ok ("{0} : {1} Hz{2}" -f $d.Name, $d.Hz, $(if ($d.Hz -ge $d.MaxHz) { ' (le maximum possible)' } else { '' })) }
+        # Résolution bridée par le câble (HDMI trop ancien), le port ou la carte graphique
+        if ($d.Gpu -match '(?i)basic display|de base|remote|virtual|hyper-v|vmware|virtualbox|parsec|citrix|qxl') { continue }
+        $nat = Get-EdidNative (Get-MonitorEdid $d.MonId)
+        if (Test-DisplayCapped $nat $d.MaxW $d.MaxH) {
+            Add-Issue -Id ("res" + ($d.Device -replace '\W', '')) -Sev 'warn' -Title ("{0} est bridé : {1} x {2} au lieu de {3} x {4}" -f $d.Name, $d.MaxW, $d.MaxH, $nat.W, $nat.H) -Detail ("Vraie résolution de l'écran : {0} x {1}" -f $nat.W, $nat.H) `
+                -Cause ("L'écran annonce {0} x {1}, mais Windows ne peut même pas le régler plus haut que {2} x {3} : le câble, le port utilisé ou la carte graphique ne laissent pas passer assez de débit. Le plus souvent : un vieux câble HDMI, ou un adaptateur." -f $nat.W, $nat.H, $d.MaxW, $d.MaxH) `
+                -Effect "Image moins nette (pixels étirés), moins de place à l'écran, et parfois une fréquence plus basse." `
+                -Steps @("Branche l'écran avec un câble DisplayPort (ou un câble HDMI « Ultra High Speed » / HDMI 2.1 si l'écran n'a que du HDMI).", "Branche-le sur la carte graphique (ports à l'horizontale, en bas du PC), pas sur la carte mère.", "Évite les adaptateurs (HDMI vers DisplayPort, etc.) et les rallonges.", "Ensuite : Paramètres > Système > Écran > Résolution, choisis $($nat.W) x $($nat.H) (recommandé).")
+        } elseif ($nat) { Add-Ok ("{0} : {1} x {2} possible (sa vraie résolution)" -f $d.Name, $nat.W, $nat.H) }
     }
 }
 function Set-DisplayHz([string]$Device, [int]$Hz) {
@@ -4258,6 +4311,49 @@ function Get-DiskTempLimit([string]$MediaType, [string]$BusType) {
     if ("$MediaType" -match '(?i)^HDD$') { return 60 }
     return 70
 }
+# ---- SSD NVMe bridé : lien PCIe plus lent que ce que le SSD sait faire
+# Débit théorique par ligne PCIe (Mo/s) : Gen1 250, Gen2 500, Gen3 985, Gen4 1969, Gen5 3938
+$script:PcieLane = @{ 1 = 250; 2 = 500; 3 = 985; 4 = 1969; 5 = 3938 }
+# Signalé seulement quand c'est sûr : moins de lignes que prévu (x1 / x2 au lieu de x4), ou un SSD Gen3 ou plus qui tourne
+# en Gen1 / Gen2. Un SSD Gen4 dans un emplacement Gen3 n'est PAS signalé : c'est la limite normale de la carte mère.
+function Get-PcieLinkVerdict([int]$CurSpeed, [int]$CurWidth, [int]$MaxSpeed, [int]$MaxWidth) {
+    if ($CurSpeed -lt 1 -or $CurWidth -lt 1 -or $MaxSpeed -lt 1 -or $MaxWidth -lt 1) { return $null }
+    if (-not $script:PcieLane.ContainsKey($CurSpeed) -or -not $script:PcieLane.ContainsKey($MaxSpeed)) { return $null }
+    $narrow = ($CurWidth -lt $MaxWidth)
+    $slow = ($CurSpeed -le 2 -and $MaxSpeed -ge 3)
+    if (-not $narrow -and -not $slow) { return $null }
+    $cur = $script:PcieLane[$CurSpeed] * $CurWidth
+    $expGen = [math]::Max($CurSpeed, [math]::Min($MaxSpeed, 3))
+    $exp = $script:PcieLane[$expGen] * $MaxWidth
+    if ($exp -lt 1.8 * $cur) { return $null }
+    return @{ Cur = $cur; Exp = $exp; Ratio = [math]::Round($exp / $cur); Narrow = $narrow; Slow = $slow; Text = ("PCIe Gen{0} x{1} au lieu de Gen{2} x{3}" -f $CurSpeed, $CurWidth, $expGen, $MaxWidth) }
+}
+function Test-NvmeLink {
+    $laptop = [bool](Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue)
+    foreach ($c in @(Get-PnpDevice -PresentOnly -Class SCSIAdapter -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'PCI\*' })) {
+        try {
+            $props = @{}
+            foreach ($p in @(Get-PnpDeviceProperty -InstanceId $c.InstanceId -ErrorAction Stop | Where-Object { $_.KeyName -match '^DEVPKEY_(PciDevice_(Current|Max)Link(Speed|Width)|Device_Children)$' })) { $props[$p.KeyName] = $p.Data }
+            # Seulement un contrôleur qui porte un disque (SSD NVMe), pas un contrôleur RAID ou autre
+            $disk = $null
+            foreach ($ch in @($props['DEVPKEY_Device_Children'] | Where-Object { $_ })) {
+                $dd = Get-PnpDevice -InstanceId $ch -ErrorAction SilentlyContinue
+                if ($dd -and $dd.Class -eq 'DiskDrive') { $disk = $dd; break }
+            }
+            if (-not $disk) { continue }
+            $v = Get-PcieLinkVerdict ([int]$props['DEVPKEY_PciDevice_CurrentLinkSpeed']) ([int]$props['DEVPKEY_PciDevice_CurrentLinkWidth']) ([int]$props['DEVPKEY_PciDevice_MaxLinkSpeed']) ([int]$props['DEVPKEY_PciDevice_MaxLinkWidth'])
+            $name = "$($disk.FriendlyName)"
+            if (-not $v) { Log ("   • {0} : lien PCIe Gen{1} x{2} (normal)" -f $name, $props['DEVPKEY_PciDevice_CurrentLinkSpeed'], $props['DEVPKEY_PciDevice_CurrentLinkWidth']); continue }
+            # Portable : le fabricant câble parfois le SSD en x2 exprès, rien à changer
+            if ($laptop) { Log ("   • {0} : {1} (câblage choisi par le fabricant du portable)" -f $name, $v.Text); continue }
+            Add-Issue -Id ("pcie" + ($c.InstanceId -replace '\W', '').Substring(0, [math]::Min(24, ($c.InstanceId -replace '\W', '').Length))) -Sev 'warn' `
+                -Title ("Le SSD « {0} » est bridé : environ {1} fois plus lent que prévu" -f $name, $v.Ratio) -Detail ("{0} : {1} Mo/s au plus au lieu d'environ {2} Mo/s" -f $v.Text, $v.Cur, $v.Exp) `
+                -Cause $(if ($v.Narrow) { "Il n'a pas toutes ses lignes PCIe : il est branché dans un emplacement M.2 moins rapide, ou qui partage ses lignes avec autre chose (port SATA, 2e emplacement M.2, carte graphique)." } else { "Il tourne en PCIe d'ancienne génération : emplacement M.2 moins rapide, réglage du BIOS, ou carte d'extension (adaptateur PCIe) trop ancienne." }) `
+                -Effect "Chargements des jeux, démarrage et copies de fichiers beaucoup plus lents que ce que ton SSD sait faire." `
+                -Steps @("Ouvre le manuel de ta carte mère (site du fabricant), section « M.2 » : il dit quel emplacement est le plus rapide (souvent celui près du processeur) et ce qui partage ses lignes.", "Éteins le PC, débranche-le, et déplace le SSD dans l'emplacement M.2 le plus rapide. Windows et tes fichiers restent dessus.", "Dans le BIOS, laisse l'emplacement M.2 en « Auto » (pas en Gen1 / Gen2).", "Si un emplacement partage ses lignes avec des ports SATA, débranche le disque SATA concerné ou change-le de port.")
+        } catch {}
+    }
+}
 function Test-DiskHealth {
     try {
         $sysNum = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop | Get-Disk).Number
@@ -4340,6 +4436,7 @@ function Test-DiskHealth {
                 -FixLabel "Vérifier le disque" -FixAction 'Test-Disk' -Steps @("Lance la vérification du disque (bouton vert) : Windows répare au prochain redémarrage si besoin.")
         }
         if (-not $bad.Count -and $retry.Count -lt 5 -and -not $fs.Count) { Add-Ok "Aucune erreur de lecture des disques ce mois-ci" }
+        try { Test-NvmeLink } catch {}
         # Disques avec une lettre que Windows ne relie à aucun disque physique (clés USB, certains boîtiers externes) : santé non lisible
         foreach ($d in @(Get-DriveList | Where-Object { -not $seen.ContainsKey($_.Id) })) {
             Log ("   • {0} : santé non lisible par Windows (souvent une clé USB ou un boîtier externe)" -f $d.Id)

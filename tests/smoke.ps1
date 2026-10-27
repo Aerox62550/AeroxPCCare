@@ -89,6 +89,30 @@ function Invoke-Smoke {
     $script:NoAnim = $true   # pas d'animation d'apparition : les captures doivent montrer la page entière
     Write-Host ("== Démarrage jusqu'à la fenêtre affichée : {0:N1} s · {1}" -f ((Get-Date) - (Get-Process -Id $PID).StartTime).TotalSeconds, (Get-SmokeMem))
     Smoke 'Nouveau : place gardée par Windows' { $x = @(Get-WindowsSpaceItems); foreach ($i in $x) { Write-Host ("        {0} ≈ {1}" -f $i.T, (Format-Size $i.S)) } }
+    # 2.9.0 : SSD NVMe bridé (lien PCIe) et écran bridé par le câble (fiche EDID)
+    Smoke 'Matériel bridé : règles' {
+        $bad = @()
+        $mk = { param([int]$W, [int]$H, [int]$IdW, [int]$IdH)
+            $e = New-Object byte[] $(if ($IdW) { 256 } else { 128 })
+            for ($i = 1; $i -le 6; $i++) { $e[$i] = 0xFF }
+            $e[54] = 0x10; $e[55] = 0x27; $e[56] = $W -band 0xFF; $e[58] = (($W -shr 8) -shl 4); $e[59] = $H -band 0xFF; $e[61] = (($H -shr 8) -shl 4)
+            if ($IdW) { $e[128] = 0x70; $e[130] = 23; $e[133] = 0x22; $e[135] = 20; $e[136] = 1; $e[139] = 0x80; $e[140] = ($IdW - 1) -band 0xFF; $e[141] = ($IdW - 1) -shr 8; $e[148] = ($IdH - 1) -band 0xFF; $e[149] = ($IdH - 1) -shr 8 }
+            return ,$e }
+        $n = Get-EdidNative (& $mk 3440 1440 0 0); if (-not $n -or $n.W -ne 3440 -or $n.H -ne 1440) { $bad += "EDID de base mal lue" }
+        $n = Get-EdidNative (& $mk 3840 2160 5120 2160); if (-not $n -or $n.W -ne 5120 -or $n.H -ne 2160) { $bad += "EDID DisplayID (5K2K) mal lue" }
+        if (-not (Test-DisplayCapped $n 3440 1440)) { $bad += "écran 5K2K limité à 3440x1440 pas signalé" }
+        if (Test-DisplayCapped $n 5120 2160) { $bad += "écran à sa vraie résolution signalé" }
+        if (Test-DisplayCapped $n 7680 2160) { $bad += "résolution plus grande (DSR / VSR) signalée" }
+        if ($null -ne (Get-EdidNative ([byte[]](1..128)))) { $bad += "fiche EDID invalide acceptée" }
+        if ($null -ne (Get-PcieLinkVerdict 3 4 4 4)) { $bad += "SSD Gen4 dans un emplacement Gen3 signalé (c'est normal)" }
+        if ($null -ne (Get-PcieLinkVerdict 4 4 4 4)) { $bad += "SSD à pleine vitesse signalé" }
+        $v = Get-PcieLinkVerdict 1 1 3 4; if (-not $v -or $v.Ratio -ne 16) { $bad += "SSD Gen1 x1 pas signalé" }
+        $v = Get-PcieLinkVerdict 3 2 3 4; if (-not $v -or -not $v.Narrow) { $bad += "SSD en x2 au lieu de x4 pas signalé" }
+        $v = Get-PcieLinkVerdict 2 4 4 4; if (-not $v -or -not $v.Slow) { $bad += "SSD Gen4 en Gen2 pas signalé" }
+        if ($bad.Count) { throw ($bad -join ' | ') }
+        foreach ($d in @(Get-Displays)) { $nat = Get-EdidNative (Get-MonitorEdid $d.MonId); Write-Host ("        {0} : max {1}x{2}, fiche EDID {3}, carte {4}" -f $d.Name, $d.MaxW, $d.MaxH, $(if ($nat) { "$($nat.W)x$($nat.H)" } else { 'illisible' }), $d.Gpu) }
+        Test-NvmeLink
+    }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
     Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
     # ---- Audit du 21/10/2026 : chaque défaut corrigé a son test (il échoue si le défaut revient)

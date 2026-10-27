@@ -2680,6 +2680,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '2.9.0' = @("Diagnostic : AEROX repère un SSD NVMe bridé (branché dans un emplacement M.2 trop lent, il peut être 2 à 16 fois plus lent que prévu) et te dit où le déplacer.",
+                "Diagnostic : AEROX repère un écran bridé par son câble (par exemple un vieux câble HDMI qui empêche d'avoir la vraie résolution de l'écran).")
     '2.8.0' = @("Nouveau : « Libérer de la place » (accueil et onglet Nettoyage). Une seule liste de tout ce qui peut partir, du plus gros au plus petit : ce qui est sans risque est déjà coché, tu ajoutes les jeux et logiciels que tu n'utilises plus, un bouton et AEROX enchaîne tout, avec un bilan à la fin.",
                 "Quand le disque de Windows est presque plein, l'accueil te le dit et te propose de libérer de la place en un clic.",
                 "Analyse de sécurité : correction d'un bug qui arrêtait la lecture du registre de démarrage après une ligne vide.")

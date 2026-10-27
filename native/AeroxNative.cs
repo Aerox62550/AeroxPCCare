@@ -1032,8 +1032,9 @@ public static class AeroxDisplay {
     const int ENUM_CURRENT_SETTINGS = -1, DM_DISPLAYFREQUENCY = 0x400000, DM_INTERLACED = 2;
     const int CDS_UPDATEREGISTRY = 1, CDS_TEST = 2;
     const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 1, DISPLAY_DEVICE_PRIMARY_DEVICE = 4;
+    const int EDD_GET_DEVICE_INTERFACE_NAME = 1;
 
-    // Une ligne par écran : "nom_windows|nom_écran|largeur|hauteur|Hz_actuel|Hz_max|principal(0/1)"
+    // Une ligne par écran : "nom_windows|nom_écran|largeur|hauteur|Hz_actuel|Hz_max|principal(0/1)|largeur_max|hauteur_max|id_écran|carte_graphique"
     public static string[] List() {
         List<string> outp = new List<string>();
         for (int i = 0; i < 16; i++) {
@@ -1049,10 +1050,22 @@ public static class AeroxDisplay {
                     && (m.dmDisplayFlags & DM_INTERLACED) == 0 && m.dmDisplayFrequency > max && m.dmDisplayFrequency < 1000) max = m.dmDisplayFrequency;
                 m = NewMode();
             }
+            // Plus grande résolution que Windows propose pour cet écran (le câble, le port ou la carte graphique peuvent la limiter)
+            int mw = cur.dmPelsWidth, mh = cur.dmPelsHeight;
+            DEVMODE r = NewMode();
+            for (int k = 0; EnumDisplaySettings(ad.DeviceName, k, ref r); k++) {
+                if ((r.dmDisplayFlags & DM_INTERLACED) == 0 && (long)r.dmPelsWidth * r.dmPelsHeight > (long)mw * mh) { mw = r.dmPelsWidth; mh = r.dmPelsHeight; }
+                r = NewMode();
+            }
             string mon = "";
             DISPLAY_DEVICE md = new DISPLAY_DEVICE(); md.cb = Marshal.SizeOf(md);
             if (EnumDisplayDevices(ad.DeviceName, 0, ref md, 0)) mon = md.DeviceString;
-            outp.Add(Clean(ad.DeviceName) + "|" + Clean(mon) + "|" + cur.dmPelsWidth + "|" + cur.dmPelsHeight + "|" + cur.dmDisplayFrequency + "|" + max + "|" + ((ad.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0 ? "1" : "0"));
+            // Identifiant de l'écran (pour lire sa fiche EDID dans le registre)
+            string monId = "";
+            DISPLAY_DEVICE mi = new DISPLAY_DEVICE(); mi.cb = Marshal.SizeOf(mi);
+            if (EnumDisplayDevices(ad.DeviceName, 0, ref mi, EDD_GET_DEVICE_INTERFACE_NAME)) monId = mi.DeviceID;
+            outp.Add(Clean(ad.DeviceName) + "|" + Clean(mon) + "|" + cur.dmPelsWidth + "|" + cur.dmPelsHeight + "|" + cur.dmDisplayFrequency + "|" + max + "|" + ((ad.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0 ? "1" : "0")
+                     + "|" + mw + "|" + mh + "|" + Clean(monId) + "|" + Clean(ad.DeviceString));
         }
         return outp.ToArray();
     }
