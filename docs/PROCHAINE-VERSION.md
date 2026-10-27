@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 2.9.0 : matériel bridé (idée du 27/10, tweet « Claude sur mon PC de jeu »)
+
+- SSD NVMe : lien PCIe lu dans Windows (vitesse et nombre de lignes, actuels et maximum du SSD). Signalé seulement si c'est sûr : x1/x2 au lieu de x4, ou SSD Gen3+ en Gen1/Gen2, gain d'au moins ×1,8. Un SSD Gen4 dans un emplacement Gen3 n'est pas signalé (limite normale de la carte mère). Portables : seulement noté dans le journal (câblage choisi par le fabricant). Lecture seule, aucun test de vitesse.
+- Écran : vraie résolution lue dans la fiche EDID de l'écran (description de base + extension DisplayID pour les écrans de plus de 4095 pixels de large), comparée à la plus grande résolution que Windows propose. Si Windows ne la propose même pas : câble, port ou carte graphique qui bride. Pas signalé avec le pilote d'affichage de base ni les écrans virtuels.
+- Déjà en place avant : XMP / EXPO désactivé, figements du disque (firmware du SSD à mettre à jour), écran pas à sa fréquence max.
+
 ## Publié en 2.8.0 : assistant « Libérer de la place » (frère de Sam, disque plein, 25/10)
 
 - Demande de Sam : « une vraie option pour faciliter et vraiment retirer ce qui sert à rien sans galère ». Une seule fenêtre, liste triée par gain, groupes : sans risque (coché : fichiers inutiles, Windows.old), place gardée par Windows (cochée selon les règles existantes ; stockage réservé décoché si un redémarrage est en attente), tes fichiers (vieux installateurs → corbeille, corbeille ; jamais cochés), jeux Steam (lus dans les manifestes de toutes les bibliothèques, dernière partie notée par Steam) et logiciels pas lancés depuis 3 mois (jamais cochés). « Après : X libres » en direct, un seul bouton, une confirmation, nettoyage en arrière-plan puis désinstallations une par une (la suivante s'ouvre quand la précédente a vraiment disparu), bilan final.
