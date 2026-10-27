@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 2.9.0 : matériel bridé (idée du 27/10, tweet « Claude sur mon PC de jeu »)
+## Publié en 2.9.0 : matériel bridé (idée du 27/10, tweet « Claude sur mon PC de jeu »)
 
 - SSD NVMe : lien PCIe lu dans Windows (vitesse et nombre de lignes, actuels et maximum du SSD). Signalé seulement si c'est sûr : x1/x2 au lieu de x4, ou SSD Gen3+ en Gen1/Gen2, gain d'au moins ×1,8. Un SSD Gen4 dans un emplacement Gen3 n'est pas signalé (limite normale de la carte mère). Portables : seulement noté dans le journal (câblage choisi par le fabricant). Lecture seule, aucun test de vitesse.
 - Écran : vraie résolution lue dans la fiche EDID de l'écran (description de base + extension DisplayID pour les écrans de plus de 4095 pixels de large), comparée à la plus grande résolution que Windows propose. Si Windows ne la propose même pas : câble, port ou carte graphique qui bride. Pas signalé avec le pilote d'affichage de base ni les écrans virtuels.
