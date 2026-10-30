@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.0.0 : refonte graphique + vérification poussée (carte blanche de Sam, 30/10)
+## Publié en 3.0.0 : refonte graphique + vérification poussée (carte blanche de Sam, 30/10)
 
 - Thème : palette retravaillée, dégradé violet → mauve (logo avec halo, bouton principal, barre de progression, repère de l'onglet ouvert), cartes plus arrondies, trait dégradé sous les titres de page, « Bonjour / Bonsoir » selon l'heure, jauges mémoire et disque sur l'accueil.
 - Contrôles Windows restylés partout (fenêtre principale ET fenêtres) : cases à cocher, listes déroulantes, curseurs, info-bulles, champs de texte ; barre de titre sombre (Windows 10 20H1+, couleur exacte sur Windows 11).
