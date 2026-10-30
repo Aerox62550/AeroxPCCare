@@ -529,7 +529,7 @@ function Corner([double]$r) { New-Object System.Windows.CornerRadius($r) }
 function New-Text {
     param([string]$Text, [double]$Size = 13, [string]$Color = $Pal.Text3, [string]$Weight = 'Normal')
     $t = New-Object System.Windows.Controls.TextBlock
-    $t.Text = $Text; $t.FontSize = $Size; $t.Foreground = Brush $Color
+    $t.Text = (Format-Plural $Text); $t.FontSize = $Size; $t.Foreground = Brush $Color
     $t.FontWeight = [System.Windows.FontWeights]::$Weight
     $t.TextWrapping = [System.Windows.TextWrapping]::Wrap
     return $t
@@ -539,7 +539,7 @@ function New-Rich([string]$Label, [string]$Text, [string]$Code) {
     $t = New-Object System.Windows.Controls.TextBlock
     $t.TextWrapping = 'Wrap'; $t.FontSize = $Typo.Body; $t.Foreground = Brush $Pal.Muted; $t.Margin = Th 0 3 0 0
     if ($Label) { $r = New-Object System.Windows.Documents.Run("$Label : "); $r.FontWeight = 'SemiBold'; $r.Foreground = Brush $Pal.Text2; $t.Inlines.Add($r) }
-    if ($Text)  { $t.Inlines.Add((New-Object System.Windows.Documents.Run($Text))) }
+    if ($Text)  { $t.Inlines.Add((New-Object System.Windows.Documents.Run((Format-Plural $Text)))) }
     if ($Code)  { $c = New-Object System.Windows.Documents.Run(" $Code "); $c.FontFamily = 'Cascadia Mono, Consolas'; $c.FontSize = $Typo.Small; $c.Background = Brush $Pal.Sunken; $c.Foreground = Brush $Pal.Text2; $t.Inlines.Add($c) }
     return $t
 }
@@ -1283,7 +1283,7 @@ function Append-Log([string]$Text) {
     $last = @($Text -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
     if ($last) { $LogLast.Text = ($last -replace '^\[\d\d:\d\d:\d\d\]\s*', '').Trim(); if (-not $script:LogOpen) { $LogDot.Visibility = 'Visible' } }
 }
-function Write-UiLog([string]$Line) { Append-Log ($Line + "`r`n") }
+function Write-UiLog([string]$Line) { Append-Log ((Format-Plural $Line) + "`r`n") }
 function Flush-Queue {
     $sb = New-Object System.Text.StringBuilder
     $line = $null
@@ -1592,7 +1592,7 @@ function Start-NextQueued {
     return $false
 }
 
-function Confirm-Box([string]$Text) { return ([System.Windows.MessageBox]::Show($Text, $AppName, 'YesNo', 'Question') -eq 'Yes') }
+function Confirm-Box([string]$Text) { return ([System.Windows.MessageBox]::Show((Format-Plural $Text), $AppName, 'YesNo', 'Question') -eq 'Yes') }
 
 function Start-Diagnostic {
     if ($script:Job) { return }

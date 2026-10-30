@@ -11,8 +11,23 @@ $script:LastLine       = ''
 $script:NativeOutput   = New-Object System.Collections.ArrayList
 
 # ---------------------------------------------------------------- Outils
+# Accords « (s) » / « (x) » : « 1 fichier(s) » → « 1 fichier », « 3 fichier(s) trouvé(s) » → « 3 fichiers trouvés ».
+# Chaque « (s) » suit le dernier nombre de la même phrase (une ponctuation . : ; ! ? · • ou un retour à la ligne la coupe) ;
+# sans nombre devant, le texte est laissé tel quel.
+function Format-Plural([string]$Text) {
+    if (-not $Text -or $Text.IndexOf('(') -lt 0 -or $Text -notmatch '\((s|x)\)') { return $Text }
+    $st = @{ N = -1 }
+    return [regex]::Replace($Text, '(?<num>\d+)|(?<brk>[.!?:;\u00B7\u2022\n])|\((?<p>s|x)\)', [Text.RegularExpressions.MatchEvaluator]{
+        param($m)
+        if ($m.Groups['num'].Success) { $v = 0; if ([int]::TryParse($m.Value, [ref]$v)) { $st.N = $v } else { $st.N = 2 }; return $m.Value }
+        if ($m.Groups['brk'].Success) { $st.N = -1; return $m.Value }
+        if ($st.N -lt 0) { return $m.Value }
+        if ($st.N -le 1) { return '' }
+        return $m.Groups['p'].Value
+    })
+}
 function Log([string]$Message) {
-    if ($Message) { $sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Message)) }
+    if ($Message) { $Message = Format-Plural $Message; $sync.Queue.Enqueue(("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Message)) }
     else          { $sync.Queue.Enqueue('') }
 }
 
