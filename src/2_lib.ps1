@@ -15,9 +15,9 @@ $script:NativeOutput   = New-Object System.Collections.ArrayList
 # Chaque « (s) » suit le dernier nombre de la même phrase (une ponctuation . : ; ! ? · • ou un retour à la ligne la coupe) ;
 # sans nombre devant, le texte est laissé tel quel.
 function Format-Plural([string]$Text) {
-    if (-not $Text -or $Text.IndexOf('(') -lt 0 -or $Text -notmatch '\((s|x)\)') { return $Text }
+    if (-not $Text -or $Text.IndexOf('(') -lt 0 -or $Text -notmatch '\((s|x|S|X)\)') { return $Text }
     $st = @{ N = -1 }
-    return [regex]::Replace($Text, '(?<num>\d+)|(?<brk>[.!?:;\u00B7\u2022\n])|\((?<p>s|x)\)', [Text.RegularExpressions.MatchEvaluator]{
+    return [regex]::Replace($Text, '(?<num>\d+)|(?<brk>[.!?:;\u00B7\u2022\n])|\((?<p>s|x|S|X)\)', [Text.RegularExpressions.MatchEvaluator]{
         param($m)
         if ($m.Groups['num'].Success) { $v = 0; if ([int]::TryParse($m.Value, [ref]$v)) { $st.N = $v } else { $st.N = 2 }; return $m.Value }
         if ($m.Groups['brk'].Success) { $st.N = -1; return $m.Value }

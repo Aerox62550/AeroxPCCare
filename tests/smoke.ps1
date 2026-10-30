@@ -115,7 +115,7 @@ function Invoke-Smoke {
     }
     Smoke 'Accords des pluriels' {
         $cases = @(@('1 fichier(s) en quarantaine', '1 fichier en quarantaine'), @('5 problème(s) trouvé(s), dont 1 réparable(s).', '5 problèmes trouvés, dont 1 réparable.'),
-                   @('+ 3 autre(s) jeu(x)', '+ 3 autres jeux'), @('Carte(s) graphique(s)', 'Carte(s) graphique(s)'), @('Version 2.9.0 : 3 fichier(s)', 'Version 2.9.0 : 3 fichiers'))
+                   @('+ 3 autre(s) jeu(x)', '+ 3 autres jeux'), @('Carte(s) graphique(s)', 'Carte(s) graphique(s)'), @('Version 2.9.0 : 3 fichier(s)', 'Version 2.9.0 : 3 fichiers'), @('24 POINT(S) VÉRIFIÉ(S)', '24 POINTS VÉRIFIÉS'))
         foreach ($c in $cases) { $g = Format-Plural $c[0]; if ($g -cne $c[1]) { throw "« $($c[0]) » → « $g » au lieu de « $($c[1]) »" } }
     }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
