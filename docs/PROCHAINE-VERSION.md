@@ -2,6 +2,14 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.0.0 : refonte graphique + vérification poussée (carte blanche de Sam, 30/10)
+
+- Thème : palette retravaillée, dégradé violet → mauve (logo avec halo, bouton principal, barre de progression, repère de l'onglet ouvert), cartes plus arrondies, trait dégradé sous les titres de page, « Bonjour / Bonsoir » selon l'heure, jauges mémoire et disque sur l'accueil.
+- Contrôles Windows restylés partout (fenêtre principale ET fenêtres) : cases à cocher, listes déroulantes, curseurs, info-bulles, champs de texte ; barre de titre sombre (Windows 10 20H1+, couleur exacte sur Windows 11).
+- Accords automatiques des « (s) » / « (x) » d'après le nombre (Format-Plural, appliqué aux textes, au journal et aux confirmations).
+- Logiciels installés : en-tête et boutons fixes, la liste défile (bouton « Fermer » coupé en 1024 × 720).
+- Vérification : analyse automatique du code (commandes et variables inconnues, syntaxe PowerShell 7 interdite en 5.1, PSScriptAnalyzer) : rien d'anormal. Bug #26 corrigé (relevé des capteurs remis à vide pendant le diagnostic).
+
 ## Publié en 2.9.0 : matériel bridé (idée du 27/10, tweet « Claude sur mon PC de jeu »)
 
 - SSD NVMe : lien PCIe lu dans Windows (vitesse et nombre de lignes, actuels et maximum du SSD). Signalé seulement si c'est sûr : x1/x2 au lieu de x4, ou SSD Gen3+ en Gen1/Gen2, gain d'au moins ×1,8. Un SSD Gen4 dans un emplacement Gen3 n'est pas signalé (limite normale de la carte mère). Portables : seulement noté dans le journal (câblage choisi par le fabricant). Lecture seule, aucun test de vitesse.

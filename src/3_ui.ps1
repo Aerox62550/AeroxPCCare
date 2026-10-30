@@ -253,6 +253,33 @@ $XamlText = @'
         </Setter.Value>
       </Setter>
     </Style>
+    <!-- Curseurs (taille et fond de l'overlay) : piste fine, partie remplie en dégradé, bouton rond -->
+    <Style x:Key="SliderFill" TargetType="RepeatButton">
+      <Setter Property="Focusable" Value="False"/><Setter Property="IsTabStop" Value="False"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Height="4" CornerRadius="2" Background="{TemplateBinding Background}"/></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="Slider">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid MinHeight="22" Background="Transparent">
+              <Track x:Name="PART_Track" VerticalAlignment="Center">
+                <Track.DecreaseRepeatButton><RepeatButton Style="{StaticResource SliderFill}" Background="{StaticResource AccentGrad}" Command="Slider.DecreaseLarge"/></Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton><RepeatButton Style="{StaticResource SliderFill}" Background="%%Track%%" Command="Slider.IncreaseLarge"/></Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb>
+                    <Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse x:Name="e" Width="16" Height="16" Fill="White" Stroke="%%Accent%%" StrokeThickness="3"/>
+                      <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="e" Property="Stroke" Value="%%Accent2%%"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
     <!-- Champs de texte sombres (recherche, description d'un bug, avis…) -->
     <Style TargetType="TextBox">
       <Setter Property="Background" Value="%%Sunken%%"/>
@@ -2816,6 +2843,10 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.0.0' = @("Nouveau look : couleurs de la marque en dégradé, onglet ouvert mieux repéré, cases à cocher, listes déroulantes, curseurs et info-bulles aux couleurs d'AEROX, barre de titre sombre, jauges de mémoire et de disque sur l'accueil.",
+                "Textes plus naturels : « 1 fichier », « 3 fichiers » au lieu de « fichier(s) ».",
+                "Fenêtre des logiciels installés : les boutons du bas restent toujours visibles, même sur un petit écran.",
+                "Correction : le diagnostic ne plante plus sur les températures quand le suivi en direct s'arrête pendant l'analyse.")
     '2.9.0' = @("Diagnostic : AEROX repère un SSD NVMe bridé (branché dans un emplacement M.2 trop lent, il peut être 2 à 16 fois plus lent que prévu) et te dit où le déplacer.",
                 "Diagnostic : AEROX repère un écran bridé par son câble (par exemple un vieux câble HDMI qui empêche d'avoir la vraie résolution de l'écran).")
     '2.8.0' = @("Nouveau : « Libérer de la place » (accueil et onglet Nettoyage). Une seule liste de tout ce qui peut partir, du plus gros au plus petit : ce qui est sans risque est déjà coché, tu ajoutes les jeux et logiciels que tu n'utilises plus, un bouton et AEROX enchaîne tout, avec un bilan à la fin.",
@@ -3106,7 +3137,7 @@ function New-Dialog([string]$Title, [double]$Width) {
     # Mêmes barres de défilement sombres que la fenêtre principale
     try { $sb = [System.Windows.Controls.Primitives.ScrollBar]; $w.Resources.Add($sb, $window.FindResource($sb)) } catch {}
     # Mêmes cases à cocher, info-bulles et champs de texte que la fenêtre principale
-    foreach ($ty in [System.Windows.Controls.CheckBox], [System.Windows.Controls.ToolTip], [System.Windows.Controls.TextBox], [System.Windows.Controls.ComboBox], [System.Windows.Controls.ComboBoxItem]) { try { $w.Resources.Add($ty, $window.FindResource($ty)) } catch {} }
+    foreach ($ty in [System.Windows.Controls.CheckBox], [System.Windows.Controls.ToolTip], [System.Windows.Controls.TextBox], [System.Windows.Controls.ComboBox], [System.Windows.Controls.ComboBoxItem], [System.Windows.Controls.Slider]) { try { $w.Resources.Add($ty, $window.FindResource($ty)) } catch {} }
     # Barre de titre sombre (Windows 10 20H1 et plus, Windows 11)
     $w.Add_SourceInitialized({ try { [AeroxWin]::DarkTitle((New-Object System.Windows.Interop.WindowInteropHelper($this)).Handle, $Pal.Side) } catch {} })
     return $w
@@ -3320,7 +3351,7 @@ function New-CheckRow([bool]$Checked, $Content, $Right) {
     $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); Add-Child $dp $Right }
-    $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = $Checked; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
+    $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = $Checked; $cb.VerticalContentAlignment = 'Top'; $cb.Cursor = 'Hand'
     $cb.Content = $Content
     Add-Child $dp $cb
     $row.Child = $dp
@@ -3494,13 +3525,18 @@ function Show-UninstallDialog($Issue) {
     $script:UniDrive = ''
     $drv.Add_SelectionChanged({ $t = [string]$this.SelectedItem; $script:UniDrive = $(if ($t -match '^Disque ([A-Z]:)') { $matches[1] } else { '' }); & $script:RenderUni })
     $list = New-Object System.Windows.Controls.StackPanel; $script:UniList = $list
-    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Height = 470; $sv.Content = $list
-    Add-Child $sp $sv
-    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 12 0 0
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $list; $sv.Margin = Th 24 0 24 0
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 24 12 24 18
     $bSet = New-DlgButton 'Ouvrir les Paramètres Windows' 'TextBtn'; $bSet.Margin = Th 0 0 8 0
     $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'
-    Add-Child $row $bSet; Add-Child $row $bClose; Add-Child $sp $row
-    $w.Content = $sp
+    Add-Child $row $bSet; Add-Child $row $bClose
+    $sp.Margin = Th 24 22 24 8
+    $gu = New-Object System.Windows.Controls.Grid
+    foreach ($hh in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($hh); $gu.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($sp, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($row, 2)
+    Add-Child $gu $sp; Add-Child $gu $sv; Add-Child $gu $row
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight
+    $w.Content = $gu
 
     $script:RenderUni = {
         $script:UniList.Children.Clear()
