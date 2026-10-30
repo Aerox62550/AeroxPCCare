@@ -4473,7 +4473,10 @@ function Get-SensorMedian([string[]]$Keys, [int]$Count = 5, [int]$DelayMs = 800)
     return $out
 }
 function Test-Temperatures {
+    # Relevé des capteurs copié une fois : l'interface le remet à vide quand le suivi en direct s'arrête (bug #26)
     $v = $sync.Sens
+    if (-not ($v -is [hashtable]) -or -not ($v['cpu.temp'] -or $v['gpu.temp'])) { Log "   • Températures non lues : les capteurs ne répondent plus (ouvre l'onglet Gaming puis relance le diagnostic)"; return }
+    $v = $v.Clone()
     $cpuLoad = [double]$v['cpu.load']
     $issue = $false
     if ($v['cpu.temp']) {
