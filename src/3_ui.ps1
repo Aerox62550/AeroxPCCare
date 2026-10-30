@@ -9,13 +9,13 @@ Set-SplashStep 66 'Création de l''interface…'
 # =====================================================================
 $Pal = @{
     # Fonds et surfaces (du plus sombre au plus clair)
-    BgDeep = '#0A0C11'; Bg = '#0E1016'; Side = '#141720'; Sunken = '#13161E'; Card = '#171A23'; CardHover = '#1A1D28'
-    Line = '#232838'; LineStrong = '#2E3446'; Track = '#252A3A'; Chip = '#222736'
-    Btn = '#2A2F3D'; BtnGhost = '#1A1E2A'; NavHover = '#1C2030'; NavOn = '#262B3D'
+    BgDeep = '#08090F'; Bg = '#0C0E15'; Side = '#11131C'; Sunken = '#12151E'; Card = '#161A25'; CardHover = '#1B2030'
+    Line = '#232838'; LineStrong = '#2F3548'; Track = '#252A3A'; Chip = '#212637'
+    Btn = '#282E3E'; BtnGhost = '#181C28'; NavHover = '#1A1E2C'; NavOn = '#211D3D'
     # Textes (du plus visible au plus discret)
     White = '#FFFFFF'; Text = '#E6E9F2'; Text2 = '#C3CAD9'; Text3 = '#A9B0C2'; Muted = '#8B93A7'; Faint = '#7A8399'
     # Couleur AEROX (violet)
-    Accent = '#7C5CFF'; AccentText = '#B9A8FF'; AccentSoft = '#2A2350'; AccentLine = '#3B3566'; AccentGlow = '#231E40'
+    Accent = '#7C5CFF'; Accent2 = '#B34DFF'; AccentText = '#B9A8FF'; AccentSoft = '#2A2350'; AccentLine = '#3F3870'; AccentGlow = '#251F45'
     # États : OK / à corriger / critique / info
     Ok = '#4ADE80'; OkSoft = '#173326'; OkText = '#9FE8B5'; OkInk = '#0B1A11'
     Warn = '#FFB547'; WarnSoft = '#3A2D17'
@@ -34,6 +34,10 @@ $XamlText = @'
         Title="AEROX PC Care" Width="1120" Height="780" MinWidth="960" MinHeight="660"
         WindowStartupLocation="CenterScreen" Background="%%Bg%%" FontFamily="Segoe UI" Foreground="%%Text%%">
   <Window.Resources>
+    <!-- Dégradé de la marque (violet → mauve) : logo, bouton principal, repère de l'onglet ouvert -->
+    <LinearGradientBrush x:Key="AccentGrad" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="%%Accent%%" Offset="0"/><GradientStop Color="%%Accent2%%" Offset="1"/>
+    </LinearGradientBrush>
     <!-- Boutons : survol = voile clair (pas de transparence qui ternit), focus clavier = contour violet -->
     <Style x:Key="ActionBtn" TargetType="Button">
       <Setter Property="Foreground" Value="White"/>
@@ -65,7 +69,7 @@ $XamlText = @'
         </Setter.Value>
       </Setter>
     </Style>
-    <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="%%Accent%%"/></Style>
+    <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="{StaticResource AccentGrad}"/></Style>
     <Style x:Key="FixBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}"><Setter Property="Background" Value="%%Ok%%"/><Setter Property="Foreground" Value="%%OkInk%%"/></Style>
     <Style x:Key="GhostBtn" TargetType="Button" BasedOn="{StaticResource ActionBtn}">
       <Setter Property="Background" Value="%%BtnGhost%%"/><Setter Property="Padding" Value="12,5"/><Setter Property="MinHeight" Value="28"/><Setter Property="FontSize" Value="12"/><Setter Property="FontWeight" Value="Normal"/>
@@ -131,19 +135,161 @@ $XamlText = @'
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
-            <Border x:Name="bd" Background="Transparent" CornerRadius="8" Padding="12,10">
-              <ContentPresenter VerticalAlignment="Center"/>
-            </Border>
+            <Grid>
+              <Border x:Name="bd" Background="Transparent" CornerRadius="9" Padding="12,10">
+                <ContentPresenter VerticalAlignment="Center"/>
+              </Border>
+              <!-- Repère de l'onglet ouvert : petite barre dégradée à gauche -->
+              <Border x:Name="mk" Width="3" Height="18" CornerRadius="2" HorizontalAlignment="Left" Margin="0,0,0,0" Background="{StaticResource AccentGrad}" Visibility="Collapsed"/>
+            </Grid>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="%%NavHover%%"/></Trigger>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="bd" Property="Background" Value="%%NavHover%%"/><Setter Property="Foreground" Value="%%Text%%"/></Trigger>
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="%%NavOn%%"/>
+                <Setter TargetName="mk" Property="Visibility" Value="Visible"/>
                 <Setter Property="Foreground" Value="White"/>
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+    </Style>
+    <!-- Cases à cocher aux couleurs d'AEROX (au lieu de la case blanche de Windows) -->
+    <Style TargetType="CheckBox">
+      <Setter Property="Foreground" Value="%%Text%%"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Padding" Value="6,0,0,0"/>
+      <Setter Property="VerticalContentAlignment" Value="Center"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <Grid Background="Transparent">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+              <Grid Width="20" Height="20" VerticalAlignment="{TemplateBinding VerticalContentAlignment}">
+                <Border x:Name="box" CornerRadius="6" BorderThickness="1.5" BorderBrush="%%LineStrong%%" Background="%%Sunken%%"/>
+                <Border x:Name="fill" CornerRadius="6" Background="{StaticResource AccentGrad}" Visibility="Collapsed"/>
+                <Path x:Name="tick" Data="M 4.5,10 L 8.5,14 L 15.5,6" Stroke="White" StrokeThickness="2.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
+                <Border x:Name="fr" CornerRadius="7" BorderThickness="2" BorderBrush="%%AccentText%%" Margin="-3" Visibility="Collapsed"/>
+              </Grid>
+              <ContentPresenter Grid.Column="1" Margin="{TemplateBinding Padding}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="box" Property="BorderBrush" Value="%%AccentText%%"/></Trigger>
+              <Trigger Property="IsChecked" Value="True"><Setter TargetName="fill" Property="Visibility" Value="Visible"/><Setter TargetName="tick" Property="Visibility" Value="Visible"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="fr" Property="Visibility" Value="Visible"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <!-- Info-bulles sombres -->
+    <Style TargetType="ToolTip">
+      <Setter Property="Foreground" Value="%%Text%%"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="MaxWidth" Value="420"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToolTip">
+            <Border Background="%%Chip%%" BorderBrush="%%LineStrong%%" BorderThickness="1" CornerRadius="8" Padding="10,7">
+              <TextBlock Text="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}" TextWrapping="Wrap"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <!-- Listes déroulantes sombres -->
+    <Style TargetType="ComboBox">
+      <Setter Property="Foreground" Value="%%Text%%"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="MinHeight" Value="32"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBox">
+            <Grid>
+              <ToggleButton Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                <ToggleButton.Template>
+                  <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="b" Background="%%Sunken%%" BorderBrush="%%LineStrong%%" BorderThickness="1" CornerRadius="8">
+                      <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE70D;" FontSize="10" Foreground="%%Muted%%" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                      <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="%%AccentText%%"/></Trigger>
+                      <Trigger Property="IsChecked" Value="True"><Setter TargetName="b" Property="BorderBrush" Value="%%Accent%%"/></Trigger>
+                    </ControlTemplate.Triggers>
+                  </ControlTemplate>
+                </ToggleButton.Template>
+              </ToggleButton>
+              <ContentPresenter IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" Margin="11,5,28,5" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+              <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                <Border Background="%%Chip%%" BorderBrush="%%LineStrong%%" BorderThickness="1" CornerRadius="8" Margin="0,4,0,0" Padding="4"
+                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                  <ScrollViewer><StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Foreground" Value="%%Text%%"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ComboBoxItem">
+            <Border x:Name="b" Background="Transparent" CornerRadius="6" Padding="10,6"><ContentPresenter/></Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="b" Property="Background" Value="%%NavHover%%"/></Trigger>
+              <Trigger Property="IsSelected" Value="True"><Setter TargetName="b" Property="Background" Value="%%AccentSoft%%"/><Setter Property="Foreground" Value="White"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <!-- Curseurs (taille et fond de l'overlay) : piste fine, partie remplie en dégradé, bouton rond -->
+    <Style x:Key="SliderFill" TargetType="RepeatButton">
+      <Setter Property="Focusable" Value="False"/><Setter Property="IsTabStop" Value="False"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Height="4" CornerRadius="2" Background="{TemplateBinding Background}"/></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style TargetType="Slider">
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Slider">
+            <Grid MinHeight="22" Background="Transparent">
+              <Track x:Name="PART_Track" VerticalAlignment="Center">
+                <Track.DecreaseRepeatButton><RepeatButton Style="{StaticResource SliderFill}" Background="{StaticResource AccentGrad}" Command="Slider.DecreaseLarge"/></Track.DecreaseRepeatButton>
+                <Track.IncreaseRepeatButton><RepeatButton Style="{StaticResource SliderFill}" Background="%%Track%%" Command="Slider.IncreaseLarge"/></Track.IncreaseRepeatButton>
+                <Track.Thumb>
+                  <Thumb>
+                    <Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse x:Name="e" Width="16" Height="16" Fill="White" Stroke="%%Accent%%" StrokeThickness="3"/>
+                      <ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="e" Property="Stroke" Value="%%Accent2%%"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Thumb.Template>
+                  </Thumb>
+                </Track.Thumb>
+              </Track>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <!-- Champs de texte sombres (recherche, description d'un bug, avis…) -->
+    <Style TargetType="TextBox">
+      <Setter Property="Background" Value="%%Sunken%%"/>
+      <Setter Property="Foreground" Value="%%Text%%"/>
+      <Setter Property="BorderBrush" Value="%%LineStrong%%"/>
+      <Setter Property="CaretBrush" Value="%%Text%%"/>
+      <Setter Property="SelectionBrush" Value="%%Accent%%"/>
+      <Style.Triggers>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter Property="BorderBrush" Value="%%Accent%%"/></Trigger>
+      </Style.Triggers>
     </Style>
   </Window.Resources>
 
@@ -156,7 +302,8 @@ $XamlText = @'
     <Border Grid.Column="0" Background="%%Side%%" BorderBrush="%%Line%%" BorderThickness="0,0,1,0">
       <DockPanel Margin="16,22,16,18">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,0,0,28">
-          <Border Width="40" Height="40" CornerRadius="10" Background="%%Accent%%">
+          <Border Width="40" Height="40" CornerRadius="11" Background="{StaticResource AccentGrad}">
+            <Border.Effect><DropShadowEffect Color="%%Accent%%" BlurRadius="18" ShadowDepth="0" Opacity="0.55"/></Border.Effect>
             <TextBlock Text="A" FontSize="21" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
           </Border>
           <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
@@ -223,7 +370,7 @@ $XamlText = @'
             <TextBlock x:Name="ElapsedText" DockPanel.Dock="Right" Foreground="%%Muted%%" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock x:Name="StatusText" Foreground="White" FontWeight="SemiBold" FontSize="13"/>
           </DockPanel>
-          <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Maximum="100" Foreground="%%Accent%%" Background="%%Track%%" BorderThickness="0"/>
+          <ProgressBar x:Name="Progress" Height="6" Margin="0,8,0,0" IsIndeterminate="True" Maximum="100" Foreground="{StaticResource AccentGrad}" Background="%%Track%%" BorderThickness="0"/>
         </StackPanel>
       </Border>
 
@@ -409,7 +556,7 @@ function Corner([double]$r) { New-Object System.Windows.CornerRadius($r) }
 function New-Text {
     param([string]$Text, [double]$Size = 13, [string]$Color = $Pal.Text3, [string]$Weight = 'Normal')
     $t = New-Object System.Windows.Controls.TextBlock
-    $t.Text = $Text; $t.FontSize = $Size; $t.Foreground = Brush $Color
+    $t.Text = (Format-Plural $Text); $t.FontSize = $Size; $t.Foreground = Brush $Color
     $t.FontWeight = [System.Windows.FontWeights]::$Weight
     $t.TextWrapping = [System.Windows.TextWrapping]::Wrap
     return $t
@@ -419,7 +566,7 @@ function New-Rich([string]$Label, [string]$Text, [string]$Code) {
     $t = New-Object System.Windows.Controls.TextBlock
     $t.TextWrapping = 'Wrap'; $t.FontSize = $Typo.Body; $t.Foreground = Brush $Pal.Muted; $t.Margin = Th 0 3 0 0
     if ($Label) { $r = New-Object System.Windows.Documents.Run("$Label : "); $r.FontWeight = 'SemiBold'; $r.Foreground = Brush $Pal.Text2; $t.Inlines.Add($r) }
-    if ($Text)  { $t.Inlines.Add((New-Object System.Windows.Documents.Run($Text))) }
+    if ($Text)  { $t.Inlines.Add((New-Object System.Windows.Documents.Run((Format-Plural $Text)))) }
     if ($Code)  { $c = New-Object System.Windows.Documents.Run(" $Code "); $c.FontFamily = 'Cascadia Mono, Consolas'; $c.FontSize = $Typo.Small; $c.Background = Brush $Pal.Sunken; $c.Foreground = Brush $Pal.Text2; $t.Inlines.Add($c) }
     return $t
 }
@@ -439,7 +586,7 @@ function New-Button([string]$Text, [string]$Style, $Tag, [bool]$Busy = $true) {
 function New-CardBorder([string]$BorderColor = $Pal.Line) {
     $card = New-Object System.Windows.Controls.Border
     $card.Background = Brush $Pal.Card; $card.BorderBrush = Brush $BorderColor; $card.BorderThickness = Th 1 1 1 1
-    $card.CornerRadius = Corner 12; $card.Padding = Th 20 16 20 16; $card.Margin = Th 0 0 0 12
+    $card.CornerRadius = Corner 14; $card.Padding = Th 20 16 20 16; $card.Margin = Th 0 0 0 12
     return $card
 }
 function New-Section([string]$Text) { $t = New-Text $Text.ToUpper() $Typo.Small $Pal.Faint 'Bold'; $t.Margin = Th 0 18 0 10; return $t }
@@ -453,7 +600,7 @@ $script:CardIcons = @{
     browser = 'E7BA'; secscan = 'EA18'; 'Start-DefenderFullScan' = 'E721'; 'Start-DefenderOffline' = 'E777'; hacked = 'E730'; quarantine = 'E72E'; secview = 'E8A7'; privacy = 'E72E'; 'Test-Internet' = 'E701'; 'Repair-Network' = 'E774'; 'Repair-System' = 'E90F'; 'Test-Disk' = 'EDA2'; 'Reset-WindowsUpdate' = 'E895'; 'New-RestorePoint' = 'E81C'
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
-    optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'
+    optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'; freespace = 'EDA2'; 'Repair-Discord' = 'E8F2'
 }
 function New-CardIcon([string]$Hex, [bool]$Primary) {
     $b = New-Object System.Windows.Controls.Border; $b.Width = 42; $b.Height = 42; $b.CornerRadius = Corner 11; $b.Margin = Th 0 0 16 0; $b.VerticalAlignment = 'Top'
@@ -843,12 +990,15 @@ function Get-IgnoredCardStatus {
 
 function Build-Header($Sp, [string]$Title, [string]$Sub) {
     Add-Child $Sp (New-Text $Title $Typo.Page $Pal.White 'Bold')
+    $u = New-Object System.Windows.Controls.Border; $u.Width = 36; $u.Height = 3; $u.CornerRadius = Corner 2; $u.HorizontalAlignment = 'Left'; $u.Margin = Th 1 8 0 2
+    $u.Background = $window.FindResource('AccentGrad'); Add-Child $Sp $u
     $s = New-Text $Sub $Typo.Body $Pal.Muted; $s.Margin = Th 0 6 0 20; $s.MaxWidth = 760; $s.HorizontalAlignment = 'Left'; Add-Child $Sp $s
 }
 
 function Build-HomePage {
     $sp = New-Object System.Windows.Controls.StackPanel
-    Build-Header $sp "Salut 👋" "Lance le diagnostic : AEROX PC Care trouve ce qui ne va pas, t'explique pourquoi et le répare pour toi quand c'est possible. Rien n'est modifié sans ton clic."
+    $hr = (Get-Date).Hour
+    Build-Header $sp $(if ($hr -ge 5 -and $hr -lt 18) { "Bonjour" } else { "Bonsoir" }) "Lance le diagnostic : AEROX PC Care trouve ce qui ne va pas, t'explique pourquoi et le répare pour toi quand c'est possible. Rien n'est modifié sans ton clic."
     if ($sync.UpdateInfo) {
         $u = New-CardBorder $Pal.AccentSoft
         $g = New-Object System.Windows.Controls.DockPanel
@@ -915,11 +1065,23 @@ function Build-HomePage {
     $tiles = New-Object System.Windows.Controls.Primitives.UniformGrid; $tiles.Columns = 4; $tiles.Margin = Th 0 0 0 4
     foreach ($k in 'OS', 'CPU', 'RAM', 'DISK') {
         $st = $script:Stats[$k]; if (-not $st) { $st = @{ L = $k; V = '...'; S = ''; C = $Pal.White } }
-        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.CornerRadius = Corner 12; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 12
+        $b = New-Object System.Windows.Controls.Border; $b.Background = Brush $Pal.Card; $b.BorderBrush = Brush $Pal.Line; $b.BorderThickness = Th 1 1 1 1; $b.CornerRadius = Corner 14; $b.Padding = Th 16 14 16 14; $b.Margin = Th 0 0 10 12
         $s2 = New-Object System.Windows.Controls.StackPanel
         Add-Child $s2 (New-Text $st.L.ToUpper() $Typo.Caption $Pal.Faint 'Bold')
         $v = New-Text $st.V $Typo.Title $st.C 'SemiBold'; $v.Margin = Th 0 6 0 0; Add-Child $s2 $v
         $x = New-Text $st.S $Typo.Small $Pal.Muted; $x.Margin = Th 0 2 0 0; Add-Child $s2 $x
+        # Jauge d'occupation (mémoire utilisée, disque de Windows rempli)
+        if ($null -ne $st.P) {
+            $gb = New-Object System.Windows.Controls.Grid; $gb.Height = 4; $gb.Margin = Th 0 10 0 0
+            $tr = New-Object System.Windows.Controls.Border; $tr.Background = Brush $Pal.Track; $tr.CornerRadius = Corner 2; Add-Child $gb $tr
+            $fi = New-Object System.Windows.Controls.Border; $fi.Background = Brush $st.PC; $fi.CornerRadius = Corner 2; $fi.HorizontalAlignment = 'Left'
+            $pc = [math]::Max(0, [math]::Min(100, [double]$st.P))
+            $c0 = New-Object System.Windows.Controls.ColumnDefinition; $c0.Width = New-Object System.Windows.GridLength($pc, [System.Windows.GridUnitType]::Star)
+            $c1 = New-Object System.Windows.Controls.ColumnDefinition; $c1.Width = New-Object System.Windows.GridLength((100 - $pc), [System.Windows.GridUnitType]::Star)
+            $gb.ColumnDefinitions.Add($c0); $gb.ColumnDefinitions.Add($c1)
+            [System.Windows.Controls.Grid]::SetColumnSpan($tr, 2); $fi.HorizontalAlignment = 'Stretch'; Add-Child $gb $fi
+            Add-Child $s2 $gb
+        }
         $b.Child = $s2; Add-Child $tiles $b
     }
     Add-Child $sp $tiles
@@ -1110,8 +1272,9 @@ function Update-HomeStats([switch]$KeepDrives) {
         $script:Stats = @{
             OS   = @{ L = 'Système'; V = ($os.Caption -replace '^Microsoft\s+', ''); S = "Build $($os.BuildNumber)"; C = $Pal.White }
             CPU  = @{ L = 'Processeur'; V = ($cpu.Name.Trim() -replace '\s+', ' ' -replace '\(R\)|\(TM\)|CPU|Processor|\d+-Core', '' -replace '\s+', ' ').Trim(); S = "$($cpu.NumberOfCores) cœurs / $($cpu.NumberOfLogicalProcessors) threads"; C = $Pal.White }
-            RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { $Pal.Warn } else { $Pal.White }) }
-            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(switch (Get-SystemDiskLevel ([double]$c.FreeSpace) ([double]$c.Size)) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.White } }) }
+            RAM  = @{ L = 'Mémoire'; V = (Format-Size $cs.TotalPhysicalMemory); S = "$ramPct % utilisée"; C = $(if ($ramPct -ge 85) { $Pal.Warn } else { $Pal.White }); P = $ramPct; PC = $(if ($ramPct -ge 85) { $Pal.Warn } else { $Pal.Accent }) }
+            DISK = @{ L = "Disque $env:SystemDrive"; V = "$(Format-Size $c.FreeSpace) libres"; S = "sur $(Format-Size $c.Size) ($pct %)"; C = $(switch (Get-SystemDiskLevel ([double]$c.FreeSpace) ([double]$c.Size)) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.White } })
+                     P = (100 - $pct); PC = $(switch (Get-SystemDiskLevel ([double]$c.FreeSpace) ([double]$c.Size)) { 'crit' { $Pal.Bad } 'warn' { $Pal.Warn } default { $Pal.Accent } }) }
         }
         # Les autres disques (internes et externes) sous celui de Windows : lus en arrière-plan (un disque USB en veille
         # peut mettre plusieurs secondes à répondre), affichés au rafraîchissement suivant
@@ -1147,7 +1310,7 @@ function Append-Log([string]$Text) {
     $last = @($Text -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -Last 1
     if ($last) { $LogLast.Text = ($last -replace '^\[\d\d:\d\d:\d\d\]\s*', '').Trim(); if (-not $script:LogOpen) { $LogDot.Visibility = 'Visible' } }
 }
-function Write-UiLog([string]$Line) { Append-Log ($Line + "`r`n") }
+function Write-UiLog([string]$Line) { Append-Log ((Format-Plural $Line) + "`r`n") }
 function Flush-Queue {
     $sb = New-Object System.Text.StringBuilder
     $line = $null
@@ -1456,7 +1619,7 @@ function Start-NextQueued {
     return $false
 }
 
-function Confirm-Box([string]$Text) { return ([System.Windows.MessageBox]::Show($Text, $AppName, 'YesNo', 'Question') -eq 'Yes') }
+function Confirm-Box([string]$Text) { return ([System.Windows.MessageBox]::Show((Format-Plural $Text), $AppName, 'YesNo', 'Question') -eq 'Yes') }
 
 function Start-Diagnostic {
     if ($script:Job) { return }
@@ -2680,6 +2843,10 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.0.0' = @("Nouveau look : couleurs de la marque en dégradé, onglet ouvert mieux repéré, cases à cocher, listes déroulantes, curseurs et info-bulles aux couleurs d'AEROX, barre de titre sombre, jauges de mémoire et de disque sur l'accueil.",
+                "Textes plus naturels : « 1 fichier », « 3 fichiers » au lieu de « fichier(s) ».",
+                "Fenêtre des logiciels installés : les boutons du bas restent toujours visibles, même sur un petit écran.",
+                "Correction : le diagnostic ne plante plus sur les températures quand le suivi en direct s'arrête pendant l'analyse.")
     '2.9.0' = @("Diagnostic : AEROX repère un SSD NVMe bridé (branché dans un emplacement M.2 trop lent, il peut être 2 à 16 fois plus lent que prévu) et te dit où le déplacer.",
                 "Diagnostic : AEROX repère un écran bridé par son câble (par exemple un vieux câble HDMI qui empêche d'avoir la vraie résolution de l'écran).")
     '2.8.0' = @("Nouveau : « Libérer de la place » (accueil et onglet Nettoyage). Une seule liste de tout ce qui peut partir, du plus gros au plus petit : ce qui est sans risque est déjà coché, tu ajoutes les jeux et logiciels que tu n'utilises plus, un bouton et AEROX enchaîne tout, avec un bilan à la fin.",
@@ -2969,6 +3136,10 @@ function New-Dialog([string]$Title, [double]$Width) {
     $w.Background = Brush $Pal.Side; $w.FontFamily = 'Segoe UI'; $w.ShowInTaskbar = $false
     # Mêmes barres de défilement sombres que la fenêtre principale
     try { $sb = [System.Windows.Controls.Primitives.ScrollBar]; $w.Resources.Add($sb, $window.FindResource($sb)) } catch {}
+    # Mêmes cases à cocher, info-bulles et champs de texte que la fenêtre principale
+    foreach ($ty in [System.Windows.Controls.CheckBox], [System.Windows.Controls.ToolTip], [System.Windows.Controls.TextBox], [System.Windows.Controls.ComboBox], [System.Windows.Controls.ComboBoxItem], [System.Windows.Controls.Slider]) { try { $w.Resources.Add($ty, $window.FindResource($ty)) } catch {} }
+    # Barre de titre sombre (Windows 10 20H1 et plus, Windows 11)
+    $w.Add_SourceInitialized({ try { [AeroxWin]::DarkTitle((New-Object System.Windows.Interop.WindowInteropHelper($this)).Handle, $Pal.Side) } catch {} })
     return $w
 }
 
@@ -3180,7 +3351,7 @@ function New-CheckRow([bool]$Checked, $Content, $Right) {
     $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 12 9 12 9; $row.Margin = Th 0 0 6 6
     $dp = New-Object System.Windows.Controls.DockPanel
     if ($Right) { [System.Windows.Controls.DockPanel]::SetDock($Right, 'Right'); Add-Child $dp $Right }
-    $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = $Checked; $cb.VerticalContentAlignment = 'Center'; $cb.Cursor = 'Hand'
+    $cb = New-Object System.Windows.Controls.CheckBox; $cb.IsChecked = $Checked; $cb.VerticalContentAlignment = 'Top'; $cb.Cursor = 'Hand'
     $cb.Content = $Content
     Add-Child $dp $cb
     $row.Child = $dp
@@ -3354,13 +3525,18 @@ function Show-UninstallDialog($Issue) {
     $script:UniDrive = ''
     $drv.Add_SelectionChanged({ $t = [string]$this.SelectedItem; $script:UniDrive = $(if ($t -match '^Disque ([A-Z]:)') { $matches[1] } else { '' }); & $script:RenderUni })
     $list = New-Object System.Windows.Controls.StackPanel; $script:UniList = $list
-    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Height = 470; $sv.Content = $list
-    Add-Child $sp $sv
-    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 0 12 0 0
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $list; $sv.Margin = Th 24 0 24 0
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = Th 24 12 24 18
     $bSet = New-DlgButton 'Ouvrir les Paramètres Windows' 'TextBtn'; $bSet.Margin = Th 0 0 8 0
     $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'
-    Add-Child $row $bSet; Add-Child $row $bClose; Add-Child $sp $row
-    $w.Content = $sp
+    Add-Child $row $bSet; Add-Child $row $bClose
+    $sp.Margin = Th 24 22 24 8
+    $gu = New-Object System.Windows.Controls.Grid
+    foreach ($hh in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($hh); $gu.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($sp, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($row, 2)
+    Add-Child $gu $sp; Add-Child $gu $sv; Add-Child $gu $row
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight
+    $w.Content = $gu
 
     $script:RenderUni = {
         $script:UniList.Children.Clear()
@@ -6098,6 +6274,7 @@ $BtnOpenLogs.Add_Click({ Start-Process explorer.exe $LogDir })
 $BtnReport.Add_Click({ Show-BugReport '' })
 
 $window.Add_SourceInitialized({
+    try { [AeroxWin]::DarkTitle((New-Object System.Windows.Interop.WindowInteropHelper($window)).Handle, $Pal.Side) } catch {}
     try {
         $script:HotkeyText = [AeroxHotkey]::Register()
         if (-not $script:HotkeyText) { Write-Bug -Context 'Raccourci Ctrl+Maj+O' -ErrorRecord "Ctrl+Maj+O, Ctrl+Alt+O et Ctrl+Maj+F10 sont déjà utilisés par d'autres logiciels" -Type 'erreur' }

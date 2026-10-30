@@ -113,6 +113,11 @@ function Invoke-Smoke {
         foreach ($d in @(Get-Displays)) { $nat = Get-EdidNative (Get-MonitorEdid $d.MonId); Write-Host ("        {0} : max {1}x{2}, fiche EDID {3}, carte {4}" -f $d.Name, $d.MaxW, $d.MaxH, $(if ($nat) { "$($nat.W)x$($nat.H)" } else { 'illisible' }), $d.Gpu) }
         Test-NvmeLink
     }
+    Smoke 'Accords des pluriels' {
+        $cases = @(@('1 fichier(s) en quarantaine', '1 fichier en quarantaine'), @('5 problème(s) trouvé(s), dont 1 réparable(s).', '5 problèmes trouvés, dont 1 réparable.'),
+                   @('+ 3 autre(s) jeu(x)', '+ 3 autres jeux'), @('Carte(s) graphique(s)', 'Carte(s) graphique(s)'), @('Version 2.9.0 : 3 fichier(s)', 'Version 2.9.0 : 3 fichiers'), @('24 POINT(S) VÉRIFIÉ(S)', '24 POINTS VÉRIFIÉS'))
+        foreach ($c in $cases) { $g = Format-Plural $c[0]; if ($g -cne $c[1]) { throw "« $($c[0]) » → « $g » au lieu de « $($c[1]) »" } }
+    }
     Smoke 'Nouveau : dossiers OneDrive' { @(Get-OneDriveFolders) | ForEach-Object { Write-Host "        $_" } }
     Smoke 'Nouveau : logiciels installés + dernière utilisation' { $a = Get-InstalledApps; $a = @($a); Write-Host ("        {0} logiciels, {1} avec une date d'utilisation" -f $a.Count, @($a | Where-Object { $_.LastUsed }).Count) }
     # ---- Audit du 21/10/2026 : chaque défaut corrigé a son test (il échoue si le défaut revient)
