@@ -1004,6 +1004,26 @@ public static class AeroxDump {
     }
 }
 
+// Barre de titre des fenêtres aux couleurs d'AEROX (sombre) : Windows 10 20H1 et plus, couleur exacte sur Windows 11.
+// Sans effet (et sans erreur) sur les versions plus anciennes.
+public static class AeroxWin {
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+    public static void DarkTitle(IntPtr hwnd, string hex) {
+        if (hwnd == IntPtr.Zero) return;
+        int on = 1;
+        if (DwmSetWindowAttribute(hwnd, 20, ref on, 4) != 0) DwmSetWindowAttribute(hwnd, 19, ref on, 4);   // mode sombre (19 avant Windows 10 20H1)
+        try {
+            string h = (hex ?? "").TrimStart('#');
+            if (h.Length == 6) {
+                int r = Convert.ToInt32(h.Substring(0, 2), 16), g = Convert.ToInt32(h.Substring(2, 2), 16), b = Convert.ToInt32(h.Substring(4, 2), 16);
+                int bgr = r | (g << 8) | (b << 16);
+                DwmSetWindowAttribute(hwnd, 35, ref bgr, 4);   // couleur de la barre de titre (Windows 11)
+                DwmSetWindowAttribute(hwnd, 34, ref bgr, 4);   // couleur du contour (Windows 11)
+            }
+        } catch {}
+    }
+}
+
 public static class AeroxDisplay {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct DISPLAY_DEVICE {
