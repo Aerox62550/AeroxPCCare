@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.1.0 : réparation automatique de Windows (PC d'un pote de Jazon, 03/11)
+
+- Signalé sur Discord : PC qui plante tous les jours, réparé chez LDLC (« erreur sur le fichier Startail.txt » = SrtTrail.txt, journal de la Réparation automatique), débranché tous les jours.
+- Diagnostic (Stabilité) : lecture de `C:\Windows\System32\LogFiles\Srt\SrtTrail.txt` s'il date de moins de 30 jours. Cause(s) trouvée(s) par Windows (« Root cause found » / « Cause racine trouvée ») traduite(s) : pilote abîmé (nom du .sys), fichier de démarrage, mise à jour ratée, BCD, disque, registre ; sans cause : coupure de courant au démarrage, mise à jour coupée ou disque. Problème critique, bouton « Réparer les fichiers Windows », conseil d'éteindre avant de débrancher. Marqué réglé après réparation (ne revient que si Windows relance sa réparation).
+- Arrêts brutaux : coupures nettes sur au moins 3 jours différents sans bouton maintenu → « le PC est coupé au courant sans avoir été éteint », avec le bon geste.
+
 ## Publié en 3.0.0 : refonte graphique + vérification poussée (carte blanche de Sam, 30/10)
 
 - Thème : palette retravaillée, dégradé violet → mauve (logo avec halo, bouton principal, barre de progression, repère de l'onglet ouvert), cartes plus arrondies, trait dégradé sous les titres de page, « Bonjour / Bonsoir » selon l'heure, jauges mémoire et disque sur l'accueil.

@@ -3238,6 +3238,61 @@ function Get-BsodAnalysis([datetime]$Since) {
 
 # Programmes qui font partie de Windows : ils ne se « mettent pas à jour » comme un logiciel
 $script:WinComponents = '(?i)^(dwm|explorer|svchost|sihost|ctfmon|runtimebroker|taskhostw|applicationframehost|shellexperiencehost|startmenuexperiencehost|searchhost|searchapp|searchui|textinputhost|lockapp|systemsettings|winlogon|csrss|lsass|spoolsv|audiodg|fontdrvhost|dllhost|wmiprvse|msedgewebview2|widgets|phoneexperiencehost)\.exe$'
+# ---------------------------------------------------------------- Réparation automatique de Windows (SrtTrail.txt)
+# Quand Windows rate deux démarrages de suite, il lance tout seul sa « Réparation automatique » et note ce qu'il a trouvé
+# dans C:\Windows\System32\LogFiles\Srt\SrtTrail.txt (« Root cause found » / « Cause racine trouvée »).
+# Lecture d'un journal (texte), rien n'est modifié.
+function Get-SrtTrailInfo([string]$Text) {
+    $r = @{ Causes = @(); Attempts = 0; Failed = $false }
+    if (-not $Text) { return $r }
+    if ($Text -match '(?im)^\s*(Number of repair attempts|Nombre de tentatives de r[ée]paration)\s*:\s*(\d+)') { $r.Attempts = [int]$matches[2] }
+    $causes = New-Object System.Collections.ArrayList
+    foreach ($m in [regex]::Matches($Text, '(?im)^\s*(Root cause found|Cause (racine|principale) trouv[ée]e)\s*:?\s*\r?\n\s*-{3,}\s*\r?\n\s*(?<c>[^\r\n]+)')) {
+        $c = $m.Groups['c'].Value.Trim()
+        if ($c -and $causes -notcontains $c) { [void]$causes.Add($c) }
+    }
+    $r.Causes = @($causes)
+    $r.Failed = ($Text -match '(?i)(Result|R[ée]sultat)\s*:\s*(Failed|[ÉE]chec)')
+    return $r
+}
+# Une cause du journal, dite simplement : @{ Text ; Kind = 'file' | 'driver' | 'patch' | 'bcd' | 'disk' | 'registry' | 'other' ; Name }
+function ConvertTo-SrtCause([string]$Cause) {
+    $c = "$Cause"
+    if ($c -match '(?i)([a-z]:\\[^ ]*\\drivers\\([\w.-]+\.sys))') { return @{ Kind = 'driver'; Name = $matches[2]; Text = ("Un pilote indispensable au démarrage est abîmé ou ne se charge plus : {0}." -f $matches[2]) } }
+    if ($c -match '(?i)(boot critical file|fichier critique)[^:]*?([a-z]:\\[^ ]+)') { return @{ Kind = 'file'; Name = $matches[2]; Text = ("Un fichier indispensable au démarrage est abîmé : {0}." -f $matches[2]) } }
+    if ($c -match '(?i)patch|correctif|mise à jour|update') { return @{ Kind = 'patch'; Name = ''; Text = "Une mise à jour de Windows a mal tourné (installation coupée ou ratée) et empêchait le démarrage." } }
+    if ($c -match '(?i)boot configuration|BCD|configuration de d[ée]marrage|boot manager|gestionnaire de d[ée]marrage') { return @{ Kind = 'bcd'; Name = ''; Text = "La configuration de démarrage de Windows (BCD) était abîmée." } }
+    if ($c -match '(?i)disk|disque|volume|ntfs|metadata|m[ée]tadonn[ée]es|sector|secteur') { return @{ Kind = 'disk'; Name = ''; Text = "Le disque de Windows avait des erreurs (système de fichiers abîmé ou disque qui fatigue)." } }
+    if ($c -match '(?i)registry|registre|hive') { return @{ Kind = 'registry'; Name = ''; Text = "Le registre de Windows était abîmé." } }
+    return @{ Kind = 'other'; Name = ''; Text = $c }
+}
+function Test-StartupRepair {
+    $f = Join-Path $env:SystemRoot 'System32\LogFiles\Srt\SrtTrail.txt'
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return }
+    $it = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if (-not $it) { return }
+    $since = Get-StabilitySince 'autorepair' (Get-Date).AddDays(-30)
+    if ($it.LastWriteTime -lt $since) { Log ("   • Réparation automatique de Windows : dernière le {0:dd/MM/yyyy}, plus ancienne que 30 jours" -f $it.LastWriteTime); return }
+    $txt = ''; try { $txt = Get-Content -LiteralPath $f -Raw -ErrorAction Stop } catch {}
+    $info = Get-SrtTrailInfo $txt
+    $cs = @($info.Causes | ForEach-Object { ConvertTo-SrtCause $_ })
+    $when = $it.LastWriteTime.ToString('dd/MM à HH:mm')
+    $detail = if ($cs.Count) { ($cs | ForEach-Object { $_.Text }) -join ' ' } else { "Windows n'a pas trouvé de cause précise." }
+    $cause = if ($cs.Count) { "Windows a raté deux démarrages de suite, puis a cherché la panne : " + $detail } else { "Windows a raté deux démarrages de suite sans trouver de panne précise : c'est presque toujours le courant coupé pendant que le PC démarre ou s'éteint (multiprise, bouton maintenu, prise débranchée), une mise à jour interrompue, ou un disque qui fatigue." }
+    $steps = New-Object System.Collections.ArrayList
+    [void]$steps.Add("Avant de débrancher le PC ou de couper la multiprise : Démarrer > Arrêter, puis attends que tout soit éteint (ventilateurs et lumières).")
+    $kinds = @($cs | ForEach-Object { $_.Kind })
+    if ($kinds -contains 'driver') { [void]$steps.Add(("Le pilote {0} : réinstalle le logiciel ou le pilote d'où il vient (carte graphique, carte son, anti-cheat de jeu, antivirus…), ou désinstalle-le s'il ne sert plus." -f (@($cs | Where-Object { $_.Kind -eq 'driver' })[0].Name))) }
+    if ($kinds -contains 'patch') { [void]$steps.Add("Laisse Windows Update finir ses mises à jour, sans éteindre le PC pendant « Ne pas éteindre l'ordinateur ».") }
+    if ($kinds -contains 'disk') { [void]$steps.Add("Lance « Vérifier le disque » (onglet Réparation) et sauvegarde tes fichiers importants.") }
+    [void]$steps.Add("Clique sur le bouton : AEROX répare les fichiers de Windows (15 à 45 minutes).")
+    [void]$steps.Add("Si l'écran « Réparation automatique » revient : envoie un rapport de bug depuis AEROX dès que Windows redémarre, le développeur te dira quoi faire.")
+    Add-Issue -Id 'autorepair' -Sev 'crit' -Title ("Windows n'a pas réussi à démarrer et a lancé sa réparation automatique (le {0})" -f $when) `
+        -Detail $(if ($info.Attempts -gt 1) { "$($info.Attempts) tentatives de réparation · $detail" } else { $detail }) -Cause $cause `
+        -Effect "Si ça recommence, le PC peut rester bloqué sur l'écran bleu « Réparation automatique » et ne plus démarrer du tout." `
+        -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nContinuer ?" `
+        -Steps @($steps)
+}
 function Test-Stability {
     $since = Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)
     $bsod = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since } -ErrorAction SilentlyContinue)
@@ -3316,10 +3371,14 @@ function Test-Stability {
         $steps = @()
         if ($btn) { $cause += " Maintenir le bouton, c'est ce qu'on fait quand le PC est figé : le vrai problème, c'est ce qui le fige."; $steps += "Le PC se fige avant ? Regarde les autres alertes (pilote graphique, écrans bleus, plantages) : c'est souvent le pilote de la carte graphique ou une surchauffe." }
         if ($sleep) { $cause += " Les coupures pendant la mise en veille viennent souvent d'un pilote (carte graphique, Wi-Fi) ou du démarrage rapide de Windows."; $steps += "Mets à jour le pilote graphique et Wi-Fi ; si ça continue, désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons)." }
+        $cutDays = @($kp | Group-Object { $_.TimeCreated.ToString('yyyy-MM-dd') }).Count
+        if ($cut -ge 3 -and $cutDays -ge 3 -and -not $btn) { $cause += " Ça arrive presque à chaque utilisation ($cutDays jours différents) : le PC est très probablement coupé au courant (multiprise, prise débranchée) sans avoir été éteint avant. C'est ce qui abîme les fichiers de démarrage de Windows."; $steps += "Avant de débrancher le PC ou d'éteindre la multiprise : Démarrer > Arrêter, puis attends que tout soit éteint." }
         if ($cut) { $cause += " Une coupure nette sans bouton, c'est le courant (multiprise, coupure), l'alimentation du PC qui flanche sous la charge, ou une surchauffe."; $steps += "Si ça arrive surtout en jeu : poussière, ventilateurs, et l'alimentation du PC (bloc d'alim) peut être trop faible ou fatiguée."; $steps += "Branche le PC directement au mur (sans multiprise douteuse) pour éliminer le courant." }
         Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" -Cause $cause `
             -Effect "Risque de fichiers abîmés et de perte de travail." -Steps $steps
     }
+
+    try { Test-StartupRepair } catch { Log "   • Réparation automatique de Windows : journal illisible" }
 
     # Le pilote graphique qui « cesse de répondre et récupère » : écran noir quelques secondes qui revient tout seul,
     # jeu qui se fige ou se ferme. Toutes les traces que Windows en garde sont réunies (événement 4101, erreurs du pilote,

@@ -1409,7 +1409,7 @@ function Start-Background([string]$Code) {
 function Start-IssueCheck($I) {
     # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
     # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
-    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs') { Set-StabilityFixed $I.Id; return $false }
+    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
@@ -1693,7 +1693,7 @@ function Invoke-UiCommand($T) {
             'done' {
                 $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title)
                 # Problème lu dans l'historique de Windows (extinctions, plantages…) : « c'est fait » = seuls les nouveaux comptent désormais
-                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs') { Set-StabilityFixed $T.Issue.Id }
+                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair') { Set-StabilityFixed $T.Issue.Id }
                 Update-DiagBadge; Refresh-Page
             }
             'openurl' { [void](Open-Url $T.Url) }
@@ -2843,6 +2843,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.1.0' = @("Diagnostic : AEROX repère quand Windows n'a pas réussi à démarrer et a lancé sa « Réparation automatique » (l'écran bleu qui parle du fichier SrtTrail.txt), t'explique la cause en français et répare les fichiers de Windows.",
+                "Diagnostic : si le PC est coupé au courant presque à chaque fois sans avoir été éteint, AEROX te le dit clairement (c'est ce qui abîme le démarrage de Windows).")
     '3.0.0' = @("Nouveau look : couleurs de la marque en dégradé, onglet ouvert mieux repéré, cases à cocher, listes déroulantes, curseurs et info-bulles aux couleurs d'AEROX, barre de titre sombre, jauges de mémoire et de disque sur l'accueil.",
                 "Textes plus naturels : « 1 fichier », « 3 fichiers » au lieu de « fichier(s) ».",
                 "Fenêtre des logiciels installés : les boutons du bas restent toujours visibles, même sur un petit écran.",
