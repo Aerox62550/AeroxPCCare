@@ -113,6 +113,22 @@ function Invoke-Smoke {
         foreach ($d in @(Get-Displays)) { $nat = Get-EdidNative (Get-MonitorEdid $d.MonId); Write-Host ("        {0} : max {1}x{2}, fiche EDID {3}, carte {4}" -f $d.Name, $d.MaxW, $d.MaxH, $(if ($nat) { "$($nat.W)x$($nat.H)" } else { 'illisible' }), $d.Gpu) }
         Test-NvmeLink
     }
+    # 3.1.0 : réparation automatique de Windows (SrtTrail.txt), lue et expliquée
+    Smoke 'Réparation automatique : journal SrtTrail' {
+        $en = "Number of repair attempts: 2`r`n`r`nRoot cause found:`r`n---------------------------`r`nBoot critical file c:\windows\system32\drivers\vgk.sys is corrupt.`r`n`r`nRepair action: File repair`r`nResult: Failed. Error code =  0x2"
+        $i = Get-SrtTrailInfo $en
+        if ($i.Attempts -ne 2 -or @($i.Causes).Count -ne 1 -or -not $i.Failed) { throw "journal anglais mal lu" }
+        $c = ConvertTo-SrtCause $i.Causes[0]; if ($c.Kind -ne 'driver' -or $c.Name -ne 'vgk.sys') { throw "pilote abîmé mal reconnu : $($c.Kind) $($c.Name)" }
+        $fr = "Nombre de tentatives de réparation : 1`r`n`r`nCause racine trouvée :`r`n---------------------------`r`nUn correctif empêche le système de démarrer."
+        $i = Get-SrtTrailInfo $fr
+        if (@($i.Causes).Count -ne 1 -or (ConvertTo-SrtCause $i.Causes[0]).Kind -ne 'patch') { throw "journal français mal lu" }
+        if ((ConvertTo-SrtCause 'Boot configuration data store is corrupt.').Kind -ne 'bcd') { throw "BCD mal reconnu" }
+        if (@((Get-SrtTrailInfo "Number of root causes = 0").Causes).Count) { throw "cause inventée" }
+        # Vrai fichier du PC de test (s'il existe) : lu sans planter
+        $keep = $script:Issues
+        try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
+        finally { $script:Issues = $keep }
+    }
     Smoke 'Accords des pluriels' {
         $cases = @(@('1 fichier(s) en quarantaine', '1 fichier en quarantaine'), @('5 problème(s) trouvé(s), dont 1 réparable(s).', '5 problèmes trouvés, dont 1 réparable.'),
                    @('+ 3 autre(s) jeu(x)', '+ 3 autres jeux'), @('Carte(s) graphique(s)', 'Carte(s) graphique(s)'), @('Version 2.9.0 : 3 fichier(s)', 'Version 2.9.0 : 3 fichiers'), @('24 POINT(S) VÉRIFIÉ(S)', '24 POINTS VÉRIFIÉS'))
