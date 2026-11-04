@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.1.1 : Discord en écran noir (pote de Sam, 04/11)
+## Publié en 3.1.1 : Discord en écran noir (pote de Sam, 04/11)
 
 - « Discord bugue » ne réglait pas l'écran noir au démarrage. Maintenant : caches vidés aussi pour les service workers, accélération matérielle coupée dans `settings.json` (autres réglages gardés, annulable dans l'historique), mode de compatibilité forcé retiré, Discord relancé sur le compte de la personne (jamais en administrateur). 2e clic en moins de 3 jours (ou installation abîmée) : « Réinstaller Discord proprement » (programme à la corbeille, page officielle de téléchargement ouverte ; compte et réglages gardés).
 
