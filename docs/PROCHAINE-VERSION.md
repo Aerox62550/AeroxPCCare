@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.2.0 : Discord qui plante, réparé sans réinstaller (04/11)
+
+- Rapport #28 : après la 3.1.1 Discord marchait, puis s'est coupé d'un coup et est reparti en écran noir/gris. Sam : « le but c'est que ça répare vraiment sans réinstaller ».
+- Plantages et blocages de Discord des 7 derniers jours lus dans le journal Application (1000 « Application Error », 1002 « Application Hang »), fichier fautif rangé : pilote NVIDIA / AMD / Intel, RivaTuner, Overwolf, overlay Steam, logiciel de capture, audio (Nahimic, Sonic Studio, Sonar…), antivirus, fichier de Discord lui-même, fichier de Windows. Conseil précis par coupable (erreur avec étapes), tout est dans le journal donc dans le rapport de bug.
+- Composants de Discord remis à neuf sans réinstaller : dossier « modules » de la version utilisée à la corbeille (Discord le retélécharge au lancement), anciennes versions et SquirrelTemp retirées. Fait tout de suite si le plantage vient des fichiers de Discord, sinon au 2e clic. Réinstallation propre proposée seulement au 3e clic (ou installation abîmée).
+
 ## Publié en 3.1.1 : Discord en écran noir (pote de Sam, 04/11)
 
 - « Discord bugue » ne réglait pas l'écran noir au démarrage. Maintenant : caches vidés aussi pour les service workers, accélération matérielle coupée dans `settings.json` (autres réglages gardés, annulable dans l'historique), mode de compatibilité forcé retiré, Discord relancé sur le compte de la personne (jamais en administrateur). 2e clic en moins de 3 jours (ou installation abîmée) : « Réinstaller Discord proprement » (programme à la corbeille, page officielle de téléchargement ouverte ; compte et réglages gardés).

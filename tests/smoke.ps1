@@ -787,7 +787,15 @@ function Invoke-Smoke {
             if ($j.BACKGROUND_COLOR -ne '#202225' -or $j.MINIMIZE_TO_TRAY -ne $false) { throw "autres réglages de Discord perdus" }
             if (@($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' }).Count) { throw "réinstallation proposée dès le 1er clic" }
             Repair-Discord
-            if (-not @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' -and $_.FixAction -eq 'Remove-DiscordLeftovers' }).Count) { throw "réinstallation propre pas proposée au 2e clic" }
+            if (@($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' }).Count) { throw "réinstallation proposée dès le 2e clic (il faut d'abord remettre à neuf sans réinstaller)" }
+            Repair-Discord
+            if (-not @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' -and $_.FixAction -eq 'Remove-DiscordLeftovers' }).Count) { throw "réinstallation propre pas proposée au 3e clic" }
+            # Qui fait planter Discord : d'après le fichier fautif noté par Windows
+            $inst = 'C:\Users\x\AppData\Local\Discord'
+            foreach ($t in @(@('nvwgf2umx.dll', '', 'gpu'), @('atidxx64.dll', '', 'gpu'), @('RTSSHooks64.dll', '', 'overlay'), @('NahimicOSD.dll', '', 'audio'), @('discord_voice.node', '', 'self'),
+                             @('ffmpeg.dll', "$inst\app-1.0.9200\ffmpeg.dll", 'self'), @('ntdll.dll', 'C:\Windows\SYSTEM32\ntdll.dll', 'system'), @('aswhook.dll', '', 'security'), @('truc.dll', '', 'other'))) {
+                $k = (Get-CrashCulprit $t[0] $t[1] $inst).Kind; if ($k -ne $t[2]) { throw "« $($t[0]) » rangé en « $k » au lieu de « $($t[2]) »" }
+            }
             if (-not (Test-SafeUndo 'Set-DiscordHwAccel $true')) { throw "annulation refusée" }
             Set-DiscordHwAccel $true | Out-Null
             if (([IO.File]::ReadAllText($dcSet) | ConvertFrom-Json).enableHardwareAcceleration -ne $true) { throw "annulation sans effet" }

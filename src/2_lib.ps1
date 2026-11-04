@@ -4243,10 +4243,13 @@ function Repair-Clock {
 function Repair-Discord {
     Step "Discord : réparation"
     $roam = Get-SessionFolder 'AppData'; $loc = Get-SessionFolder 'Local AppData'
-    # 2e passage en moins de 3 jours : la réparation simple n'a pas suffi → réinstallation propre proposée
+    # Réparations répétées en moins de 3 jours : 2e fois → composants de Discord retéléchargés (sans réinstaller),
+    # 3e fois → réinstallation propre proposée
     $mark = Join-Path $AppInfo.LogDir 'discord-reparation.txt'
-    $again = $false; try { if (Test-Path -LiteralPath $mark) { $again = ((Get-Date) - (Get-Item -LiteralPath $mark).LastWriteTime).TotalDays -lt 3 } } catch {}
-    try { [IO.File]::WriteAllText($mark, (Get-Date).ToString('s')) } catch {}
+    $n = 1
+    try { if (Test-Path -LiteralPath $mark) { $prev = [IO.File]::ReadAllText($mark).Trim() -split '\|'; if (((Get-Date) - [datetime]$prev[0]).TotalDays -lt 3) { $n = [int]$prev[1] + 1 } } } catch { $n = 1 }
+    try { [IO.File]::WriteAllText($mark, ("{0}|{1}" -f (Get-Date).ToString('s'), $n)) } catch {}
+    $again = ($n -ge 3)
     # 1. Fermer Discord (sinon ses fichiers sont verrouillés)
     $ps = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(Discord|DiscordPTB|DiscordCanary)$' -or ($_.ProcessName -eq 'Update' -and "$($_.Path)" -match '(?i)\\Discord') })
     if ($ps.Count) { $ps | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Log "   ✔ Discord fermé" }
@@ -4275,17 +4278,43 @@ function Repair-Discord {
             Add-Change -Kind 'info' -Title ("Discord : mode de compatibilité retiré ({0})" -f $old.Trim()) -Detail $n
         }
     } catch {}
-    # 5. Installation abîmée (cause n° 1 de « Installation has failed »)
+    # 5. Pourquoi Discord plante : le fichier fautif noté par Windows ces 7 derniers jours
     $inst = Join-Path $loc 'Discord'
+    $cr = @(Get-DiscordCrashes $inst)
+    $selfBroken = $false
+    if ($cr.Count) {
+        $crashes = @($cr | Where-Object { $_.Kind -eq 'crash' }); $hangs = @($cr | Where-Object { $_.Kind -eq 'hang' })
+        Log ("   • Discord a planté {0} fois et s'est figé {1} fois ces 7 derniers jours (dernière fois le {2:dd/MM à HH:mm})" -f $crashes.Count, $hangs.Count, $cr[0].Time)
+        $seen = @{}
+        foreach ($c in $crashes) {
+            $cul = Get-CrashCulprit $c.Module $c.ModulePath $inst
+            if ($seen.ContainsKey($cul.Name)) { continue }; $seen[$cul.Name] = $true
+            $nb = @($crashes | Where-Object { (Get-CrashCulprit $_.Module $_.ModulePath $inst).Name -eq $cul.Name }).Count
+            Log ("   ⚠ Cause : {0} ({1} fois, fichier {2}{3}). {4}" -f $cul.Name, $nb, $c.Module, $(if ($c.Code) { ", code $($c.Code)" } else { '' }), $cul.Advice)
+            if ($cul.Kind -in 'self', 'system') { $selfBroken = $true }
+            elseif ($cul.Kind -ne 'other') {
+                Add-TaskError -Title ("Discord plante à cause de {0}" -f $cul.Name) -Cause ("Windows a noté {0} plantage(s) de Discord dans le fichier {1}." -f $nb, $c.Module) -Effect "Discord se coupe d'un coup puis repart sur un écran noir ou gris." -Steps @($cul.Advice)
+            }
+        }
+        if ($hangs.Count -and -not $crashes.Count) { Log "   • Discord se fige sans planter : souvent la carte graphique ou la connexion. L'accélération matérielle est maintenant coupée." }
+    } else { Log "   ✔ Aucun plantage de Discord noté par Windows ces 7 derniers jours" }
+    # 6. Composants de Discord abîmés (plantage dans ses propres fichiers, ou 2e réparation) : retéléchargés sans réinstaller
+    if ($selfBroken -or $n -eq 2) {
+        if (Reset-DiscordModules $inst) {
+            Log "   ✔ Composants de Discord remis à neuf : ils se retéléchargent tout seuls au lancement (« Installation des mises à jour… »). Tes messages, serveurs et réglages sont gardés."
+            Add-Change -Kind 'info' -Title "Discord : composants retéléchargés (sans réinstaller)" -Detail "L'ancien dossier « modules » est dans la corbeille."
+        } elseif (Test-Path -LiteralPath (Join-Path $inst 'Update.exe')) { Log "   • Composants de Discord : rien à remettre à neuf" }
+    }
+    # 7. Installation abîmée (cause n° 1 de « Installation has failed »)
     $broken = (Test-Path -LiteralPath $inst) -and -not (Test-Path -LiteralPath (Join-Path $inst 'Update.exe'))
     if ($broken -or $again) {
-        $why = if ($broken) { "Un ancien dossier de Discord à moitié supprimé bloque Discord et sa réinstallation." } else { "La réparation a déjà été faite il y a peu et Discord bugue encore : son programme est sans doute abîmé." }
+        $why = if ($broken) { "Un ancien dossier de Discord à moitié supprimé bloque Discord et sa réinstallation." } else { "Discord a déjà été réparé 2 fois ces derniers jours (cache, accélération matérielle, composants retéléchargés) et bugue encore : son programme est sans doute abîmé." }
         Log ("   ⚠ {0}" -f $why)
         Add-TaskError -Title "Discord : une réinstallation propre est nécessaire" -Cause $why -Effect "Tes messages et serveurs sont sur ton compte Discord : rien n'est perdu." `
             -FixLabel "Réinstaller Discord proprement" -FixAction 'Remove-DiscordLeftovers' -Confirm "Le programme Discord va être fermé et mis à la corbeille, puis la page officielle de téléchargement s'ouvre : installe Discord depuis là.`n`nTes messages, serveurs et réglages sont gardés (sur ton compte et dans ton dossier Discord). Il faudra peut-être te reconnecter.`n`nContinuer ?" `
             -Steps @("Clique sur « Réinstaller Discord proprement ».", "Télécharge Discord sur la page qui s'ouvre (discord.com) et installe-le.")
     }
-    # 6. Le site de téléchargement répond-il ? Sinon, pourquoi (DNS, heure, proxy, hosts, antivirus)
+    # 8. Le site de téléchargement répond-il ? Sinon, pourquoi (DNS, heure, proxy, hosts, antivirus)
     $why = Test-SiteReachable 'https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64'
     if ($why -eq 'ok') { Log "   ✔ Discord est joignable depuis ce PC" }
     else {
@@ -4293,12 +4322,62 @@ function Repair-Discord {
         Add-TaskError -Title "Discord n'est pas joignable depuis ce PC" -Cause $why -Effect "Discord reste sur un écran noir ou « Connexion… », et ne peut pas se mettre à jour." `
             -Steps @("Lance le diagnostic complet : il cherche ce qui bloque (proxy, fichier hosts, heure du PC, DNS).", "Si tu as un antivirus en plus de Windows Defender : désactive son « analyse web » pour tester.")
     }
-    # 7. Relance de Discord sur le compte de la personne (jamais avec les droits administrateur d'AEROX)
+    # 9. Relance de Discord sur le compte de la personne (jamais avec les droits administrateur d'AEROX)
     $upd = Join-Path $inst 'Update.exe'
     if (-not $broken -and -not $again -and (Test-Path -LiteralPath $upd)) {
-        if (Start-AsSessionUser $upd '--processStart Discord.exe') { Log "✅ Discord relancé. Toujours un écran noir ? Reclique sur « Réparer » : AEROX te proposera une réinstallation propre." }
-        else { Log "✅ Relance Discord. Toujours un écran noir ? Reclique sur « Réparer » : AEROX te proposera une réinstallation propre." }
+        $next = if ($n -le 1) { "Toujours un écran noir, ou il replante ? Reclique sur « Réparer » : AEROX remet à neuf ses composants, sans réinstaller." } else { "S'il bugue encore : reclique sur « Réparer », AEROX te proposera une réinstallation propre." }
+        if (Start-AsSessionUser $upd '--processStart Discord.exe') { Log "✅ Discord relancé. $next" } else { Log "✅ Relance Discord. $next" }
     }
+}
+# Qui fait planter un logiciel ? D'après le fichier fautif noté par Windows (événement « Application Error » 1000).
+# Renvoie @{ Kind = 'gpu' | 'overlay' | 'audio' | 'security' | 'self' | 'system' | 'other' ; Name ; Advice }
+function Get-CrashCulprit([string]$Module, [string]$ModulePath = '', [string]$AppDir = '') {
+    $m = "$Module".ToLowerInvariant(); $p = "$ModulePath"
+    if ($AppDir -and $p -and $p.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)) { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de Discord lui-même ($Module) : ses composants sont abîmés, AEROX les fait retélécharger." } }
+    if ($m -match '^(discord_[\w]+\.node|ffmpeg\.dll|libegl\.dll|libglesv2\.dll|vk_swiftshader\.dll|d3dcompiler_47\.dll)$') { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de Discord lui-même ($Module) : ses composants sont abîmés, AEROX les fait retélécharger." } }
+    if ($m -match '^(nvwgf2um|nvd3dum|nvoglv|nvldumd|nvcuda|nvapi|nvumdshim|nvgpucomp)') { return @{ Kind = 'gpu'; Name = 'pilote NVIDIA'; Advice = "Le pilote de la carte graphique NVIDIA fait planter Discord : mets-le à jour (onglet Mises à jour > Pilotes, ou GeForce Experience / NVIDIA App), ou réinstalle-le proprement." } }
+    if ($m -match '^(atidxx|amdxc|aticfx|atio6axx|amdihk|atiumd|amdenc|amfrt)') { return @{ Kind = 'gpu'; Name = 'pilote AMD'; Advice = "Le pilote de la carte graphique AMD fait planter Discord : mets-le à jour (AMD Software), ou réinstalle-le proprement." } }
+    if ($m -match '^(igd|igxelpicd|igc64|intel_gfx|igdumdim)') { return @{ Kind = 'gpu'; Name = 'pilote Intel'; Advice = "Le pilote graphique Intel fait planter Discord : mets-le à jour (Intel Driver & Support Assistant)." } }
+    if ($m -match 'rtsshooks|rtss|riva') { return @{ Kind = 'overlay'; Name = 'RivaTuner (MSI Afterburner)'; Advice = "RivaTuner (installé avec MSI Afterburner) s'accroche à Discord et le fait planter : dans RivaTuner, ajoute Discord.exe et mets « Application detection level » sur « None », ou ferme RivaTuner." } }
+    if ($m -match 'overwolf|ow-|owclient') { return @{ Kind = 'overlay'; Name = 'Overwolf'; Advice = "L'overlay Overwolf fait planter Discord : désactive-le pour Discord ou désinstalle Overwolf s'il ne sert plus." } }
+    if ($m -match 'gameoverlayrenderer') { return @{ Kind = 'overlay'; Name = "l'overlay Steam"; Advice = "L'overlay de Steam s'accroche à Discord : ferme Steam pour tester, ou désactive l'overlay Steam." } }
+    if ($m -match 'medal|obs-|graphics-hook|xsplit|nvspcap|bdcam|action_x64') { return @{ Kind = 'overlay'; Name = 'un logiciel de capture'; Advice = "Un logiciel d'enregistrement d'écran ($Module) s'accroche à Discord : ferme-le pour tester, ou mets-le à jour." } }
+    if ($m -match 'nahimic|a-volute|sonic|sstudio|ss3dev|sonar|nhapo|realtekapo|maxx') { return @{ Kind = 'audio'; Name = "le logiciel audio ($Module)"; Advice = "Un logiciel d'effets audio (Nahimic, Sonic Studio, SteelSeries Sonar…) s'accroche au son de Discord et le fait planter : mets-le à jour, ou désactive-le dans ses réglages (c'est une cause très connue)." } }
+    if ($m -match 'avast|avg|aswhook|bitdefender|atcuf|bdhkm|kaspersky|klhk|eset|ehdrv|norton|mcafee|mfehcs|sophos') { return @{ Kind = 'security'; Name = "l'antivirus ($Module)"; Advice = "L'antivirus s'accroche à Discord et le fait planter : mets-le à jour, ou ajoute Discord à ses programmes de confiance." } }
+    if ($m -match '^(ntdll|kernelbase|ucrtbase|msvcrt|vcruntime140|combase|user32|win32u)\.dll$') { return @{ Kind = 'system'; Name = $Module; Advice = "Plantage dans un fichier de Windows ($Module) : souvent les composants de Discord abîmés, ou la mémoire (RAM) instable." } }
+    return @{ Kind = 'other'; Name = $Module; Advice = "Fichier en cause : $Module." }
+}
+# Plantages et blocages de Discord notés par Windows ces 7 derniers jours
+function Get-DiscordCrashes([string]$InstDir) {
+    $out = New-Object System.Collections.ArrayList
+    $since = (Get-Date).AddDays(-7)
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $since })) {
+        $v = @($e.Properties | ForEach-Object { "$($_.Value)" })
+        if ($v.Count -lt 4 -or $v[0] -notmatch '(?i)^discord(ptb|canary)?\.exe$') { continue }
+        [void]$out.Add(@{ Time = $e.TimeCreated; Kind = 'crash'; Module = $v[3]; ModulePath = $(if ($v.Count -gt 11) { $v[11] } else { '' }); Code = $(if ($v.Count -gt 6) { $v[6] } else { '' }) })
+    }
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'Application'; ProviderName = 'Application Hang'; Id = 1002; StartTime = $since })) {
+        $v = @($e.Properties | ForEach-Object { "$($_.Value)" })
+        if ($v.Count -lt 1 -or $v[0] -notmatch '(?i)^discord(ptb|canary)?\.exe$') { continue }
+        [void]$out.Add(@{ Time = $e.TimeCreated; Kind = 'hang'; Module = ''; ModulePath = ''; Code = '' })
+    }
+    return @($out | Sort-Object { $_.Time } -Descending)
+}
+# Composants de Discord retéléchargés, sans réinstaller : le dossier « modules » de la version utilisée part à la corbeille
+# (Discord les retélécharge tout seul au lancement), les anciennes versions laissées derrière aussi.
+function Reset-DiscordModules([string]$InstDir) {
+    if (-not $InstDir -or -not (Test-Path -LiteralPath (Join-Path $InstDir 'Update.exe')) -or -not [AeroxSafeDelete]::IsDirectPath($InstDir)) { return $false }
+    $apps = @(Get-ChildItem -LiteralPath $InstDir -Directory -Filter 'app-*' -ErrorAction SilentlyContinue | Sort-Object { try { [version]($_.Name -replace '^app-', '') } catch { [version]'0.0' } } -Descending)
+    if (-not $apps.Count) { return $false }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $done = $false
+    $mods = Join-Path $apps[0].FullName 'modules'
+    if (Test-Path -LiteralPath $mods) {
+        try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($mods, 'OnlyErrorDialogs', 'SendToRecycleBin'); $done = -not (Test-Path -LiteralPath $mods) } catch {}
+    }
+    foreach ($old in @($apps | Select-Object -Skip 1)) { try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($old.FullName, 'OnlyErrorDialogs', 'SendToRecycleBin') } catch {} }
+    $tmp = Join-Path $InstDir 'packages\SquirrelTemp'; if (Test-Path -LiteralPath $tmp) { $null = Remove-PathContent $tmp }
+    return $done
 }
 # Accélération matérielle de Discord (fichier settings.json de la personne). Renvoie 'changed', 'already' ou '' (pas de Discord)
 function Set-DiscordHwAccel([bool]$On) {
