@@ -612,7 +612,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
+    $allowed = 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -4241,47 +4241,91 @@ function Repair-Clock {
 
 # ---------------------------------------------------------------- Discord qui bugue ou ne s'installe plus
 function Repair-Discord {
-    Step "Discord : vérification et réparation"
+    Step "Discord : réparation"
     $roam = Get-SessionFolder 'AppData'; $loc = Get-SessionFolder 'Local AppData'
+    # 2e passage en moins de 3 jours : la réparation simple n'a pas suffi → réinstallation propre proposée
+    $mark = Join-Path $AppInfo.LogDir 'discord-reparation.txt'
+    $again = $false; try { if (Test-Path -LiteralPath $mark) { $again = ((Get-Date) - (Get-Item -LiteralPath $mark).LastWriteTime).TotalDays -lt 3 } } catch {}
+    try { [IO.File]::WriteAllText($mark, (Get-Date).ToString('s')) } catch {}
     # 1. Fermer Discord (sinon ses fichiers sont verrouillés)
     $ps = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(Discord|DiscordPTB|DiscordCanary)$' -or ($_.ProcessName -eq 'Update' -and "$($_.Path)" -match '(?i)\\Discord') })
     if ($ps.Count) { $ps | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Log "   ✔ Discord fermé" }
-    # 2. Caches (Discord les recrée ; tu restes connecté, tes réglages sont gardés)
+    # 2. Caches, y compris ceux des « service workers » (cause fréquente de l'écran noir ou gris au démarrage).
+    #    Discord les recrée ; tu restes connecté, tes réglages sont gardés (« Local Storage » n'est pas touché).
     $freed = [double]0
     foreach ($v in 'discord', 'discordptb', 'discordcanary') {
-        foreach ($c in 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache') {
+        foreach ($c in 'Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'Service Worker\CacheStorage', 'Service Worker\ScriptCache', 'Shared Dictionary') {
             $d = Join-Path (Join-Path $roam $v) $c
             if (Test-Path -LiteralPath $d) { $before = [double][AeroxNative]::FolderSize($d); $null = Remove-PathContent $d; $freed += [math]::Max([double]0, $before - [double][AeroxNative]::FolderSize($d)) }
         }
     }
-    Log ("   ✔ Cache de Discord vidé ({0}) : ça règle la plupart des bugs d'affichage, d'écran gris ou de chargement sans fin" -f (Format-Size $freed))
-    # 3. Installation abîmée (cause n° 1 de « Installation has failed »)
+    Log ("   ✔ Cache de Discord vidé ({0})" -f (Format-Size $freed))
+    # 3. Accélération matérielle coupée : la cause n° 1 de l'écran noir au démarrage (pilote graphique qui ne suit pas)
+    $hw = Set-DiscordHwAccel $false
+    if ($hw -eq 'changed') { Log "   ✔ Accélération matérielle de Discord désactivée (cause la plus courante de l'écran noir)"; Add-Change -Title "Discord : accélération matérielle désactivée" -Detail "Règle l'écran noir ou gris au démarrage de Discord. Tu peux la réactiver dans Discord : Paramètres > Avancés." -Undo 'Set-DiscordHwAccel $true' }
+    elseif ($hw -eq 'already') { Log "   • Accélération matérielle de Discord déjà désactivée" }
+    # 4. Mode de compatibilité forcé sur Discord (Windows 7, administrateur…) : il l'empêche souvent de s'afficher
+    $lk = "$((Get-SessionUser).Hkcu)\Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers"
+    try {
+        $item = Get-Item -LiteralPath $lk -ErrorAction Stop
+        foreach ($n in @($item.GetValueNames() | Where-Object { $_ -match '(?i)\\Discord(PTB|Canary)?\\' })) {
+            $old = "$($item.GetValue($n))"
+            Remove-ItemProperty -LiteralPath $lk -Name $n -ErrorAction Stop
+            Log ("   ✔ Mode de compatibilité retiré de {0} ({1})" -f (Split-Path $n -Leaf), $old.Trim())
+            Add-Change -Kind 'info' -Title ("Discord : mode de compatibilité retiré ({0})" -f $old.Trim()) -Detail $n
+        }
+    } catch {}
+    # 5. Installation abîmée (cause n° 1 de « Installation has failed »)
     $inst = Join-Path $loc 'Discord'
-    if ((Test-Path -LiteralPath $inst) -and -not (Test-Path -LiteralPath (Join-Path $inst 'Update.exe'))) {
-        Log "   ⚠ L'installation de Discord est incomplète (dossier sans son programme de mise à jour) : c'est ce qui fait échouer la réinstallation."
-        Add-TaskError -Title "Installation de Discord abîmée" -Cause "Un ancien dossier de Discord à moitié supprimé bloque la nouvelle installation." `
-            -FixLabel "Mettre l'ancien dossier à la corbeille" -FixAction 'Remove-DiscordLeftovers' -Confirm "L'ancien dossier du programme Discord ira à la corbeille (tes messages et serveurs sont sur Internet, rien n'est perdu ; il faudra peut-être te reconnecter).`n`nContinuer ?" `
-            -Steps @("Après ça, télécharge Discord sur discord.com et installe-le.")
+    $broken = (Test-Path -LiteralPath $inst) -and -not (Test-Path -LiteralPath (Join-Path $inst 'Update.exe'))
+    if ($broken -or $again) {
+        $why = if ($broken) { "Un ancien dossier de Discord à moitié supprimé bloque Discord et sa réinstallation." } else { "La réparation a déjà été faite il y a peu et Discord bugue encore : son programme est sans doute abîmé." }
+        Log ("   ⚠ {0}" -f $why)
+        Add-TaskError -Title "Discord : une réinstallation propre est nécessaire" -Cause $why -Effect "Tes messages et serveurs sont sur ton compte Discord : rien n'est perdu." `
+            -FixLabel "Réinstaller Discord proprement" -FixAction 'Remove-DiscordLeftovers' -Confirm "Le programme Discord va être fermé et mis à la corbeille, puis la page officielle de téléchargement s'ouvre : installe Discord depuis là.`n`nTes messages, serveurs et réglages sont gardés (sur ton compte et dans ton dossier Discord). Il faudra peut-être te reconnecter.`n`nContinuer ?" `
+            -Steps @("Clique sur « Réinstaller Discord proprement ».", "Télécharge Discord sur la page qui s'ouvre (discord.com) et installe-le.")
     }
-    # 4. Le site de téléchargement répond-il ? Sinon, pourquoi (DNS, heure, proxy, hosts, antivirus)
+    # 6. Le site de téléchargement répond-il ? Sinon, pourquoi (DNS, heure, proxy, hosts, antivirus)
     $why = Test-SiteReachable 'https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64'
-    if ($why -eq 'ok') { Log "   ✔ Le téléchargement de Discord est joignable depuis ce PC" }
+    if ($why -eq 'ok') { Log "   ✔ Discord est joignable depuis ce PC" }
     else {
-        Log "   ⚠ Le téléchargement de Discord ne passe pas : $why"
-        Add-TaskError -Title "Discord ne peut pas être téléchargé depuis ce PC" -Cause $why -Effect "L'installateur de Discord ne se télécharge pas." `
-            -Steps @("Lance le diagnostic complet : il cherche ce qui bloque (proxy, fichier hosts, heure du PC, DNS).", "Si tu as un antivirus en plus de Windows Defender : désactive son « analyse web » le temps du téléchargement.")
+        Log "   ⚠ Discord n'est pas joignable : $why"
+        Add-TaskError -Title "Discord n'est pas joignable depuis ce PC" -Cause $why -Effect "Discord reste sur un écran noir ou « Connexion… », et ne peut pas se mettre à jour." `
+            -Steps @("Lance le diagnostic complet : il cherche ce qui bloque (proxy, fichier hosts, heure du PC, DNS).", "Si tu as un antivirus en plus de Windows Defender : désactive son « analyse web » pour tester.")
     }
-    Log "✅ Relance Discord. S'il ne s'ouvre plus du tout : réinstalle-le depuis discord.com (tes serveurs et messages sont gardés sur ton compte)."
+    # 7. Relance de Discord sur le compte de la personne (jamais avec les droits administrateur d'AEROX)
+    $upd = Join-Path $inst 'Update.exe'
+    if (-not $broken -and -not $again -and (Test-Path -LiteralPath $upd)) {
+        if (Start-AsSessionUser $upd '--processStart Discord.exe') { Log "✅ Discord relancé. Toujours un écran noir ? Reclique sur « Réparer » : AEROX te proposera une réinstallation propre." }
+        else { Log "✅ Relance Discord. Toujours un écran noir ? Reclique sur « Réparer » : AEROX te proposera une réinstallation propre." }
+    }
+}
+# Accélération matérielle de Discord (fichier settings.json de la personne). Renvoie 'changed', 'already' ou '' (pas de Discord)
+function Set-DiscordHwAccel([bool]$On) {
+    $f = Join-Path (Join-Path (Get-SessionFolder 'AppData') 'discord') 'settings.json'
+    if (-not (Test-Path -LiteralPath (Split-Path $f -Parent))) { return '' }
+    if (-not [AeroxSafeDelete]::IsDirectPath((Split-Path $f -Parent))) { return '' }
+    $j = $null
+    if (Test-Path -LiteralPath $f) { try { $j = [IO.File]::ReadAllText($f) | ConvertFrom-Json -ErrorAction Stop } catch { $j = $null } }
+    if ($null -eq $j) { $j = New-Object PSObject }
+    $cur = $j.PSObject.Properties['enableHardwareAcceleration']
+    if ($cur -and [bool]$cur.Value -eq $On) { return 'already' }
+    if (-not $cur -and $On) { return 'already' }   # absent = activée (réglage d'origine)
+    if ($cur) { $j.enableHardwareAcceleration = $On } else { $j | Add-Member -NotePropertyName 'enableHardwareAcceleration' -NotePropertyValue $On }
+    [IO.File]::WriteAllText($f, ($j | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+    if ($On) { Log "   ✔ Accélération matérielle de Discord réactivée" }
+    return 'changed'
 }
 function Remove-DiscordLeftovers {
-    Step "Ancien dossier de Discord à la corbeille"
+    Step "Discord : programme mis à la corbeille avant réinstallation"
     $inst = Join-Path (Get-SessionFolder 'Local AppData') 'Discord'
-    if (-not (Test-Path -LiteralPath $inst) -or -not [AeroxSafeDelete]::IsDirectPath($inst)) { Log "   • Rien à retirer."; return }
-    Get-Process -ErrorAction SilentlyContinue | Where-Object { "$($_.Path)" -like "$inst\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $inst) -or -not [AeroxSafeDelete]::IsDirectPath($inst)) { Log "   • Rien à retirer : installe Discord depuis discord.com."; [void](Open-Url 'https://discord.com/download'); return }
+    Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(Discord|DiscordPTB|DiscordCanary)$' -or "$($_.Path)" -like "$inst\*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
     Add-Type -AssemblyName Microsoft.VisualBasic
     [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($inst, 'OnlyErrorDialogs', 'SendToRecycleBin')
     if (Test-Path -LiteralPath $inst) { Add-TaskError -Title "L'ancien dossier de Discord n'a pas pu être retiré" -Cause "Un fichier est encore utilisé." -Steps @("Redémarre le PC puis réessaie.") }
-    else { Log "   ✔ Ancien dossier mis à la corbeille. Installe maintenant Discord depuis discord.com."; [void](Open-Url 'https://discord.com/download') }
+    else { Log "   ✔ Ancien programme Discord mis à la corbeille. Installe maintenant Discord depuis la page officielle qui s'ouvre (discord.com)."; Add-Change -Kind 'info' -Title "Discord : ancien programme mis à la corbeille pour une réinstallation propre"; [void](Open-Url 'https://discord.com/download') }
 }
 # Un site répond-il ? « ok », ou la raison en mots simples
 function Test-SiteReachable([string]$Url) {

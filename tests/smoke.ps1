@@ -772,7 +772,30 @@ function Invoke-Smoke {
         $script:Issues = New-Object System.Collections.ArrayList; $script:OkList = New-Object System.Collections.ArrayList; $script:IgnoredList = New-Object System.Collections.ArrayList
         Test-NetBlockers; Write-Host ("        problèmes : {0} · OK : {1}" -f (($script:Issues | ForEach-Object { $_.Id }) -join ', '), ($script:OkList -join ' | '))
     }
-    Smoke 'Dépannage : Discord' { Repair-Discord }
+    # Discord (3.1.1) : écran noir → accélération matérielle coupée (réglages gardés), 2e clic → réinstallation propre proposée
+    $dcDir = Join-Path (Get-SessionFolder 'AppData') 'discord'; $dcSet = Join-Path $dcDir 'settings.json'
+    $dcOld = $(if (Test-Path -LiteralPath $dcSet) { [IO.File]::ReadAllText($dcSet) } else { $null })
+    try {
+        New-Item -ItemType Directory -Force -Path $dcDir | Out-Null
+        [IO.File]::WriteAllText($dcSet, '{"BACKGROUND_COLOR":"#202225","enableHardwareAcceleration":true,"MINIMIZE_TO_TRAY":false}')
+        Remove-Item -LiteralPath (Join-Path $AppInfo.LogDir 'discord-reparation.txt') -Force -ErrorAction SilentlyContinue
+        Smoke 'Dépannage : Discord' {
+            $e0 = $sync.Errors.Count
+            Repair-Discord
+            $j = [IO.File]::ReadAllText($dcSet) | ConvertFrom-Json
+            if ($j.enableHardwareAcceleration -ne $false) { throw "accélération matérielle pas coupée" }
+            if ($j.BACKGROUND_COLOR -ne '#202225' -or $j.MINIMIZE_TO_TRAY -ne $false) { throw "autres réglages de Discord perdus" }
+            if (@($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' }).Count) { throw "réinstallation proposée dès le 1er clic" }
+            Repair-Discord
+            if (-not @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' -and $_.FixAction -eq 'Remove-DiscordLeftovers' }).Count) { throw "réinstallation propre pas proposée au 2e clic" }
+            if (-not (Test-SafeUndo 'Set-DiscordHwAccel $true')) { throw "annulation refusée" }
+            Set-DiscordHwAccel $true | Out-Null
+            if (([IO.File]::ReadAllText($dcSet) | ConvertFrom-Json).enableHardwareAcceleration -ne $true) { throw "annulation sans effet" }
+        }
+    } finally {
+        if ($null -ne $dcOld) { [IO.File]::WriteAllText($dcSet, $dcOld) } else { Remove-Item -LiteralPath $dcSet -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath (Join-Path $AppInfo.LogDir 'discord-reparation.txt') -Force -ErrorAction SilentlyContinue
+    }
     Smoke 'BIOS : page du fabricant vérifiée avant ouverture' {
         $sync.SysInfo = $null; Find-BiosPage; $si = $sync.SysInfo
         if (-not $si) { throw "infos du PC non chargées" }
