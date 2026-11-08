@@ -2563,6 +2563,8 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
     $gwS = New-PingSeries (Get-GatewayIp); $netS = New-PingSeries '1.1.1.1'
     $null = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -ErrorAction SilentlyContinue   # 1re lecture : amorce les compteurs
     $null = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue
+    # Temps de réponse des disques : le vrai signe d'un SSD débordé (le % d'activité, lui, est mal mesuré sur les SSD)
+    $lat0 = @{}; try { foreach ($d in @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction Stop | Where-Object { $_.Name -ne '_Total' })) { $lat0[$d.Name] = $d } } catch {}
     $null = Get-NetThroughput
     $n = 7
     for ($i = 0; $i -lt $n; $i++) {
@@ -2619,6 +2621,14 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
         }
     }
     $avg = { param($l) if ($l.Count) { [math]::Round([double](($l | Measure-Object -Average).Average)) } else { 0 } }
+    $latMs = $null; $latDisk = ''; $wrSec = 0.0
+    try {
+        foreach ($d in @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction Stop | Where-Object { $_.Name -ne '_Total' })) {
+            $a = $lat0[$d.Name]; if (-not $a) { continue }
+            $v = Get-DiskLatencyMs $a $d
+            if ($null -ne $v -and ($null -eq $latMs -or $v -gt $latMs)) { $latMs = $v; $latDisk = "$($d.Name)" }
+        }
+    } catch {}
     $os = Get-CimInstance Win32_OperatingSystem
     $ramTot = [double]$os.TotalVisibleMemorySize * 1KB
     $ramPct = [math]::Round(100 * (1 - [double]$os.FreePhysicalMemory / [double]$os.TotalVisibleMemorySize))
@@ -2688,6 +2698,26 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
         [void]$f.Add(@{ Id = 'hdd'; Sev = 'warn'; Title = "Windows est installé sur un disque dur classique (HDD)"; Text = "Un disque dur mécanique est 5 à 10 fois plus lent qu'un SSD."; Advice = "C'est la meilleure amélioration possible pour ce PC : passer à un SSD (à partir d'environ 40 €). Un réparateur peut copier Windows dessus sans rien perdre."; Action = '' })
     }
     [void]$chk.Add(@{ Ok = ($rep.Disk -lt 70 -and -not $rep.Hdd); T = "Disque : $($rep.Disk) % d'activité" + $(if ($rep.Hdd) { ' (disque dur classique)' } else { ' (SSD)' }) })
+    # Temps de réponse du disque : sous 10 ms c'est normal pour un SSD ; au-delà de 50 ms, Windows attend à chaque clic
+    $rep.LatencyMs = $latMs
+    $slowDisk = ($null -ne $latMs -and $latMs -ge $(if ($rep.Hdd) { 80 } else { 30 }))
+    if ($null -ne $latMs) { [void]$chk.Add(@{ Ok = -not $slowDisk; T = "Temps de réponse du disque : $latMs ms" + $(if ($slowDisk) { '' } elseif ($rep.Hdd) { ' (normal pour un disque dur)' } else { ' (normal)' }) }) }
+    # Un jeu qui se télécharge et s'installe (Rockstar, Steam, Epic…) : il écrit en continu et peut noyer le disque
+    $dl = @($list | Where-Object { (Test-GameDownloader $_.Name) -and $_.Io -ge 5MB } | Sort-Object { - $_.Io })
+    $def = @($list | Where-Object { $_.Name -match '(?i)^msmpeng$' } | Select-Object -First 1)
+    $diskTxt = ($byIo | Select-Object -First 3 | Where-Object { $_.Io -gt 1MB } | ForEach-Object { "{0} : {1}/s" -f $_.Label, (Format-Size $_.Io) }) -join ' · '
+    if ($dl.Count) {
+        $g = $dl[0]
+        $bad = ($slowDisk -or $rep.Disk -ge 40)
+        $adv = "Mets le téléchargement en pause quand tu utilises le PC, ou limite sa vitesse dans " + $g.Label + " (Paramètres > Téléchargements). Laisse-le tourner à fond quand tu ne t'en sers pas : tout redevient normal à la fin."
+        if ($def.Count -and ($def[0].Cpu -ge 5 -or $def[0].Io -ge 2MB)) { $adv += " Windows Defender analyse en plus chaque fichier écrit, ce qui charge encore le disque : c'est normal, ça s'arrête avec le téléchargement." }
+        [void]$f.Add(@{ Id = 'telechargement-jeu'; Sev = $(if ($bad) { 'bad' } else { 'warn' })
+                        Title = $(if ($bad) { "Ton disque est noyé par un téléchargement de jeu : $($g.Label) écrit $(Format-Size $g.Io)/s" } else { "Un jeu se télécharge : $($g.Label) écrit $(Format-Size $g.Io)/s sur le disque" })
+                        Text = ($(if ($null -ne $latMs) { "Temps de réponse du disque : $latMs ms (normal : moins de 10 ms). " } else { '' }) + "Pendant qu'un jeu s'installe, le disque écrit sans arrêt : chaque clic, chaque page et Discord attendent derrière."); Advice = $adv; Action = '' })
+    } elseif ($slowDisk -and $rep.Disk -lt 70) {
+        [void]$f.Add(@{ Id = 'disque-lent'; Sev = 'bad'; Title = "Le disque met $latMs ms à répondre : Windows attend à chaque clic"; Text = $(if ($diskTxt) { "Ce qui écrit ou lit le plus : $diskTxt" } else { "Normal pour un SSD : moins de 10 ms." })
+                        Advice = $(if ($rep.Hdd) { "Windows est sur un disque dur classique : un SSD rendrait le PC plusieurs fois plus réactif." } else { "Souvent un gros téléchargement, une copie, une mise à jour ou un SSD presque plein. Attends la fin de ce qui écrit, ou mets-le en pause, et garde au moins 10 % de place libre sur le disque." }); Action = '' })
+    }
     # Carte graphique
     if ($rep.GpuOk) {
         $gtxt = ($byGpu | ForEach-Object { "{0} : {1} %" -f $_.Label, $_.Gpu }) -join ' · '
@@ -2729,7 +2759,7 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
         $lvl = Get-SystemDiskLevel $fr ([double]$cd.Size)
         $full = [bool]($lvl -or $fr -lt 10GB)
         if ($full) {
-            [void]$f.Add(@{ Id = 'disque-plein'; Sev = $(if ($lvl -eq 'crit' -or $fr -lt 5GB) { 'bad' } else { 'warn' }); Title = "Le disque $env:SystemDrive est presque plein ($(Format-Size $fr) libres)"; Text = "Avec si peu de place libre, Windows ralentit et les mises à jour peuvent échouer."; Advice = "Regarde ce qui prend de la place et supprime ce qui ne sert plus (jeux finis, vieux téléchargements)."; Action = 'space' })
+            [void]$f.Add(@{ Id = 'disque-plein'; Sev = $(if ($lvl -eq 'crit' -or $fr -lt 5GB) { 'bad' } else { 'warn' }); Title = "Le disque $env:SystemDrive est presque plein ($(Format-Size $fr) libres)"; Text = $(if ($rep.Hdd) { "Avec si peu de place libre, Windows ralentit et les mises à jour peuvent échouer." } else { "Seulement $pc % de libre : un SSD presque plein perd sa vitesse d'écriture (sa mémoire rapide est prise sur la place libre). Pendant un téléchargement ou une mise à jour, tout le PC rame. Garde au moins 10 à 15 % de libre." }); Advice = "Libère de la place (jeux finis, vieux téléchargements), ou installe tes gros jeux sur un autre disque."; Action = 'space' })
         }
         [void]$chk.Add(@{ Ok = -not $full; T = "Place libre sur $($env:SystemDrive) : $(Format-Size $fr) ($pc %)" })
     } catch {}
@@ -2984,11 +3014,28 @@ function Get-DriveList {
 # Disque de Windows presque plein ? Le pourcentage seul trompe (14 % libres sur 2 To = 280 Go, ce n'est pas « presque plein »),
 # et l'espace seul aussi : il faut peu de place en proportion ET en valeur absolue.
 # 'crit' : moins de 10 % ET moins de 20 Go ; 'warn' : moins de 15 % ET moins de 50 Go ; sinon ''.
+# Temps de réponse moyen d'un disque (ms) entre deux relevés bruts de Windows (« Moy. disque s/transfert »)
+function Get-DiskLatencyMs($A, $B) {
+    try {
+        $dn = [double]$B.AvgDisksecPerTransfer - [double]$A.AvgDisksecPerTransfer
+        $db = [double]$B.AvgDisksecPerTransfer_Base - [double]$A.AvgDisksecPerTransfer_Base
+        $fq = [double]$B.Frequency_PerfTime
+        if ($db -lt 20 -or $fq -le 0 -or $dn -lt 0) { return $null }   # trop peu d'accès pour conclure
+        return [math]::Round(1000 * ($dn / $fq) / $db)
+    } catch { return $null }
+}
+# Lanceurs de jeux qui téléchargent et installent (écritures massives sur le disque)
+function Test-GameDownloader([string]$Name) {
+    return ("$Name" -match '(?i)^(steam|steamservice|steamwebhelper|epicgameslauncher|epicwebhelper|rockstarservice|launcher|launcherpatcher|socialclubhelper|playgtav|battle\.net|agent|eadesktop|eabackgroundservice|origin|originwebhelperservice|upc|ubisoftconnect|uplaywebcore|galaxyclient|gogalaxy|xboxpcapp|gamingservices|riotclientservices|riotclientux|bsglauncher|wargaminggamecenter|minecraftlauncher)$')
+}
 function Get-SystemDiskLevel([double]$Free, [double]$Size) {
     if ($Size -le 0) { return '' }
     $pct = [math]::Round($Free / $Size * 100)
-    if ($pct -lt 10 -and $Free -lt 20GB) { return 'crit' }
-    if ($pct -lt 15 -and $Free -lt 50GB) { return 'warn' }
+    $ratio = $Free / $Size * 100
+    # Un SSD presque plein perd sa mémoire rapide (cache d'écriture pris sur la place libre) : sous 6 %, même un gros disque
+    # rame à chaque téléchargement ou mise à jour, quelle que soit la place en Go
+    if (($pct -lt 10 -and $Free -lt 20GB) -or $ratio -lt 6) { return 'crit' }
+    if (($pct -lt 15 -and $Free -lt 50GB) -or $ratio -lt 8) { return 'warn' }
     return ''
 }
 # Autres disques (jeux, fichiers) : plein si moins de 5 % ET moins de 20 Go
@@ -6644,6 +6691,9 @@ function Test-AeroxOfficialFile([string]$Path) {
     if ($h -and $all.ContainsKey($h)) { return $all[$h] }
     return ''
 }
+# Moteur d'installation standard (WiX « Burn », utilisé par Microsoft Visual C++, .NET, et beaucoup de pilotes et de jeux) :
+# il se décompresse dans Temp\{code}\.be\ ou .cr\, se lance puis s'efface. Normal, jamais une trace de virus.
+function Test-InstallerEngineTrace([string]$Path) { return ("$Path" -match '(?i)\\Temp\\\{[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}\}\\\.(be|cr)\\[^\\]+\.exe$') }
 # Désinstalleur : il se copie dans Temp, se lance puis s'efface (normal, il doit pouvoir supprimer son propre dossier)
 function Test-UninstallerName([string]$Name) { return ($Name -match '(?i)(uninst|unins\d{3}|^un_[a-z]\.exe$|^au_\.exe$|desinstall|désinstall)') }
 # Raccourci .lnk : programme visé et arguments (lecture seule, par l'outil de Windows)
@@ -7311,7 +7361,7 @@ function Get-SecRecent {
                 $fix = @(Get-FileFixes $path)
                 Add-SecItem -Rule 'lance-recemment' -Cat 'process' -Sev $risk.Sev -Title ("Lancé récemment : {0}" -f $name) -Path $path -Why ("{0} Dernier lancement le {1:dd/MM à HH:mm}." -f $risk.Why, $when) `
                     -Todo "Si tu ne le reconnais pas : coche-le (quarantaine), puis lance l'analyse hors ligne." -Fix $fix -FixLabel (Get-FixLabel $fix)
-            } elseif (($zone -in 'temp', 'downloads', 'public' -or (Get-SuspiciousPlacement $path)) -and -not (Test-UninstallerName $name)) {
+            } elseif (($zone -in 'temp', 'downloads', 'public' -or (Get-SuspiciousPlacement $path)) -and -not (Test-UninstallerName $name) -and -not (Test-InstallerEngineTrace $path)) {
                 Add-SecItem -Rule 'trace-recente' -Cat 'process' -Sev 'warn' -Title ("Trace : {0} lancé puis effacé" -f $name) -Path $path `
                     -Why ("Lancé le {0:dd/MM à HH:mm} depuis {1}, puis supprimé. C'est souvent un morceau de virus qui se télécharge, s'exécute et s'efface." -f $when, $script:SecZoneLabels[$zone]) `
                     -Todo "Si de nouvelles traces apparaissent après un redémarrage, l'infection est toujours là : lance l'analyse hors ligne, ou réinstalle Windows."

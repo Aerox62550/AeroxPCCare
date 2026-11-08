@@ -2,7 +2,14 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.2.0 : Discord qui plante, réparé sans réinstaller (04/11)
+## Prêt pour 3.2.0 : PC qui rame pendant un téléchargement, Discord qui plante, fausses traces d'installateurs
+
+- PC de Sam (08/11) : tout rame pendant le téléchargement de GTA sur C:, l'analyse « Ça rame » ne disait rien (disque 50 %, « Place libre 50 Go (5 %) » affiché en vert). Corrigé :
+  - Seuils du disque de Windows aussi en proportion : critique sous 6 % de libre, à surveiller sous 8 %, quelle que soit la taille (un SSD presque plein perd son cache d'écriture). Accueil, diagnostic, « Ça rame » et assistant de place suivent.
+  - « Ça rame » : temps de réponse des disques (compteurs bruts « Moy. disque s/transfert », relevés avant/après la mesure) ; SSD lent à partir de 30 ms, disque dur à partir de 80 ms. Lanceurs de jeux reconnus (Rockstar, Steam, Epic, EA, Battle.net, Ubisoft, GOG, Xbox, Riot…) quand ils écrivent ≥ 5 Mo/s : « Ton disque est noyé par un téléchargement de jeu », conseil pause / limite de vitesse, Defender mentionné s'il analyse en même temps.
+- Rapport de sécurité du frère de Sam (N7LCP6, PC réinstallé) : 8 fausses « traces » VC_redist (moteur WiX Burn dans Temp\{code}\.be\ et .cr\). Ce dossier d'installation standard n'est plus compté comme une trace.
+
+### Discord qui plante, réparé sans réinstaller (04/11)
 
 - Rapport #28 : après la 3.1.1 Discord marchait, puis s'est coupé d'un coup et est reparti en écran noir/gris. Sam : « le but c'est que ça répare vraiment sans réinstaller ».
 - Plantages et blocages de Discord des 7 derniers jours lus dans le journal Application (1000 « Application Error », 1002 « Application Hang »), fichier fautif rangé : pilote NVIDIA / AMD / Intel, RivaTuner, Overwolf, overlay Steam, logiciel de capture, audio (Nahimic, Sonic Studio, Sonar…), antivirus, fichier de Discord lui-même, fichier de Windows. Conseil précis par coupable (erreur avec étapes), tout est dans le journal donc dans le rapport de bug.

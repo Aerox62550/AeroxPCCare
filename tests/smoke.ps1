@@ -310,6 +310,21 @@ function Invoke-Smoke {
         Assert-Is 'D1 128 Go, 25 Go libres' (Get-SystemDiskLevel 25GB 128GB) ''
         Assert-Is 'D1 128 Go, 6 Go libres' (Get-SystemDiskLevel 6GB 128GB) 'crit'
         Assert-Is 'D1 taille inconnue' (Get-SystemDiskLevel 0 0) ''
+        # Un SSD presque plein en proportion (même avec beaucoup de Go) : sa vitesse d'écriture s'effondre
+        Assert-Is 'SSD 1 To, 50 Go libres (5 %)' (Get-SystemDiskLevel 50.12GB 931GB) 'crit'
+        Assert-Is 'SSD 1 To, 70 Go libres (7,5 %)' (Get-SystemDiskLevel 70GB 931GB) 'warn'
+        Assert-Is 'SSD 1 To, 120 Go libres (13 %)' (Get-SystemDiskLevel 120GB 931GB) ''
+        # Temps de réponse du disque calculé depuis les compteurs bruts de Windows
+        $la = [pscustomobject]@{ AvgDisksecPerTransfer = 1000000; AvgDisksecPerTransfer_Base = 100; Frequency_PerfTime = 10000000 }
+        $lb = [pscustomobject]@{ AvgDisksecPerTransfer = 1000000 + 10000000 * 0.12 * 500; AvgDisksecPerTransfer_Base = 600; Frequency_PerfTime = 10000000 }
+        Assert-Is 'temps de réponse 120 ms' (Get-DiskLatencyMs $la $lb) 120
+        Assert-Is 'trop peu d accès pour conclure' (Get-DiskLatencyMs $la $la) $null
+        Assert-Is 'lanceur Rockstar' (Test-GameDownloader 'Launcher') $true
+        Assert-Is 'Steam' (Test-GameDownloader 'steam') $true
+        Assert-Is 'Chrome n est pas un lanceur' (Test-GameDownloader 'chrome') $false
+        # Installateurs standard (Visual C++, .NET…) lancés puis effacés : jamais une trace de virus
+        Assert-Is 'VC_redist dans Temp\{code}\.be' (Test-InstallerEngineTrace 'C:\Windows\Temp\{52703B18-6F43-4CCC-B901-974B94C1FCE6}\.be\VC_redist.x64.exe') $true
+        Assert-Is 'virus dans Temp' (Test-InstallerEngineTrace 'C:\Users\x\AppData\Local\Temp\00138d5f2.exe') $false
         Assert-Is 'D1 autre disque 4 To, 160 Go libres' (Test-OtherDiskFull 160GB 4000GB) $false
         Assert-Is 'D1 autre disque 1 To, 10 Go libres' (Test-OtherDiskFull 10GB 1000GB) $true
         Assert-Is 'D1 autre disque 64 Go, 2 Go libres' (Test-OtherDiskFull 2GB 64GB) $true

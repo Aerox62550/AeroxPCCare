@@ -2843,7 +2843,10 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '3.2.0' = @("Réparation de Discord : AEROX lit les plantages de Discord notés par Windows et te dit qui le fait planter (pilote graphique, RivaTuner, Overwolf, Nahimic, antivirus…), puis remet à neuf ses composants abîmés sans le réinstaller. La réinstallation propre n'est proposée qu'en dernier recours.")
+    '3.2.0' = @("« Pourquoi mon PC rame » : AEROX mesure maintenant le temps de réponse du disque (le vrai signe d'un SSD débordé) et reconnaît un jeu en plein téléchargement (Rockstar, Steam, Epic…) qui noie le disque, avec quoi faire.",
+                "Disque de Windows presque plein : signalé aussi en proportion (sous 8 % de libre), car un SSD presque plein perd sa vitesse d'écriture et fait ramer tout le PC pendant les téléchargements.",
+                "Analyse de sécurité : les installateurs standard (Visual C++, .NET, pilotes) qui se lancent puis s'effacent ne sont plus pris pour des traces de virus.",
+                "Réparation de Discord : AEROX lit les plantages de Discord notés par Windows et te dit qui le fait planter (pilote graphique, RivaTuner, Overwolf, Nahimic, antivirus…), puis remet à neuf ses composants abîmés sans le réinstaller. La réinstallation propre n'est proposée qu'en dernier recours.")
     '3.1.1' = @("Réparation de Discord renforcée : en plus du cache, AEROX coupe l'accélération matérielle (cause n° 1 de l'écran noir au démarrage), retire un mode de compatibilité forcé et relance Discord. Si ça bugue encore, un 2e clic propose une réinstallation propre.")
     '3.1.0' = @("Diagnostic : AEROX repère quand Windows n'a pas réussi à démarrer et a lancé sa « Réparation automatique » (l'écran bleu qui parle du fichier SrtTrail.txt), t'explique la cause en français et répare les fichiers de Windows.",
                 "Diagnostic : si le PC est coupé au courant presque à chaque fois sans avoir été éteint, AEROX te le dit clairement (c'est ce qui abîme le démarrage de Windows).")
