@@ -310,6 +310,21 @@ function Invoke-Smoke {
         Assert-Is 'D1 128 Go, 25 Go libres' (Get-SystemDiskLevel 25GB 128GB) ''
         Assert-Is 'D1 128 Go, 6 Go libres' (Get-SystemDiskLevel 6GB 128GB) 'crit'
         Assert-Is 'D1 taille inconnue' (Get-SystemDiskLevel 0 0) ''
+        # Un SSD presque plein en proportion (même avec beaucoup de Go) : sa vitesse d'écriture s'effondre
+        Assert-Is 'SSD 1 To, 50 Go libres (5 %)' (Get-SystemDiskLevel 50.12GB 931GB) 'crit'
+        Assert-Is 'SSD 1 To, 70 Go libres (7,5 %)' (Get-SystemDiskLevel 70GB 931GB) 'warn'
+        Assert-Is 'SSD 1 To, 120 Go libres (13 %)' (Get-SystemDiskLevel 120GB 931GB) ''
+        # Temps de réponse du disque calculé depuis les compteurs bruts de Windows
+        $la = [pscustomobject]@{ AvgDisksecPerTransfer = 1000000; AvgDisksecPerTransfer_Base = 100; Frequency_PerfTime = 10000000 }
+        $lb = [pscustomobject]@{ AvgDisksecPerTransfer = 1000000 + 10000000 * 0.12 * 500; AvgDisksecPerTransfer_Base = 600; Frequency_PerfTime = 10000000 }
+        Assert-Is 'temps de réponse 120 ms' (Get-DiskLatencyMs $la $lb) 120
+        Assert-Is 'trop peu d accès pour conclure' (Get-DiskLatencyMs $la $la) $null
+        Assert-Is 'lanceur Rockstar' (Test-GameDownloader 'Launcher') $true
+        Assert-Is 'Steam' (Test-GameDownloader 'steam') $true
+        Assert-Is 'Chrome n est pas un lanceur' (Test-GameDownloader 'chrome') $false
+        # Installateurs standard (Visual C++, .NET…) lancés puis effacés : jamais une trace de virus
+        Assert-Is 'VC_redist dans Temp\{code}\.be' (Test-InstallerEngineTrace 'C:\Windows\Temp\{52703B18-6F43-4CCC-B901-974B94C1FCE6}\.be\VC_redist.x64.exe') $true
+        Assert-Is 'virus dans Temp' (Test-InstallerEngineTrace 'C:\Users\x\AppData\Local\Temp\00138d5f2.exe') $false
         Assert-Is 'D1 autre disque 4 To, 160 Go libres' (Test-OtherDiskFull 160GB 4000GB) $false
         Assert-Is 'D1 autre disque 1 To, 10 Go libres' (Test-OtherDiskFull 10GB 1000GB) $true
         Assert-Is 'D1 autre disque 64 Go, 2 Go libres' (Test-OtherDiskFull 2GB 64GB) $true
@@ -787,7 +802,15 @@ function Invoke-Smoke {
             if ($j.BACKGROUND_COLOR -ne '#202225' -or $j.MINIMIZE_TO_TRAY -ne $false) { throw "autres réglages de Discord perdus" }
             if (@($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' }).Count) { throw "réinstallation proposée dès le 1er clic" }
             Repair-Discord
-            if (-not @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' -and $_.FixAction -eq 'Remove-DiscordLeftovers' }).Count) { throw "réinstallation propre pas proposée au 2e clic" }
+            if (@($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' }).Count) { throw "réinstallation proposée dès le 2e clic (il faut d'abord remettre à neuf sans réinstaller)" }
+            Repair-Discord
+            if (-not @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'réinstallation propre' -and $_.FixAction -eq 'Remove-DiscordLeftovers' }).Count) { throw "réinstallation propre pas proposée au 3e clic" }
+            # Qui fait planter Discord : d'après le fichier fautif noté par Windows
+            $inst = 'C:\Users\x\AppData\Local\Discord'
+            foreach ($t in @(@('nvwgf2umx.dll', '', 'gpu'), @('atidxx64.dll', '', 'gpu'), @('RTSSHooks64.dll', '', 'overlay'), @('NahimicOSD.dll', '', 'audio'), @('discord_voice.node', '', 'self'),
+                             @('ffmpeg.dll', "$inst\app-1.0.9200\ffmpeg.dll", 'self'), @('ntdll.dll', 'C:\Windows\SYSTEM32\ntdll.dll', 'system'), @('aswhook.dll', '', 'security'), @('truc.dll', '', 'other'))) {
+                $k = (Get-CrashCulprit $t[0] $t[1] $inst).Kind; if ($k -ne $t[2]) { throw "« $($t[0]) » rangé en « $k » au lieu de « $($t[2]) »" }
+            }
             if (-not (Test-SafeUndo 'Set-DiscordHwAccel $true')) { throw "annulation refusée" }
             Set-DiscordHwAccel $true | Out-Null
             if (([IO.File]::ReadAllText($dcSet) | ConvertFrom-Json).enableHardwareAcceleration -ne $true) { throw "annulation sans effet" }
