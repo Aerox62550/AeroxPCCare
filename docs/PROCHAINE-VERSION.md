@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.2.0 : PC qui rame pendant un téléchargement, Discord qui plante, fausses traces d'installateurs
+## Publié en 3.2.0 : PC qui rame pendant un téléchargement, Discord qui plante, fausses traces d'installateurs
 
 - PC de Sam (08/11) : tout rame pendant le téléchargement de GTA sur C:, l'analyse « Ça rame » ne disait rien (disque 50 %, « Place libre 50 Go (5 %) » affiché en vert). Corrigé :
   - Seuils du disque de Windows aussi en proportion : critique sous 6 % de libre, à surveiller sous 8 %, quelle que soit la taille (un SSD presque plein perd son cache d'écriture). Accueil, diagnostic, « Ça rame » et assistant de place suivent.
