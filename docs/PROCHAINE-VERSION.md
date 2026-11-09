@@ -2,6 +2,17 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.3.0 : dépannages élargis (plan validé par Sam le 09/11 après relecture complète du code)
+
+- Priorité 1 :
+  - « Ça rame » : mémoire réservée / limite et pages relues du disque (`Test-MemoryOverflow`), manques de mémoire des 24 h (événement 2004), mesure longue de 2 minutes (`-Samples 40`).
+  - Plantages en boucle : coupable nommé pour tous les logiciels (`Get-CrashCulprit` généralisé : overlay, audio, antivirus).
+  - « Réparer la connexion » : services réseau désactivés réactivés, carte désactivée réactivée (seulement si rien n'est connecté), pilote en erreur, Wi-Fi sans aucun réseau relancé ; `ipconfig /release` et `/renew` limités à 30 et 60 s.
+  - « Pas de son » : fenêtre de choix de la sortie avec son de test (réglage « Sortie » de Windows).
+- Priorité 2 (nouvelles cartes de dépannage) : Bluetooth, USB non reconnu, jeu qui ne se lance pas (Visual C++ 2015-2022, DirectX 9, anti-triche désactivé, plantages de la semaine ; installation par winget des composants Microsoft sur confirmation), applis Windows / Store / menu Démarrer, veille (réveils lus dans le journal, `powercfg /requests`, droit de réveil retirable et annulable), cache d'icônes et de miniatures, réglages de Windows pour les jeux (lecture seule).
+- Priorité 3 : erreurs matérielles WHEA signalées même sans écran bleu, réinitialisations du contrôleur de disque (événement 129, 3 fois ou plus), « Vérifier le disque » sur tous les disques internes avec réparation des disques de données.
+- Non testable sur les serveurs GitHub (pas de son, de Bluetooth, de Wi-Fi ni de veille) : choix de la sortie son, relance du Bluetooth et du Wi-Fi, réveils. À vérifier sur un vrai PC.
+
 ## Publié en 3.2.0 : PC qui rame pendant un téléchargement, Discord qui plante, fausses traces d'installateurs
 
 - PC de Sam (08/11) : tout rame pendant le téléchargement de GTA sur C:, l'analyse « Ça rame » ne disait rien (disque 50 %, « Place libre 50 Go (5 %) » affiché en vert). Corrigé :

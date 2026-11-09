@@ -129,6 +129,34 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.3.0 : dépannages élargis
+    Smoke '3.3 : règles (mémoire qui déborde, coupables, réveils)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'mémoire réservée à 95 %' (Test-MemoryOverflow 60 95 0) $true
+        Is 'pages relues + RAM à 80 %' (Test-MemoryOverflow 80 70 2000) $true
+        Is 'pages relues mais RAM à 40 % (lancement d un programme)' (Test-MemoryOverflow 40 50 3000) $false
+        Is 'tout va bien' (Test-MemoryOverflow 50 60 10) $false
+        Is 'compteur absent' (Test-MemoryOverflow 50 $null 10) $false
+        $c = Get-CrashCulprit 'RTSSHooks64.dll' '' '' 'GTA5'
+        Is 'RivaTuner' $c.Kind 'overlay'
+        if ($c.Advice -notmatch 'GTA5' -or $c.Advice -match 'Discord') { throw "le conseil doit nommer le logiciel qui plante : $($c.Advice)" }
+        Is 'Nahimic' (Get-CrashCulprit 'NahimicOSD.dll' '' '' 'Fortnite').Kind 'audio'
+        Is 'réveil par la souris' (Get-WakeSourceLabel 5 'HID-compliant mouse') 'un périphérique : HID-compliant mouse'
+        Is 'réveil bouton' (Get-WakeSourceLabel 1 '') "le bouton d'alimentation"
+        Is 'service inconnu' (Enable-ServiceIfDisabled 'AeroxServiceQuiNexistePas') $false
+        Is 'nom de service refusé' (Enable-ServiceIfDisabled '..\..\x') $false
+        if (-not (Test-SafeUndo "Set-DeviceWake @('HID-compliant mouse') `$true")) { throw "annulation Set-DeviceWake refusée" }
+        Is 'sortie son invalide' (Set-SoundOutput 'n importe quoi') $false
+        $st = Get-GameRuntimeState
+        foreach ($k in 'Vc64', 'Vc32', 'Dx9') { if ($st[$k] -isnot [bool]) { throw "composant $k : état illisible" } }
+        Write-Host ("        composants jeux : VC++ 64 = {0}, VC++ 32 = {1}, DirectX 9 = {2} ; sorties son : {3}" -f $st.Vc64, $st.Vc32, $st.Dx9, @(Get-SoundOutputs).Count)
+    }
+    Smoke '3.3 : services réseau (rien de désactivé sur ce PC)' { $n = Repair-NetServices; if ($n -ne 0) { throw "$n service(s) réseau « réactivé(s) » sur un PC sain" } }
+    Smoke '3.3 : un jeu ne se lance pas' { Repair-GameLaunch }
+    Smoke '3.3 : veille' { Get-SleepReport }
+    Smoke '3.3 : réglages pour les jeux' { Get-GameSettingsReport }
+    Smoke '3.3 : Bluetooth' { Repair-Bluetooth }
+    Smoke 'Fenêtre : sortie son' { Show-SoundDialog @(@{ Id = '{0.0.0.00000000}.{11111111-1111-1111-1111-111111111111}'; Name = 'Casque (test)'; Default = $true }, @{ Id = '{0.0.0.00000000}.{22222222-2222-2222-2222-222222222222}'; Name = 'Écran HDMI (test)'; Default = $false }) }
     Smoke 'Accords des pluriels' {
         $cases = @(@('1 fichier(s) en quarantaine', '1 fichier en quarantaine'), @('5 problème(s) trouvé(s), dont 1 réparable(s).', '5 problèmes trouvés, dont 1 réparable.'),
                    @('+ 3 autre(s) jeu(x)', '+ 3 autres jeux'), @('Carte(s) graphique(s)', 'Carte(s) graphique(s)'), @('Version 2.9.0 : 3 fichier(s)', 'Version 2.9.0 : 3 fichiers'), @('24 POINT(S) VÉRIFIÉ(S)', '24 POINTS VÉRIFIÉS'))

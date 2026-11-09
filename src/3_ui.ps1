@@ -601,6 +601,7 @@ $script:CardIcons = @{
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'; freespace = 'EDA2'; 'Repair-Discord' = 'E8F2'
+    'Repair-Bluetooth' = 'E702'; 'Repair-Usb' = 'E88E'; 'Repair-GameLaunch' = 'E7FC'; 'Repair-WindowsApps' = 'E719'; 'Get-SleepReport' = 'E708'; 'Repair-ExplorerCache' = 'E8B9'; 'Get-GameSettingsReport' = 'E713'
 }
 function New-CardIcon([string]$Hex, [bool]$Primary) {
     $b = New-Object System.Windows.Controls.Border; $b.Width = 42; $b.Height = 42; $b.CornerRadius = Corner 11; $b.Margin = Th 0 0 16 0; $b.VerticalAlignment = 'Top'
@@ -908,15 +909,22 @@ $PageDefs = [ordered]@{
     @{ G = "Internet et connexion"; T = "Test de débit Internet"; Badge = "Speedtest® by Ookla"; P = $true; B = "Lancer le test"; UI = 'speedtest'; StatusFn = { Get-SpeedCardStatus }; D = "Mesure ta vitesse de téléchargement, d'envoi et ton ping, et t'explique si c'est bien pour jouer, regarder des vidéos ou télécharger." },
     @{ G = "Internet et connexion"; T = "Ça lague en ligne (jeu, Discord)"; B = "Analyser"; UI = 'lag'; UiBusy = $true; D = "Personnages qui « sautent », voix hachée, déconnexions ? Mesure ta connexion pendant 1 minute (liaison PC ↔ box, Internet, Wi-Fi, téléchargements en fond, VPN) et te dit d'où vient le lag." },
     @{ G = "Internet et connexion"; T = "Tester ma connexion"; B = "Tester"; A = "Test-Internet"; D = "Vérifie la box, Internet, le DNS, le ping et le Wi-Fi, et t'explique d'où vient le problème." },
-    @{ G = "Internet et connexion"; T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Remet à zéro les réglages réseau de Windows (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
-    @{ G = "Dépannage rapide"; Tile = $true; S = "Son coupé, sourdine, mauvaise sortie : réactive et remonte le son."; T = "Pas de son"; B = "Réparer"; A = "Repair-Sound"; D = "Vérifie le son de Windows (le relance seulement s'il est arrêté), réactive ce qui est désactivé, enlève la sourdine, remonte le volume s'il est à zéro, et te dit quoi choisir dans Discord." },
+    @{ G = "Internet et connexion"; T = "Réparer la connexion Internet"; B = "Réparer"; A = "Repair-Network"; D = "Réactive les services réseau de Windows et la carte réseau s'ils ont été désactivés, relance le Wi-Fi s'il ne voit plus aucun réseau, puis remet à zéro les réglages réseau (DNS, Winsock, TCP/IP). Règle la plupart des « connecté mais pas d'Internet »."; C = "La connexion va se couper quelques secondes et il faudra redémarrer le PC à la fin.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Son coupé, sourdine, mauvaise sortie : réactive, remonte, et choisis la bonne sortie."; T = "Pas de son"; B = "Réparer"; A = "Repair-Sound"; D = "Vérifie le son de Windows (le relance seulement s'il est arrêté), réactive ce qui est désactivé, enlève la sourdine, remonte le volume s'il est à zéro. S'il y a plusieurs sorties (casque, écran HDMI, enceintes), une fenêtre te laisse choisir la bonne avec un son de test." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Réautorise le micro, le réactive et remonte son niveau."; T = "Le micro ne marche pas"; B = "Réparer"; A = "Repair-Microphone"; D = "Réautorise le micro dans la confidentialité de Windows (cause n°1), réactive le micro s'il est désactivé, enlève la sourdine et remonte son niveau." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Réautorise la caméra, la réactive et vérifie son pilote."; T = "Webcam introuvable ou image noire"; B = "Réparer"; A = "Repair-Webcam"; D = "Réautorise la caméra dans la confidentialité de Windows, réactive la webcam si elle est désactivée, vérifie son pilote et ouvre l'appli Caméra pour tester." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Vide la file bloquée et remet l'imprimante en ligne."; T = "L'imprimante n'imprime plus"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Relance l'Explorateur en quelques secondes, sans redémarrer."; T = "Bureau ou barre des tâches figés"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Écran noir, plantages : trouve le coupable et répare, sans réinstaller."; T = "Discord bugue ou ne s'installe plus"; B = "Réparer"; A = "Repair-Discord"; D = "Écran noir ou gris, Discord qui se coupe d'un coup, chargement sans fin ? Ferme Discord, vide ses caches (tu restes connecté), coupe son accélération matérielle (cause n° 1 de l'écran noir), retire un mode de compatibilité forcé, lit ses plantages notés par Windows pour trouver le coupable (pilote graphique, overlay, logiciel audio, antivirus…) et remet à neuf ses composants abîmés, puis le relance. Réinstallation propre proposée seulement en dernier recours."; C = "Discord va être fermé, ses caches vidés et son accélération matérielle coupée, ses plantages analysés, ses composants remis à neuf s'ils sont abîmés, puis il sera relancé. Tu restes connecté, tes réglages et tes serveurs sont gardés.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Manette, casque ou souris qui ne se connecte plus."; T = "Le Bluetooth ne marche pas"; B = "Réparer"; A = "Repair-Bluetooth"; D = "Réactive les services et la puce Bluetooth s'ils sont désactivés, vérifie son pilote, relance la puce (comme l'éteindre et la rallumer) et t'explique comment réassocier un appareil."; C = "La puce Bluetooth va être relancée : une souris ou un clavier Bluetooth se déconnecte quelques secondes puis revient.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Clé, manette, disque ou souris USB que Windows ne voit pas."; T = "Périphérique USB non reconnu"; B = "Réparer"; A = "Repair-Usb"; D = "Relance la recherche des périphériques, réactive ceux qui sont désactivés, relance ceux qui sont en erreur et te dit si c'est le pilote, le câble ou le port." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Composants manquants, anti-triche coupé, plantages : trouve pourquoi."; T = "Un jeu ne se lance pas"; B = "Vérifier"; A = "Repair-GameLaunch"; D = "Vérifie les composants que les jeux réclament (Visual C++, DirectX : les erreurs « VCRUNTIME140.dll / d3dx9_43.dll introuvable »), les anti-triche désactivés, et lit les plantages notés par Windows pour nommer le coupable (pilote graphique, overlay, logiciel audio, antivirus)." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Store, applis, menu Démarrer ou recherche qui ne s'ouvrent plus."; T = "Applis Windows ou menu Démarrer bloqués"; B = "Réparer"; A = "Repair-WindowsApps"; D = "Réactive les services des applis Windows, relance la recherche et le menu Démarrer, réenregistre le Store et remet son cache à zéro (outil officiel de Windows)."; C = "Le menu Démarrer et la recherche vont se relancer, et le Microsoft Store va s'ouvrir tout seul à la fin.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Le PC se rallume tout seul ou refuse de se mettre en veille."; T = "Problème de veille"; B = "Analyser"; A = "Get-SleepReport"; D = "Lit dans Windows ce qui a réveillé le PC les dernières fois (souris, carte réseau, tâche programmée), ce qui a le droit de le réveiller, et ce qui l'empêche de dormir en ce moment. Propose de retirer ce droit aux périphériques qui le réveillent." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Icônes blanches ou fausses, miniatures qui ne s'affichent plus."; T = "Icônes ou miniatures cassées"; B = "Réparer"; A = "Repair-ExplorerCache"; D = "Supprime le cache des icônes et des miniatures (Windows le recrée tout seul) et relance l'Explorateur."; C = "Le bureau et la barre des tâches vont disparaître quelques secondes puis revenir. Tes fenêtres de dossiers ouvertes seront fermées.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Mode Jeu, planification GPU, isolation du noyau, Game Bar, Hz."; T = "Réglages de Windows pour les jeux"; B = "Vérifier"; A = "Get-GameSettingsReport"; D = "Lit les réglages de Windows qui comptent pour les jeux et te dit lesquels changer et où. Rien n'est modifié." },
     @{ G = "Windows"; T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
-    @{ G = "Windows"; T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows." },
+    @{ G = "Windows"; T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows et sur tes autres disques (jeux, données)." },
     @{ G = "Windows"; T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
     @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
  security = @{ Title = "Sécurité"; Sub = "Virus cachés, voleurs de mots de passe, prise en main à distance : vérifie que personne d'autre ne profite de ton PC."; Cards = @(
@@ -1336,7 +1344,7 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # ---------------------------------------------------------------- Annuler une tâche en cours
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
-$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk)\b'
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk|Get-SleepReport|Get-GameSettingsReport|Repair-GameLaunch)\b'
 $script:SoftCancel = '^(Update-SelectedApps|Update-Apps|Invoke-WindowsSpace|New-RestorePoint; Invoke-WindowsSpace|Invoke-DeepClean)\b'
 function Stop-AeroxTask {
     $job = $script:Job
@@ -1409,7 +1417,7 @@ function Start-Background([string]$Code) {
 function Start-IssueCheck($I) {
     # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
     # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
-    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair') { Set-StabilityFixed $I.Id; return $false }
+    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
@@ -1528,6 +1536,7 @@ function Complete-Job {
         $left = @(Get-OpenIssues).Count
         Write-UiLog $(if ($left) { "Réparations terminées. Il reste $left chose(s) à faire toi-même (voir « Voir comment faire »)." } else { "Réparations terminées : tout est réglé !" })
     }
+    if ($sync.SoundOutputs) { $so = @($sync.SoundOutputs); $sync.SoundOutputs = $null; if ($so.Count -ge 2) { Show-SoundDialog $so } }
     if ($job.OnDone -eq 'tools') { $script:ToolStAt = $null; Stop-Monitoring; if (Test-MonitorNeeded) { Start-Sensors; Start-FpsCounter } }
     if ($job.OnDone -eq 'undo' -and $script:UndoId) {
         if (-not $errs.Count) { Set-ChangeUndone $script:UndoId; Write-UiLog ("↩ Annulé : " + $script:UndoTitle) }
@@ -1693,7 +1702,7 @@ function Invoke-UiCommand($T) {
             'done' {
                 $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title)
                 # Problème lu dans l'historique de Windows (extinctions, plantages…) : « c'est fait » = seuls les nouveaux comptent désormais
-                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair') { Set-StabilityFixed $T.Issue.Id }
+                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $T.Issue.Id }
                 Update-DiagBadge; Refresh-Page
             }
             'openurl' { [void](Open-Url $T.Url) }
@@ -2843,6 +2852,12 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.3.0' = @("7 nouveaux dépannages (onglet Réparation) : Bluetooth, périphérique USB non reconnu, jeu qui ne se lance pas (Visual C++, DirectX, anti-triche), applis Windows / Store / menu Démarrer bloqués, problème de veille (qui réveille le PC), icônes ou miniatures cassées, réglages de Windows pour les jeux.",
+                "« Pas de son » : s'il y a plusieurs sorties (casque, écran HDMI, enceintes), tu choisis la bonne avec un son de test.",
+                "« Réparer la connexion » : réactive aussi les services et la carte réseau désactivés, et relance un Wi-Fi qui ne voit plus aucun réseau.",
+                "« Pourquoi mon PC rame » : voit la mémoire qui déborde sur le disque, les manques de mémoire des dernières 24 h, et propose une mesure longue de 2 minutes.",
+                "Diagnostic : quand un logiciel plante en boucle à cause d'un autre (RivaTuner, Overwolf, Nahimic, antivirus…), AEROX nomme le coupable. Nouveaux contrôles : erreurs matérielles signalées par le PC, disque qui cesse de répondre.",
+                "« Vérifier le disque » contrôle maintenant tous tes disques, pas seulement celui de Windows.")
     '3.2.0' = @("« Pourquoi mon PC rame » : AEROX mesure maintenant le temps de réponse du disque (le vrai signe d'un SSD débordé) et reconnaît un jeu en plein téléchargement (Rockstar, Steam, Epic…) qui noie le disque, avec quoi faire.",
                 "Disque de Windows presque plein : signalé aussi en proportion (sous 8 % de libre), car un SSD presque plein perd sa vitesse d'écriture et fait ramer tout le PC pendant les téléchargements.",
                 "Analyse de sécurité : les installateurs standard (Visual C++, .NET, pilotes) qui se lancent puis s'effacent ne sont plus pris pour des traces de virus.",
@@ -4384,6 +4399,43 @@ $script:SlowSymptoms = @(
     @('logiciel', "Un logiciel précis bugue", "Discord, navigateur, imprimante, son, Windows Update… : les dépannages rapides."),
     @('tout', "Tout est lent, tout le temps", "Lance le diagnostic complet : santé du disque, pilotes, plantages, logiciels inutiles, Windows.")
 )
+# « Pas de son » : choisir où le son doit sortir (casque, écran, enceintes), avec un son de test
+function Show-SoundDialog($Outputs) {
+    $w = New-Dialog "$AppName : où le son doit-il sortir ?" 620
+    $script:SndWin = $w
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Où le son doit-il sortir ?" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Le PC a plusieurs sorties son. Clique sur « Utiliser et tester » en face de ton casque ou de tes enceintes : un son est joué dessus. Si tu l'entends, c'est réglé." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $script:SndState = New-Text '' $Typo.Body $Pal.Ok; $script:SndState.Margin = Th 0 0 0 8
+    foreach ($o in @($Outputs)) {
+        $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 0 0 8
+        $b = New-DlgButton 'Utiliser et tester' $(if ($o.Default) { 'ActionBtn' } else { 'PrimaryBtn' }); $b.Tag = @($o.Id, $o.Name)
+        [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $row $b
+        $t = New-Text ($o.Name + $(if ($o.Default) { '   (utilisée en ce moment)' } else { '' })) $Typo.Strong $(if ($o.Default) { $Pal.Text2 } else { $Pal.White }) 'SemiBold'; $t.VerticalAlignment = 'Center'
+        Add-Child $row $t
+        $b.Add_Click({
+            try {
+                $id = [string]$this.Tag[0]; $nm = [string]$this.Tag[1]
+                if (Set-SoundOutput $id) {
+                    $script:SndState.Foreground = Brush $Pal.Ok; $script:SndState.Text = "Le son sort maintenant sur « $nm ». Tu as entendu le son de test ?"
+                    Write-UiLog "🔊 Sortie son : « $nm »"
+                    $wav = Join-Path $env:SystemRoot 'Media\Windows Notify System Generic.wav'
+                    if (-not (Test-Path -LiteralPath $wav)) { $wav = Join-Path $env:SystemRoot 'Media\tada.wav' }
+                    if (Test-Path -LiteralPath $wav) { $pl = New-Object System.Media.SoundPlayer $wav; $pl.Play() } else { [System.Media.SystemSounds]::Asterisk.Play() }
+                } else { $script:SndState.Foreground = Brush $Pal.Warn; $script:SndState.Text = "Windows a refusé de changer la sortie. Fais-le dans Paramètres > Système > Son > Sortie." }
+            } catch { Write-Bug -Context 'Choix de la sortie son' -ErrorRecord $_ }
+        })
+        Add-Child $sp $row
+    }
+    Add-Child $sp $script:SndState
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 8 0 0
+    $bSet = New-DlgButton 'Ouvrir les réglages du son' 'TextBtn'; $bSet.Margin = Th 0 0 8 0; $bSet.Add_Click({ try { Open-WinUri 'ms-settings:sound' } catch {} })
+    $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'; $bClose.Add_Click({ $script:SndWin.Close() })
+    Add-Child $bar $bSet; Add-Child $bar $bClose; Add-Child $sp $bar
+    $w.Content = $sp
+    [void]$w.ShowDialog()
+}
 function Show-SlowDialog {
     $r = $sync.SlowReport
     if (-not $r) { return }
@@ -4395,8 +4447,8 @@ function Show-SlowDialog {
     Add-Child $sp (New-Text $title $Typo.H2 $Pal.White 'Bold')
     $sub = switch ($mode) {
         'lag' { "Connexion mesurée pendant 1 minute : entre le PC et la box, puis vers Internet. Si ça lague seulement à certains moments, relance l'analyse à ce moment-là." }
-        'jeu' { "Mesure faite pendant 20 secondes, pendant que tu jouais." }
-        default { "Mesure faite pendant 20 secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." }
+        'jeu' { "Mesure faite pendant $(if ($r.Seconds) { $r.Seconds } else { 20 }) secondes, pendant que tu jouais." }
+        default { "Mesure faite pendant $(if ($r.Seconds) { $r.Seconds } else { 20 }) secondes. Si le PC rame surtout à un moment précis (démarrage, navigateur, jeu), relance l'analyse à ce moment-là : c'est là qu'on voit le coupable." }
     }
     $p = New-Text $sub $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 12; Add-Child $sp $p
     $body = New-Object System.Windows.Controls.StackPanel
@@ -4457,7 +4509,7 @@ function Show-SlowDialog {
 
     $top = @($r.Top | Where-Object { $_ })
     if ($top.Count) {
-        $h = New-Text "CE QUI CONSOMME LE PLUS (MOYENNE SUR 20 S)" $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
+        $h = New-Text ("CE QUI CONSOMME LE PLUS (MOYENNE SUR {0} S)" -f $(if ($r.Seconds) { $r.Seconds } else { 20 })) $Typo.Small $Pal.Faint 'Bold'; $h.Margin = Th 2 14 0 6; Add-Child $body $h
         $tb = New-Object System.Windows.Controls.Border; $tb.Background = Brush $Pal.Sunken; $tb.CornerRadius = Corner 10; $tb.Padding = Th 14 6 14 8
         $tg = New-Object System.Windows.Controls.Grid
         $widths = if ($r.GpuOk) { @(5, 1.1, 1.1, 1.3, 1.3) } else { @(5, 1, 1.3, 1.3) }
@@ -4497,12 +4549,15 @@ function Show-SlowDialog {
     $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
     $bAgain = New-DlgButton 'Refaire la mesure' 'ActionBtn'; $bAgain.Margin = Th 0 0 8 0
     $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'
+    # Ça rame par moments : une mesure de 2 minutes attrape ce qu'une mesure de 20 secondes rate
+    if ($mode -notin 'lag', 'jeu') { $bLong = New-DlgButton 'Mesure longue (2 min)' 'TextBtn'; $bLong.Margin = Th 0 0 8 0; $bLong.Add_Click({ $script:SlowNext = 'long'; $script:SlowWin.Close() }); Add-Child $bar $bLong }
     Add-Child $bar $bAgain; Add-Child $bar $bClose; Add-Child $sp $bar
     $bAgain.Add_Click({ $script:SlowNext = 'again'; $script:SlowWin.Close() })
     $bClose.Add_Click({ $script:SlowWin.Close() })
     $w.Content = $sp
     [void]$w.ShowDialog()
     switch ($script:SlowNext) {
+        'long'     { [void](Start-AeroxTask 'Get-SlowReport -Samples 40' 'Analyse des lenteurs (2 minutes)' 'slowdialog') }
         'again'    { switch ($mode) { 'lag' { Start-LagReport } 'jeu' { Start-GameMeasure } default { [void](Start-AeroxTask 'Get-SlowReport' 'Analyse des lenteurs' 'slowdialog') } } }
         'taskmgr'  { Start-Process taskmgr.exe }
         'startup'  { Show-StartupDialog $null }

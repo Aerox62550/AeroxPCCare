@@ -922,6 +922,33 @@ public static class AeroxAudio {
             return id;
         } catch { return ""; }
     }
+    // Changer l'appareil de sortie par défaut de Windows (même réglage que Paramètres > Son > Sortie).
+    // Interface de Windows utilisée par son propre panneau Son ; rôles 0 (par défaut) et 1 (multimédia).
+    [ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")] class PolicyConfigClient { }
+    [ComImport, Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPolicyConfig {
+        [PreserveSig] int GetMixFormat(IntPtr a, IntPtr b);
+        [PreserveSig] int GetDeviceFormat(IntPtr a, int b, IntPtr c);
+        [PreserveSig] int ResetDeviceFormat(IntPtr a);
+        [PreserveSig] int SetDeviceFormat(IntPtr a, IntPtr b, IntPtr c);
+        [PreserveSig] int GetProcessingPeriod(IntPtr a, int b, IntPtr c, IntPtr d);
+        [PreserveSig] int SetProcessingPeriod(IntPtr a, IntPtr b);
+        [PreserveSig] int GetShareMode(IntPtr a, IntPtr b);
+        [PreserveSig] int SetShareMode(IntPtr a, IntPtr b);
+        [PreserveSig] int GetPropertyValue(IntPtr a, int b, IntPtr c, IntPtr d);
+        [PreserveSig] int SetPropertyValue(IntPtr a, int b, IntPtr c, IntPtr d);
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role);
+        [PreserveSig] int SetEndpointVisibility(IntPtr a, int b);
+    }
+    public static bool SetDefault(string id) {
+        try {
+            if (string.IsNullOrEmpty(id)) return false;
+            IPolicyConfig pc = (IPolicyConfig)(new PolicyConfigClient());
+            int r0 = pc.SetDefaultEndpoint(id, 0);
+            int r1 = pc.SetDefaultEndpoint(id, 1);
+            return r0 == 0 && r1 == 0;
+        } catch { return false; }
+    }
     // Enlève la sourdine et remonte le volume au minimum demandé (sans jamais le baisser)
     public static bool Fix(bool capture, int minPercent) {
         try {
