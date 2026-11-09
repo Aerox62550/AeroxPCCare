@@ -152,7 +152,16 @@ function Invoke-Smoke {
         Write-Host ("        composants jeux : VC++ 64 = {0}, VC++ 32 = {1}, DirectX 9 = {2} ; sorties son : {3}" -f $st.Vc64, $st.Vc32, $st.Dx9, @(Get-SoundOutputs).Count)
     }
     Smoke '3.3 : services réseau (rien de désactivé sur ce PC)' { $n = Repair-NetServices; if ($n -ne 0) { throw "$n service(s) réseau « réactivé(s) » sur un PC sain" } }
-    Smoke '3.3 : un jeu ne se lance pas' { Repair-GameLaunch }
+    Smoke '3.3 : un jeu ne se lance pas' {
+        $e0 = $sync.Errors.Count; Repair-GameLaunch
+        $st = Get-GameRuntimeState
+        $er = @($sync.Errors.ToArray() | Select-Object -Skip $e0 | Where-Object { $_.Title -match 'composants que les jeux' })
+        if (-not ($st.Vc64 -and $st.Vc32 -and $st.Dx9)) {
+            if (-not $er.Count) { throw "composants manquants pas signalés" }
+            if ($er[0].Title -notmatch '(Visual C\+\+|DirectX)') { throw "le titre ne dit pas ce qui manque : « $($er[0].Title) »" }
+            if ($er[0].FixAction -ne 'Install-GameRuntimes') { throw "pas de bouton d'installation" }
+        } elseif ($er.Count) { throw "composants signalés manquants alors qu'ils sont tous là" }
+    }
     Smoke '3.3 : veille' { Get-SleepReport }
     Smoke '3.3 : réglages pour les jeux' { Get-GameSettingsReport }
     Smoke '3.3 : Bluetooth' { Repair-Bluetooth }

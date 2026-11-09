@@ -4610,9 +4610,13 @@ function Repair-GameLaunch {
     Log ("   {0} Visual C++ 2015-2022 (32 bits)" -f $(if ($st.Vc32) { '✔' } else { '⚠ manque :' }))
     Log ("   {0} DirectX pour les jeux d'avant 2015 (d3dx9, xinput1_3)" -f $(if ($st.Dx9) { '✔' } else { '⚠ manque :' }))
     if (-not ($st.Vc64 -and $st.Vc32 -and $st.Dx9)) {
-        $miss = @($(if (-not $st.Vc64) { 'Visual C++ 64 bits' }), $(if (-not $st.Vc32) { 'Visual C++ 32 bits' }), $(if (-not $st.Dx9) { 'DirectX (anciens jeux)' })) | Where-Object { $_ }
-        Add-TaskError -Title ("Il manque des composants que les jeux réclament : {0}" -f ($miss -join ', ')) -Cause "Sans eux, un jeu se ferme tout de suite ou affiche « VCRUNTIME140.dll / MSVCP140.dll / d3dx9_43.dll / XINPUT1_3.dll est introuvable »." -Effect "Le jeu ne démarre pas." `
-            -FixLabel "Installer ces composants (Microsoft)" -FixAction 'Install-GameRuntimes' -Confirm "AEROX va installer les composants officiels de Microsoft qui manquent ($($miss -join ', ')).`n`nContinuer ?"
+        $miss = New-Object System.Collections.ArrayList
+        if (-not $st.Vc64) { [void]$miss.Add('Visual C++ 64 bits') }
+        if (-not $st.Vc32) { [void]$miss.Add('Visual C++ 32 bits') }
+        if (-not $st.Dx9)  { [void]$miss.Add('DirectX pour les anciens jeux') }
+        $missTxt = $miss.ToArray() -join ', '
+        Add-TaskError -Title "Il manque des composants que les jeux réclament : $missTxt" -Cause "Sans eux, un jeu se ferme tout de suite ou affiche « VCRUNTIME140.dll / MSVCP140.dll / d3dx9_43.dll / XINPUT1_3.dll est introuvable »." -Effect "Le jeu ne démarre pas." `
+            -FixLabel "Installer ces composants (Microsoft)" -FixAction 'Install-GameRuntimes' -Confirm "AEROX va installer les composants officiels de Microsoft qui manquent ($missTxt).`n`nContinuer ?"
     }
     # Anti-triche désactivé : le jeu refuse de se lancer
     $ac = [ordered]@{ EasyAntiCheat = 'Easy Anti-Cheat (Fortnite, Apex, Rust…)'; EasyAntiCheat_EOS = 'Easy Anti-Cheat (Epic)'; BEService = 'BattlEye (PUBG, R6, DayZ, GTA…)'; vgc = 'Vanguard (Valorant, LoL)'; vgk = 'Vanguard (Valorant, LoL)'; FACEIT = 'FACEIT' }
