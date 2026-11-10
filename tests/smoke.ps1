@@ -129,6 +129,28 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : pile de la carte mère
+    Smoke 'Pile de la carte mère : horloge qui recule au démarrage' {
+        $now = Get-Date
+        function Ev($Id, $Rec, $T, $Old = $null, $New = $null) { [pscustomobject]@{ Id = $Id; RecordId = $Rec; TimeCreated = $T; OldTime = $Old; NewTime = $New } }
+        $old = Get-Date '2020-01-01 00:00:10'
+        $ev = @(
+            (Ev 12 10 $now.AddDays(-20)), (Ev 13 11 $now.AddDays(-19)),
+            (Ev 12 12 $old), (Ev 1 13 $old.AddMinutes(2) $old.AddMinutes(2) $now.AddDays(-18)), (Ev 13 14 $now.AddDays(-17)),
+            (Ev 12 15 $now.AddDays(-16)), (Ev 13 16 $now.AddDays(-15)),
+            (Ev 12 17 $old), (Ev 13 18 $old.AddHours(1))
+        )
+        $r = @(Get-RtcResets ($ev | Sort-Object { Get-Random }) $now.AddDays(-180))
+        if ($r.Count -ne 2) { throw "2 remises à zéro attendues, obtenu $($r.Count)" }
+        if (-not $r[0].Fixed -or $r[0].WrongDate.Year -ne 2020 -or $r[1].Fixed) { throw "détail faux" }
+        # Démarrages normaux, heure d'été, double démarrage Linux (quelques heures), remise à l'heure manuelle : rien
+        $ok = @((Ev 12 1 $now.AddDays(-3)), (Ev 13 2 $now.AddDays(-2)), (Ev 12 3 $now.AddDays(-2).AddHours(-5)), (Ev 1 4 $now.AddDays(-1) $now.AddDays(-1) $now.AddDays(-30)), (Ev 12 5 $now))
+        if (@(Get-RtcResets $ok $now.AddDays(-180)).Count) { throw "fausse alerte" }
+        if (@(Get-RtcResets $ev $now.AddDays(-10)).Count) { throw "« C'est fait » ignoré" }
+        $keep = $script:Issues
+        try { $script:Issues = New-Object System.Collections.ArrayList; Test-RtcBattery; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
+        finally { $script:Issues = $keep }
+    }
     # ---------------- 3.3.0 : dépannages élargis
     Smoke '3.3 : règles (mémoire qui déborde, coupables, réveils)' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }

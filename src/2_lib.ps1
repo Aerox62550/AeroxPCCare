@@ -3406,6 +3406,52 @@ function Test-HardwareErrors {
         -Effect "Plantages, redémarrages soudains, jeux qui se ferment sans message." `
         -Steps @("Si tu as overclocké ou undervolté (BIOS, Ryzen Master, Intel XTU, MSI Afterburner) : remets tout par défaut.", "Dans le BIOS : désactive XMP / EXPO pour tester ; si les erreurs s'arrêtent, c'est la RAM (ou son profil trop rapide).", "Vérifie les températures (onglet Gaming) et dépoussière le PC.", "Lance le test de mémoire de Windows (tape « mdsched » dans le menu Démarrer).", "Mets à jour le BIOS (onglet Mon PC).")
 }
+# Pile de la carte mère (CR2032) usée : privé de courant, le PC perd l'heure. Preuve sans ouvrir le PC : au démarrage
+# (Kernel-General 12), l'horloge indique une date plus ancienne d'au moins un jour que le dernier événement noté avant
+# (le temps ne recule pas tout seul). Les journaux sont lus dans l'ordre d'écriture (RecordId), pas par date : après
+# une remise à zéro, les dates des événements sont justement fausses. Une seule fois peut venir d'un réglage du BIOS :
+# le problème n'est signalé qu'à partir de 2 fois.
+function ConvertFrom-EventUtc([string]$S) {
+    if (-not $S) { return $null }
+    $S = $S -replace '(\.\d{7})\d+', '$1'
+    try { return [datetime]::Parse($S, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime() } catch { return $null }
+}
+function Get-RtcResets($Events, [datetime]$Since, [scriptblock]$GetTimes) {
+    $list = @($Events | Sort-Object { [long]$_.RecordId })
+    $res = New-Object System.Collections.ArrayList
+    for ($i = 1; $i -lt $list.Count; $i++) {
+        $b = $list[$i]
+        if ([int]$b.Id -ne 12) { continue }
+        $prev = $list[$i - 1]
+        if (($prev.TimeCreated - $b.TimeCreated).TotalHours -lt 24) { continue }
+        if ($prev.TimeCreated -lt $Since) { continue }
+        # Remise à l'heure par Windows dans la même session (avance d'au moins un jour) : juste pour le détail
+        $fixed = $null
+        for ($j = $i + 1; $j -lt $list.Count -and $j -le $i + 20 -and [int]$list[$j].Id -ne 12; $j++) {
+            if ([int]$list[$j].Id -ne 1) { continue }
+            $t = if ($GetTimes) { & $GetTimes $list[$j] } else { @($list[$j].OldTime, $list[$j].NewTime) }
+            if ($t -and $t[0] -and $t[1] -and ($t[1] - $t[0]).TotalHours -ge 24) { $fixed = $t[1]; break }
+        }
+        [void]$res.Add([pscustomobject]@{ Before = $prev.TimeCreated; WrongDate = $b.TimeCreated; Fixed = $fixed })
+    }
+    return $res.ToArray()
+}
+function Test-RtcBattery {
+    $ev = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 1, 12, 13 } 3000)
+    if ($ev.Count -lt 2) { return }
+    $get = { param($e) $f = Get-EventFields $e.Raw; @((ConvertFrom-EventUtc $f['OldTime']), (ConvertFrom-EventUtc $f['NewTime'])) }
+    $rows = foreach ($e in $ev) { [pscustomobject]@{ Id = $e.Id; RecordId = [long]$e.RecordId; TimeCreated = $e.TimeCreated; Raw = $e } }
+    $r = @(Get-RtcResets $rows (Get-StabilitySince 'rtc' (Get-Date).AddDays(-180)) $get)
+    if (-not $r.Count) { return }
+    $last = $r[-1]
+    $det = "Au démarrage du {0:dd/MM/yyyy}, l'horloge indiquait le {1:dd/MM/yyyy}" -f $last.Before, $last.WrongDate
+    if ($r.Count -lt 2) { Log ("   • Horloge repartie en arrière une fois au démarrage ({0}) : un réglage du BIOS peut l'expliquer, pas d'alerte pour une seule fois." -f $det); return }
+    $cause = "Quand le PC est privé de courant (multiprise éteinte, prise débranchée, coupure), c'est une petite pile ronde sur la carte mère (CR2032) qui garde l'heure et les réglages du BIOS. Ici, $($r.Count) fois depuis le $('{0:dd/MM/yyyy}' -f $r[0].Before), l'horloge du PC indiquait au démarrage une date plus ancienne que celle de son dernier arrêt. Le temps ne recule pas tout seul : c'est le signe d'une pile vide."
+    if (@($script:Issues | Where-Object { $_.Id -eq 'autorepair' }).Count) { $cause += " Ça peut aussi expliquer la réparation automatique de Windows : réglages du BIOS revenus par défaut à chaque coupure." }
+    Add-Issue -Id 'rtc' -Sev 'warn' -Title "La pile de la carte mère est sans doute vide" -Detail $det -Cause $cause `
+        -Effect "Date et heure fausses à chaque démarrage (sites en erreur de sécurité, mises à jour et antivirus qui se trompent), réglages du BIOS qui reviennent par défaut (XMP / EXPO, ordre de démarrage)." `
+        -Steps @("Achète une pile CR2032 : 2 à 5 € en supermarché.", "PC éteint et débranché du mur : touche le boîtier métallique pour te décharger, puis repère la pile ronde sur la carte mère (souvent près de la carte graphique).", "Appuie sur la petite languette pour la libérer, et mets la neuve le « + » vers le haut.", "Rallume : si le BIOS s'ouvre, remets la date et l'heure, et réactive XMP / EXPO si tu l'utilisais.", "PC portable : la pile est à l'intérieur, parfois sous un connecteur. Si tu n'es pas à l'aise, un réparateur la change en quelques minutes.", "Une fois la pile changée, clique sur « C'est fait » : seuls les nouveaux cas compteront.")
+}
 # Le contrôleur de disque a dû être réinitialisé (événement 129) : le PC se fige 30 secondes à 1 minute, puis repart
 function Test-StorageResets {
     $since = Get-StabilitySince 'diskreset' (Get-Date).AddDays(-30)
@@ -3504,6 +3550,7 @@ function Test-Stability {
     try { Test-StartupRepair } catch { Log "   • Réparation automatique de Windows : journal illisible" }
     try { Test-HardwareErrors } catch {}
     try { Test-StorageResets } catch {}
+    try { Test-RtcBattery } catch {}
 
     # Le pilote graphique qui « cesse de répondre et récupère » : écran noir quelques secondes qui revient tout seul,
     # jeu qui se fige ou se ferme. Toutes les traces que Windows en garde sont réunies (événement 4101, erreurs du pilote,

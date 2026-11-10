@@ -1417,7 +1417,7 @@ function Start-Background([string]$Code) {
 function Start-IssueCheck($I) {
     # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
     # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
-    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $I.Id; return $false }
+    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset', 'rtc') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
@@ -1702,7 +1702,7 @@ function Invoke-UiCommand($T) {
             'done' {
                 $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title)
                 # Problème lu dans l'historique de Windows (extinctions, plantages…) : « c'est fait » = seuls les nouveaux comptent désormais
-                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $T.Issue.Id }
+                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset', 'rtc') { Set-StabilityFixed $T.Issue.Id }
                 Update-DiagBadge; Refresh-Page
             }
             'openurl' { [void](Open-Url $T.Url) }
@@ -2852,6 +2852,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.4.0' = @("Nouveau contrôle : pile de la carte mère vide. Si l'horloge du PC repart à une vieille date au démarrage (après une coupure ou une multiprise éteinte), le diagnostic le dit et explique comment changer la pile CR2032 (2 à 5 €)."),
     '3.3.0' = @("7 nouveaux dépannages (onglet Réparation) : Bluetooth, périphérique USB non reconnu, jeu qui ne se lance pas (Visual C++, DirectX, anti-triche), applis Windows / Store / menu Démarrer bloqués, problème de veille (qui réveille le PC), icônes ou miniatures cassées, réglages de Windows pour les jeux.",
                 "« Pas de son » : s'il y a plusieurs sorties (casque, écran HDMI, enceintes), tu choisis la bonne avec un son de test.",
                 "« Réparer la connexion » : réactive aussi les services et la carte réseau désactivés, et relance un Wi-Fi qui ne voit plus aucun réseau.",

@@ -2,6 +2,12 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.4.0 : pile de la carte mère (validé par Sam le 10/11)
+
+- Idée née du pote de Jazon : LDLC a annoncé « Windows corrompu + BIOS pas à jour + pile CM HS » pour 500 €.
+- `Test-RtcBattery` : au démarrage (Kernel-General 12), l'horloge indique une date plus ancienne d'au moins un jour que le dernier événement noté avant (lu dans l'ordre d'écriture, pas par date). Remise à l'heure par Windows lue pour le détail (Kernel-General 1). Alerte à partir de 2 fois en 180 jours, une seule fois seulement notée dans le journal. « C'est fait » après le changement de pile : seuls les nouveaux cas comptent.
+- Pas de fausse alerte : heure d'été, double démarrage Linux (quelques heures), remise à l'heure manuelle.
+
 ## Publié en 3.3.0 : dépannages élargis (plan validé par Sam le 09/11 après relecture complète du code)
 
 - Priorité 1 :
