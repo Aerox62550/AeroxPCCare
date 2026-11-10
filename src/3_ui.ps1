@@ -2852,7 +2852,7 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
-    '3.4.0' = @("Nouveau contrôle : pile de la carte mère vide. Si l'horloge du PC repart à une vieille date au démarrage (après une coupure ou une multiprise éteinte), le diagnostic le dit et explique comment changer la pile CR2032 (2 à 5 €)."),
+    '3.4.0' = @("Nouveau contrôle : pile de la carte mère vide. Si l'horloge du PC repart à une vieille date au démarrage (après une coupure ou une multiprise éteinte), le diagnostic le dit et explique comment changer la pile CR2032 (2 à 5 €).")
     '3.3.0' = @("7 nouveaux dépannages (onglet Réparation) : Bluetooth, périphérique USB non reconnu, jeu qui ne se lance pas (Visual C++, DirectX, anti-triche), applis Windows / Store / menu Démarrer bloqués, problème de veille (qui réveille le PC), icônes ou miniatures cassées, réglages de Windows pour les jeux.",
                 "« Pas de son » : s'il y a plusieurs sorties (casque, écran HDMI, enceintes), tu choisis la bonne avec un son de test.",
                 "« Réparer la connexion » : réactive aussi les services et la carte réseau désactivés, et relance un Wi-Fi qui ne voit plus aucun réseau.",
