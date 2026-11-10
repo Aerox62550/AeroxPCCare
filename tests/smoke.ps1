@@ -129,6 +129,117 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : PC neuf / Windows réinstallé
+    Smoke 'PC neuf : règles (âge de Windows, disque vide, mémoire)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $now = Get-Date; $u = { param($d) [long]([DateTimeOffset]$d).ToUnixTimeSeconds() }
+        Is 'installé il y a 5 jours' (Get-InstallAgeDays @((& $u $now.AddDays(-5))) $now) 5
+        Is 'grosse mise à jour il y a 5 jours, Windows de 2 ans' (Get-InstallAgeDays @((& $u $now.AddDays(-5)), (& $u $now.AddDays(-700))) $now) 700
+        Is 'date illisible' (Get-InstallAgeDays @(0) $now) -1
+        $d = [pscustomobject]@{ IsBoot = $false; IsSystem = $false; IsOffline = $false; IsReadOnly = $false; BusType = 'NVMe'; Size = 1000GB; PartitionStyle = 'RAW' }
+        Is 'disque neuf vierge' (Test-EmptyDisk $d 0 $true) $true
+        Is 'non initialisé mais pas vierge (chiffré ?)' (Test-EmptyDisk $d 0 $false) $false
+        Is 'a une partition' (Test-EmptyDisk $d 1 $true) $false
+        $g = $d.PSObject.Copy(); $g.PartitionStyle = 'GPT'
+        Is 'initialisé sans partition' (Test-EmptyDisk $g 0 $false) $true
+        Is 'initialisé avec partition' (Test-EmptyDisk $g 2 $false) $false
+        foreach ($prop in 'IsBoot', 'IsSystem', 'IsOffline', 'IsReadOnly') { $x = $d.PSObject.Copy(); $x.$prop = $true; Is "refusé : $prop" (Test-EmptyDisk $x 0 $true) $false }
+        foreach ($bus in 'USB', 'SD', 'MMC') { $x = $d.PSObject.Copy(); $x.BusType = $bus; Is "refusé : $bus" (Test-EmptyDisk $x 0 $true) $false }
+        $x = $d.PSObject.Copy(); $x.Size = 4GB; Is 'trop petit' (Test-EmptyDisk $x 0 $true) $false
+        Is 'rien' (Test-EmptyDisk $null 0 $true) $false
+        Is 'DDR4 2133' (Test-RamBaseSpeed 26 2133) $true
+        Is 'DDR4 3600' (Test-RamBaseSpeed 26 3600) $false
+        Is 'DDR5 4800' (Test-RamBaseSpeed 34 4800) $true
+        Is 'DDR5 6000' (Test-RamBaseSpeed 34 6000) $false
+        Is 'vitesse inconnue' (Test-RamBaseSpeed 26 0) $false
+        $apps = @(Get-NewPcApps)
+        if ($apps.Count -ne @($script:NewPcApps).Count -or $apps.Count -lt 8) { throw "liste des logiciels incomplète" }
+        Write-Host ("        déjà installés ici : {0}" -f ((@($apps | Where-Object { $_.Installed } | ForEach-Object { $_.Name })) -join ', '))
+        $sync.Errors.Clear(); Install-PickedApps @('Pas.DansLaListe', 'evil --override x')
+        if ($sync.Errors.Count) { throw "un logiciel hors liste a été tenté" }
+        $age = Get-WindowsInstallAge
+        if ($age -lt 0) { throw "âge de Windows illisible" }
+        Write-Host ("        Windows installé depuis {0} jour(s) sur ce PC" -f $age)
+    }
+    Smoke 'PC neuf : disque vide préparé (disque virtuel), disque pas vierge refusé' {
+        $vhd = 'C:\aerox\test-vide.vhd'; $vhd2 = 'C:\aerox\test-plein.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        function New-TestDisk([string]$Path) {
+            if (Test-Path -LiteralPath $Path) { try { Dismount-DiskImage -ImagePath $Path -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $Path -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$Path`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = (Get-DiskImage -ImagePath $Path -ErrorAction Stop).Number
+            if ($null -eq $n) { throw "disque virtuel pas attaché" }
+            $dk = Get-Disk -Number $n
+            if ($dk.IsOffline) { Set-Disk -Number $n -IsOffline $false }
+            if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            return [int]$n
+        }
+        try {
+            $n = New-TestDisk $vhd
+            $d = Get-Disk -Number $n
+            Write-Host ("        disque virtuel n° {0} : {1}, {2}, bus {3}" -f $n, $d.PartitionStyle, (Format-Size ([double]$d.Size)), $d.BusType)
+            if (-not (Test-DiskBlank $n)) { throw "disque neuf pas vu comme vierge" }
+            $e = @(Get-EmptyDisks | Where-Object { $_.Number -eq $n })
+            if ($e.Count -ne 1) { throw "disque vide pas proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n 'un-autre-disque' } catch { $refused = $true }
+            if (-not $refused -or (Get-DiskUsedPartitions $n) -ne 0) { throw "mauvais identifiant : le disque devait être refusé sans être touché" }
+            $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
+            $refused = $false; try { Initialize-EmptyDisk ([int]$sys.Number) "$($sys.UniqueId)" } catch { $refused = $true }
+            if (-not $refused) { throw "LE DISQUE DE WINDOWS A ÉTÉ ACCEPTÉ" }
+            Initialize-EmptyDisk $n $e[0].Id
+            $vol = @(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter } | Get-Volume)
+            if ($vol.Count -ne 1 -or "$($vol[0].FileSystem)" -ne 'NTFS' -or "$($vol[0].FileSystemLabel)" -ne 'Données') { throw "disque mal préparé : $($vol.Count) volume(s)" }
+            Write-Host ("        préparé : {0}: {1} {2}" -f $vol[0].DriveLetter, $vol[0].FileSystem, $vol[0].FileSystemLabel)
+            if (@(Get-EmptyDisks | Where-Object { $_.Number -eq $n }).Count) { throw "un disque préparé est encore proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n $e[0].Id } catch { $refused = $true }
+            if (-not $refused) { throw "un disque qui a une partition a été accepté" }
+            # Disque non initialisé mais pas vierge (comme un disque chiffré en entier) : jamais proposé, jamais touché
+            $n2 = New-TestDisk $vhd2
+            $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$n2", [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+            try { $junk = New-Object byte[] 4096; (New-Object Random 7).NextBytes($junk); $junk[510] = 0; $junk[511] = 0; $fs.Position = 8192; $fs.Write($junk, 0, $junk.Length); $fs.Flush() } finally { $fs.Dispose() }
+            $d2 = Get-Disk -Number $n2
+            Write-Host ("        disque « chiffré » n° {0} : {1}" -f $n2, $d2.PartitionStyle)
+            if (Test-DiskBlank $n2) { throw "disque avec des données vu comme vierge" }
+            if (@(Get-EmptyDisks | Where-Object { $_.Number -eq $n2 }).Count) { throw "disque pas vierge proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n2 "$($d2.UniqueId)" } catch { $refused = $true }
+            if (-not $refused -or "$((Get-Disk -Number $n2).PartitionStyle)" -ne 'RAW') { throw "DISQUE PAS VIERGE TOUCHÉ" }
+        } finally {
+            foreach ($f in $vhd, $vhd2) { try { Dismount-DiskImage -ImagePath $f -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'PC neuf : liste guidée sur ce PC' {
+        $sync.NewPc = $null; Get-NewPcPlan
+        if (-not $sync.NewPc -or @($sync.NewPc.Items).Count -lt 6) { throw "liste incomplète" }
+        foreach ($it in $sync.NewPc.Items) { if ($it.State -notin 'ok', 'todo', 'info' -or -not $it.Title) { throw "ligne mal formée : $($it.Id)" } }
+    }
+    Smoke 'Fenêtre : préparer ce PC' {
+        $sync.NewPc = @{ Age = 3; Todo = 3; Items = @(
+            @{ Id = 'activation'; State = 'ok'; Title = 'Windows est activé'; Detail = 'Ta licence est reconnue.'; Btn = ''; Arg = $null },
+            @{ Id = 'wupdate'; State = 'todo'; Title = '12 mise(s) à jour de Windows à installer'; Detail = "Un Windows tout juste installé a toujours du retard."; Btn = 'Installer'; Arg = $null },
+            @{ Id = 'drivers'; State = 'todo'; Title = "La carte graphique n'a pas son pilote"; Detail = 'Windows utilise son pilote de secours.'; Btn = 'Voir les pilotes'; Arg = $null },
+            @{ Id = 'disk'; State = 'todo'; Title = 'Un disque de 932 Go est vide et pas encore utilisable'; Detail = 'Samsung SSD 870 EVO 1TB'; Btn = 'Le préparer'; Arg = @{ Number = 1; Name = 'Samsung SSD 870 EVO 1TB'; Size = 1000GB; Id = 'x' } },
+            @{ Id = 'ram'; State = 'info'; Title = 'Mémoire à 2133 MT/s : la vitesse de base'; Detail = "Si l'étiquette de tes barrettes annonce plus, active XMP / EXPO."; Btn = ''; Arg = $null },
+            @{ Id = 'apps'; State = 'info'; Title = 'Logiciels utiles'; Detail = 'Pas encore installés : Discord, Steam, 7-Zip.'; Btn = 'Choisir'; Arg = @() },
+            @{ Id = 'bios'; State = 'info'; Title = 'BIOS de la carte mère'; Detail = 'Pas urgent.'; Btn = 'Voir la page'; Arg = $null }) }
+        Show-NewPcDialog
+        $sync.NewPc = $null
+    }
+    Smoke 'Fenêtre : logiciels utiles' {
+        $r = @(Show-NewPcAppsDialog @(@{ Id = 'Discord.Discord'; Name = 'Discord'; Cat = 'Discussion'; Installed = $false }, @{ Id = '7zip.7zip'; Name = '7-Zip'; Cat = 'Fichiers compressés (zip, rar)'; Installed = $true }, @{ Id = 'Valve.Steam'; Name = 'Steam'; Cat = 'Jeux'; Installed = $false }))
+        if ($r.Count) { throw "rien n'était coché, rien ne doit être installé" }
+    }
+    Smoke 'PC neuf : bandeau de l accueil' {
+        $keepH = $script:Settings.NewPcHide; $keepA = $script:WinAge
+        try {
+            $script:Settings.NewPcHide = $false; $script:WinAge = 4
+            if (-not (Test-NewPcBanner)) { throw "bandeau absent sur un Windows de 4 jours" }
+            Show-Page 'home'
+            $script:WinAge = 400; if (Test-NewPcBanner) { throw "bandeau sur un vieux Windows" }
+            $script:WinAge = 4; $script:Settings.NewPcHide = $true; if (Test-NewPcBanner) { throw "bandeau malgré « Ne plus afficher »" }
+        } finally { $script:Settings.NewPcHide = $keepH; $script:WinAge = $keepA; Show-Page 'home' }
+    }
     # ---------------- 3.4.0 : écrans bleus expliqués
     Smoke 'Écran bleu : règles (codes, contexte, série, mémoire)' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }

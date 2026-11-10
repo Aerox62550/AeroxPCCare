@@ -15,6 +15,13 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Rapports désactivés dans Windows (`CrashDumpEnabled = 0`) : alerte « Windows ne garde aucun rapport d'écran bleu » avec réactivation annulable (`Set-CrashDumpMode 7`) ; fichier d'échange désactivé : expliqué.
 - Nouvelle carte « Écran bleu » (Réparation > Dépannage rapide) : rapport complet sur 90 jours (`Get-BsodReport`).
 
+### Mode « PC neuf / Windows réinstallé » (proposé le 04/11 pour le frère de Sam, validé le 10/11)
+
+- Accueil : tuile « PC neuf ou Windows réinstallé » ; bandeau quand Windows est installé depuis 30 jours au plus (la date la plus ancienne entre `InstallDate` et les clés `Source OS` : une grosse mise à jour ne compte pas), masquable.
+- Liste guidée (`Get-NewPcPlan`, fenêtre `Show-NewPcDialog`) : activation, mises à jour Windows en attente, appareils sans pilote / carte graphique sur le pilote de secours, disque vide, écran sous sa fréquence, mémoire à sa vitesse de base (PC fixe, information), programmes au démarrage, logiciels utiles, antivirus actif, point de restauration, réglages pour les jeux, BIOS (lien, jamais flashé). Après chaque étape la liste est relue et rouverte.
+- Disque vide préparé en D: (`Initialize-EmptyDisk`) seulement si : interne, en ligne, pas le disque de Windows, 8 Go ou plus, aucune partition, et pour un disque jamais initialisé, premier Mo entièrement à zéro (un disque chiffré en entier a aussi l'air non initialisé : jamais proposé). Identifiant du disque revérifié juste avant d'écrire. Confirmation avec le nom et la taille.
+- Logiciels utiles : liste fixe de 11 (navigateurs, Discord, Steam, Epic, 7-Zip, VLC, Spotify, OBS, Notepad++), rien de coché d'avance, installés par winget ; un identifiant hors liste est ignoré.
+
 ### Pile de la carte mère
 
 - Idée née du pote de Jazon : LDLC a annoncé « Windows corrompu + BIOS pas à jour + pile CM HS » pour 500 €.

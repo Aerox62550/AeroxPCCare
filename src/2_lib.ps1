@@ -7028,6 +7028,200 @@ function Reset-WindowsUpdate {
     } else { Log "✅ Windows Update remis à zéro." }
 }
 
+# ---------------------------------------------------------------- PC neuf / Windows réinstallé : liste guidée
+# Date de la première installation de Windows : une grosse mise à jour de Windows remet « InstallDate » à zéro et range
+# l'ancienne date dans HKLM\SYSTEM\Setup\Source OS…, donc on garde la plus ancienne des deux.
+function Get-InstallAgeDays($UnixDates, [datetime]$Now) {
+    $d = @($UnixDates | Where-Object { [long]$_ -gt 946684800 } | ForEach-Object { [long]$_ } | Sort-Object)
+    if (-not $d.Count) { return -1 }
+    $t = (New-Object datetime 1970, 1, 1, 0, 0, 0, ([DateTimeKind]::Utc)).AddSeconds($d[0]).ToLocalTime()
+    return [int][math]::Floor(($Now - $t).TotalDays)
+}
+function Get-WindowsInstallAge {
+    $dates = @()
+    try { $dates += [long](Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name InstallDate -ErrorAction Stop).InstallDate } catch {}
+    try { foreach ($k in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction Stop | Where-Object { $_.PSChildName -like 'Source OS*' })) { try { $dates += [long]$k.GetValue('InstallDate') } catch {} } } catch {}
+    return (Get-InstallAgeDays $dates (Get-Date))
+}
+# Un disque « vide » qu'AEROX peut préparer : interne, en ligne, jamais celui de Windows, et sans AUCUNE partition.
+# Un disque jamais initialisé (RAW) doit en plus être vraiment vierge (premiers secteurs à zéro) : un disque chiffré en
+# entier ou venu d'un autre système a aussi l'air « non initialisé » alors qu'il contient des données.
+function Test-EmptyDisk($D, [int]$Partitions, [bool]$Blank) {
+    if (-not $D) { return $false }
+    if ($D.IsBoot -or $D.IsSystem -or $D.IsOffline -or $D.IsReadOnly) { return $false }
+    if ("$($D.BusType)" -match '(?i)^(USB|SD|MMC|1394|iSCSI|Fibre Channel|Storage Spaces|Spaces)$') { return $false }
+    if ([double]$D.Size -lt 8GB) { return $false }
+    if ($Partitions -ne 0) { return $false }
+    if ("$($D.PartitionStyle)" -eq 'RAW') { return $Blank }
+    return ("$($D.PartitionStyle)" -in 'GPT', 'MBR')
+}
+function Test-DiskBlank([int]$Number) {
+    try {
+        $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$Number", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $buf = New-Object byte[] (1MB); $n = 0
+            while ($n -lt $buf.Length) { $r = $fs.Read($buf, $n, $buf.Length - $n); if ($r -le 0) { break }; $n += $r }
+            if ($n -lt $buf.Length) { return $false }
+            # Que des zéros : en base64 cela ne donne que des « A » (et le remplissage « = »)
+            return ([Convert]::ToBase64String($buf).Trim([char[]]'A=').Length -eq 0)
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+function Get-DiskUsedPartitions([int]$Number) {
+    # Les partitions « réservées » que Windows crée tout seul à l'initialisation (MSR) ne contiennent rien
+    return @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' -and "$($_.GptType)" -ne '{e3c9e316-0b5c-4db8-817d-f92df00215ae}' }).Count
+}
+function Get-EmptyDisks {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue)) {
+        $n = [int]$d.Number; $parts = Get-DiskUsedPartitions $n
+        $blank = $false; if ("$($d.PartitionStyle)" -eq 'RAW' -and $parts -eq 0) { $blank = Test-DiskBlank $n }
+        if (Test-EmptyDisk $d $parts $blank) { [void]$out.Add(@{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Id = "$($d.UniqueId)"; Serial = "$($d.SerialNumber)".Trim(); Raw = ("$($d.PartitionStyle)" -eq 'RAW') }) }
+        elseif ("$($d.PartitionStyle)" -eq 'RAW' -and $parts -eq 0 -and -not $d.IsBoot -and -not $d.IsSystem -and "$($d.BusType)" -notmatch '(?i)^(USB|SD|MMC)$') { Log ("   • Disque {0} ({1}, {2}) : pas de partition lisible mais pas vierge (chiffré, ou venu d'un autre système ?) : AEROX n'y touche pas." -f $n, "$($d.FriendlyName)".Trim(), (Format-Size ([double]$d.Size))) }
+    }
+    return $out.ToArray()
+}
+# Prépare un disque vide : table GPT, une seule partition NTFS, une lettre (D: si elle est libre). Tout est revérifié
+# juste avant d'écrire : c'est bien le même disque que celui confirmé à l'écran, et il est toujours vide.
+function Initialize-EmptyDisk([int]$Number, [string]$Id) {
+    Step "Préparation du disque vide"
+    $d = Get-Disk -Number $Number -ErrorAction Stop
+    if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché : rien n'a été touché." }
+    $parts = Get-DiskUsedPartitions $Number
+    $blank = ("$($d.PartitionStyle)" -eq 'RAW') -and (Test-DiskBlank $Number)
+    if (-not (Test-EmptyDisk $d $parts $blank)) { throw "Ce disque n'est pas (ou plus) vide : rien n'a été touché." }
+    if ("$($d.PartitionStyle)" -eq 'RAW') { Initialize-Disk -Number $Number -PartitionStyle GPT -ErrorAction Stop; Log "   ✔ Disque initialisé (GPT)" }
+    $used = @(); try { $used = @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() }) } catch {}
+    $p = if ($used -notcontains 'D') { New-Partition -DiskNumber $Number -UseMaximumSize -DriveLetter 'D' -ErrorAction Stop } else { New-Partition -DiskNumber $Number -UseMaximumSize -AssignDriveLetter -ErrorAction Stop }
+    $null = Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'Données' -Force -Confirm:$false -ErrorAction Stop
+    $letter = "$((Get-Partition -DiskNumber $Number -PartitionNumber $p.PartitionNumber).DriveLetter)"
+    Log ("✅ Le disque est prêt : {0}: « Données » ({1}). Tu peux y installer tes jeux et y ranger tes fichiers." -f $letter, (Format-Size ([double]$p.Size)))
+    Add-Change -Kind 'info' -Title ("Disque vide préparé : {0}: « Données »" -f $letter) -Detail ("{0}, {1}" -f "$($d.FriendlyName)".Trim(), (Format-Size ([double]$d.Size)))
+}
+# Mémoire à sa vitesse de base (profil XMP / EXPO sans doute pas activé) : DDR4 jusqu'à 2666, DDR5 jusqu'à 4800
+function Test-RamBaseSpeed([int]$Type, [int]$Speed) {
+    if ($Speed -le 0) { return $false }
+    return (($Type -eq 26 -and $Speed -le 2666) -or ($Type -eq 34 -and $Speed -le 4800))
+}
+# Logiciels proposés après une installation de Windows : uniquement cette liste, installés par winget (source officielle)
+$script:NewPcApps = @(
+    @{ Id = 'Google.Chrome';        Name = 'Google Chrome';   Cat = 'Navigateur';  Rx = '^Google Chrome' },
+    @{ Id = 'Mozilla.Firefox';      Name = 'Mozilla Firefox'; Cat = 'Navigateur';  Rx = '^Mozilla Firefox' },
+    @{ Id = 'Brave.Brave';          Name = 'Brave';           Cat = 'Navigateur';  Rx = '^Brave' },
+    @{ Id = 'Discord.Discord';      Name = 'Discord';         Cat = 'Discussion';  Rx = '^Discord' },
+    @{ Id = 'Valve.Steam';          Name = 'Steam';           Cat = 'Jeux';        Rx = '^Steam$' },
+    @{ Id = 'EpicGames.EpicGamesLauncher'; Name = 'Epic Games'; Cat = 'Jeux';      Rx = '^Epic Games Launcher' },
+    @{ Id = '7zip.7zip';            Name = '7-Zip';           Cat = 'Fichiers compressés (zip, rar)'; Rx = '^7-Zip' },
+    @{ Id = 'VideoLAN.VLC';         Name = 'VLC';             Cat = 'Vidéos et musique'; Rx = '^VLC media player' },
+    @{ Id = 'Spotify.Spotify';      Name = 'Spotify';         Cat = 'Musique';     Rx = '^Spotify' },
+    @{ Id = 'OBSProject.OBSStudio'; Name = 'OBS Studio';      Cat = 'Enregistrer et streamer'; Rx = '^OBS Studio' },
+    @{ Id = 'Notepad++.Notepad++';  Name = 'Notepad++';       Cat = 'Bloc-notes avancé'; Rx = '^Notepad\+\+' }
+)
+function Get-NewPcApps {
+    $names = New-Object System.Collections.ArrayList
+    $keys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
+    try { $su = Get-SessionUser; if ($su.Hkcu) { $keys += "$($su.Hkcu)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" } } catch {}
+    foreach ($k in $keys) { foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) { if ($e.DisplayName) { [void]$names.Add("$($e.DisplayName)".Trim()) } } }
+    return @($script:NewPcApps | ForEach-Object { $rx = $_.Rx; @{ Id = $_.Id; Name = $_.Name; Cat = $_.Cat; Installed = [bool](@($names | Where-Object { $_ -match $rx }).Count) } })
+}
+function Install-PickedApps([string[]]$Ids) {
+    $known = @($script:NewPcApps | ForEach-Object { $_.Id })
+    $todo = @($Ids | Where-Object { $_ -and $known -contains $_ } | Select-Object -Unique)
+    if (-not $todo.Count) { Log "   • Aucun logiciel choisi."; return }
+    $i = 0
+    foreach ($id in $todo) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande : les logiciels suivants ne sont pas installés."; break }
+        $i++; $app = @($script:NewPcApps | Where-Object { $_.Id -eq $id })[0]
+        Step ("Installation de {0} ({1} sur {2})" -f $app.Name, $i, $todo.Count)
+        if (Install-WingetTool $id $app.Name) { Log ("   ✔ {0} installé" -f $app.Name); Add-Change -Kind 'info' -Title ("Logiciel installé : {0}" -f $app.Name) }
+        elseif (-not (Get-Winget)) { break }
+        else { Add-TaskError -Title ("{0} n'a pas pu être installé" -f $app.Name) -Cause "L'installation automatique (winget) a échoué pour ce logiciel." -Effect "Les autres logiciels ne sont pas touchés." -Steps @("Télécharge-le depuis son site officiel.", "Ou réessaie plus tard : le serveur est parfois occupé.") }
+    }
+}
+# La liste guidée : chaque point est un fait relevé sur le PC. État : ok (fait), todo (à faire), info (à savoir)
+function Get-NewPcPlan {
+    Step "Préparation du PC : ce qui est fait, ce qui reste"
+    $items = New-Object System.Collections.ArrayList
+    $add = { param($Id, $State, $Title, $Detail, $Btn, $Arg) [void]$items.Add(@{ Id = $Id; State = $State; Title = $Title; Detail = $Detail; Btn = $Btn; Arg = $Arg }) }
+    $age = Get-WindowsInstallAge
+    # 1. Activation
+    try {
+        $lic = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)
+        if (@($lic | Where-Object { $_.LicenseStatus -eq 1 }).Count) { & $add 'activation' 'ok' "Windows est activé" "Ta licence est reconnue." '' $null }
+        else { & $add 'activation' 'todo' "Windows n'est pas activé" "Connecte-toi avec ton compte Microsoft (la licence y est souvent attachée), ou entre ta clé." 'Ouvrir l''activation' $null }
+    } catch {}
+    # 2. Mises à jour Windows
+    Log "   • Recherche des mises à jour de Windows (jusqu'à 2 minutes)…"
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session; $session.ClientApplicationID = 'AEROX PC Care'
+        $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
+        $n = 0; foreach ($u in $res.Updates) { if ("$($u.Title)" -notmatch '(?i)KB2267602|Security Intelligence|veille de sécurité') { $n++ } }
+        if ($n) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
+        else { & $add 'wupdate' 'ok' "Windows est à jour" "Aucune mise à jour en attente." '' $null }
+    } catch { & $add 'wupdate' 'info' "Mises à jour de Windows : pas pu vérifier" "Windows Update n'a pas répondu. Regarde dans l'onglet Mises à jour." '' $null }
+    if ($sync.Cancel) { return }
+    # 3. Pilotes : appareils sans pilote, carte graphique sur le pilote de secours de Windows
+    try {
+        $bad = @(Get-CimInstance Win32_PnPEntity -Filter "ConfigManagerErrorCode <> 0" -ErrorAction Stop | Where-Object { [int]$_.ConfigManagerErrorCode -notin 22, 45 })
+        $basic = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { "$($_.Name)" -match '(?i)Basic Display|Carte vidéo de base|Basic Render' })
+        if ($basic.Count) { & $add 'drivers' 'todo' "La carte graphique n'a pas son pilote" "Windows utilise son pilote de secours : image lente, pas de jeux. Installe le pilote officiel (NVIDIA, AMD ou Intel)." 'Voir les pilotes' $null }
+        elseif ($bad.Count) { & $add 'drivers' 'todo' "$($bad.Count) appareil(s) sans pilote" ((@($bad | Select-Object -First 3 | ForEach-Object { if ($_.Name) { "$($_.Name)" } else { 'Appareil inconnu' } }) -join ', ') + $(if ($bad.Count -gt 3) { '…' } else { '' })) 'Voir les pilotes' $null }
+        else { & $add 'drivers' 'ok' "Tous les appareils ont un pilote" "Pense quand même au dernier pilote de la carte graphique pour les jeux." 'Vérifier les pilotes' $null }
+    } catch {}
+    # 4. Disques vides
+    try {
+        $empty = @(Get-EmptyDisks)
+        foreach ($e in $empty) { & $add 'disk' 'todo' ("Un disque de {0} est vide et pas encore utilisable" -f (Format-Size $e.Size)) ("{0} : Windows ne l'affiche pas tant qu'il n'est pas préparé (une partition et une lettre)." -f $(if ($e.Name) { $e.Name } else { "Disque $($e.Number)" })) 'Le préparer' $e }
+        if (-not $empty.Count) {
+            $vols = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -eq 'Fixed' } | Sort-Object DriveLetter | ForEach-Object { "{0}: {1}" -f $_.DriveLetter, (Format-Size ([double]$_.Size)) })
+            & $add 'disk' 'ok' "Tous les disques sont utilisables" ($vols -join ' · ') '' $null
+        }
+    } catch {}
+    # 5. Écran réglé en dessous de sa fréquence
+    try {
+        $low = @(Get-Displays | Where-Object { Test-DisplayHzLow $_ }) | Select-Object -First 1
+        if ($low) { & $add 'display' 'todo' ("{0} tourne à {1} Hz au lieu de {2} Hz" -f $low.Name, $low.Hz, $low.MaxHz) "Après une installation, Windows règle souvent l'écran à 60 Hz : l'image est moins fluide que ce que l'écran sait faire." 'Régler' $null }
+        else { & $add 'display' 'ok' "Écran à la bonne fréquence" "Windows utilise bien la fréquence la plus haute de ton écran." '' $null }
+    } catch {}
+    # 6. Mémoire à sa vitesse de base (PC fixe seulement : sur un portable ce n'est pas réglable)
+    try {
+        $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count)
+        $m = @(Get-CimStatic Win32_PhysicalMemory)
+        $t = @($m | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
+        $spd = @($m | ForEach-Object { [int]$_.ConfiguredClockSpeed } | Where-Object { $_ }) | Sort-Object | Select-Object -First 1
+        if (-not $laptop -and (Test-RamBaseSpeed ([int]$t) ([int]$spd))) { & $add 'ram' 'info' ("Mémoire à {0} MT/s : la vitesse de base" -f $spd) "Si l'étiquette de tes barrettes annonce plus (3200, 3600, 6000…), active le profil XMP / EXPO dans le BIOS pour avoir la vitesse payée. Si elle annonce $spd, il n'y a rien à faire." '' $null }
+    } catch {}
+    # 7. Programmes au démarrage
+    try { $n = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count; & $add 'startup' $(if ($n -gt 8) { 'todo' } else { 'ok' }) "$n programme(s) se lancent au démarrage" $(if ($n -gt 8) { "Chaque logiciel installé s'ajoute au démarrage : garde seulement ceux que tu utilises tout le temps." } else { "Rien d'excessif. À revoir quand tu auras installé tes logiciels." }) 'Choisir' $null } catch {}
+    # 8. Logiciels utiles
+    try {
+        $apps = @(Get-NewPcApps); $miss = @($apps | Where-Object { -not $_.Installed })
+        if ($miss.Count) { & $add 'apps' 'info' "Logiciels utiles" ("Pas encore installés : " + (($miss | ForEach-Object { $_.Name }) -join ', ') + ". Coche ceux que tu veux, AEROX les installe depuis la source officielle.") 'Choisir' $apps }
+        else { & $add 'apps' 'ok' "Logiciels utiles" "Les logiciels courants sont déjà installés." '' $null }
+    } catch {}
+    # 9. Protection : antivirus actif, point de restauration
+    try {
+        $mp = Get-MpComputerStatus -ErrorAction Stop
+        if ($mp.RealTimeProtectionEnabled) { & $add 'defender' 'ok' "Antivirus de Windows actif" "Windows Defender protège le PC en temps réel : pas besoin d'un autre antivirus." '' $null }
+        else {
+            $other = @(); try { $other = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | Where-Object { "$($_.displayName)" -notmatch '(?i)defender' } | ForEach-Object { "$($_.displayName)" }) } catch {}
+            if ($other.Count) { & $add 'defender' 'ok' ("Antivirus : {0}" -f ($other -join ', ')) "Un autre antivirus que celui de Windows protège le PC." '' $null }
+            else { & $add 'defender' 'todo' "La protection en temps réel est coupée" "Aucun antivirus ne surveille le PC en ce moment." 'Ouvrir Sécurité Windows' $null }
+        }
+    } catch {}
+    try {
+        $rp = @(Get-ComputerRestorePoint -ErrorAction Stop)
+        if ($rp.Count) { & $add 'restore' 'ok' "Point de restauration présent" ("Dernier : {0}" -f "$($rp[-1].Description)") '' $null }
+        else { & $add 'restore' 'todo' "Aucun point de restauration" "Sur un Windows neuf la protection du système est souvent coupée. Un point de restauration permet de revenir en arrière si une installation se passe mal." 'Créer un point' $null }
+    } catch { & $add 'restore' 'todo' "Aucun point de restauration" "La protection du système semble coupée. Un point de restauration permet de revenir en arrière si une installation se passe mal." 'Créer un point' $null }
+    # 10. Pour finir : réglages pour les jeux, BIOS
+    & $add 'games' 'info' "Réglages de Windows pour les jeux" "Mode Jeu, planification GPU, Game Bar : AEROX lit tes réglages et te dit lesquels changer." 'Vérifier' $null
+    & $add 'bios' 'info' "BIOS de la carte mère" "Pas urgent : à mettre à jour seulement si tu as un souci (AEROX te montre ta version et ouvre la page du fabricant, il ne touche jamais au BIOS)." 'Voir la page' $null
+    foreach ($it in $items) { Log ("   {0} {1}{2}" -f $(switch ($it.State) { 'ok' { '✔' } 'todo' { '→' } default { '•' } }), $it.Title, $(if ($it.State -eq 'todo') { ' : à faire' } else { '' })) }
+    $todo = @($items | Where-Object { $_.State -eq 'todo' }).Count
+    Log $(if ($todo) { "→ $todo chose(s) à faire pour finir la préparation du PC." } else { "✅ Le PC est prêt : rien d'important ne manque." })
+    $sync.NewPc = @{ Items = $items.ToArray(); Age = $age; Todo = $todo }
+}
 function New-RestorePoint {
     Step "Création d'un point de restauration (sécurité)"
     try {
