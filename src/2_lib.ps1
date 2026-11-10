@@ -612,7 +612,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
+    $allowed = 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -1369,6 +1369,26 @@ function Get-AudioDefaultName([bool]$Capture, [int]$Role = 0) {
     $d = @(Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like "*$id" }) | Select-Object -First 1
     return $(if ($d) { "$($d.FriendlyName)" } else { '' })
 }
+# Sorties son en marche : @{ Id ; Name ; Default }
+function Get-SoundOutputs {
+    $def = [AeroxAudio]::DefaultId($false, 0)
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'OK' -and $_.InstanceId -match '(\{0\.0\.0\.[0-9A-Fa-f]{8}\}\.\{[0-9A-Fa-f-]{36}\})$' })) {
+        $null = "$($d.InstanceId)" -match '(\{0\.0\.0\.[0-9A-Fa-f]{8}\}\.\{[0-9A-Fa-f-]{36}\})$'; $id = $matches[1]
+        [void]$out.Add(@{ Id = $id; Name = "$($d.FriendlyName)"; Default = ($def -and $id -ieq $def) })
+    }
+    return @($out | Sort-Object { -not $_.Default }, { $_.Name })
+}
+# Fait sortir le son de Windows sur cet appareil (réglage « Sortie » des Paramètres > Son)
+function Set-SoundOutput([string]$Id) {
+    if ($Id -notmatch '^\{0\.0\.0\.[0-9A-Fa-f]{8}\}\.\{[0-9A-Fa-f-]{36}\}$') { return $false }
+    $o = @(Get-SoundOutputs | Where-Object { $_.Id -ieq $Id })[0]
+    if (-not $o) { return $false }
+    if (-not [AeroxAudio]::SetDefault($Id)) { return $false }
+    [void][AeroxAudio]::Fix($false, 30)
+    Add-Change -Kind 'info' -Title ("Sortie son changée : « {0} »" -f $o.Name) -Detail "Pour revenir en arrière : Paramètres > Système > Son > Sortie."
+    return $true
+}
 # Ce qu'il faut choisir dans Discord (ou Teams, les jeux…) : les appareils de Windows, ou ceux de SteelSeries Sonar
 # quand il est installé (Sonar fait passer le son des appels par ses propres appareils « Chat » et « Microphone »)
 function Write-VoiceAppAdvice {
@@ -1423,6 +1443,9 @@ function Repair-Sound {
     } else { Log "   ✔ Volume à $vol %, sourdine désactivée" }
     $cur = Get-AudioDefaultName $false 0
     if ($cur) { Log "   • Le son sort actuellement sur : « $cur »" }
+    # Plusieurs sorties possibles (casque, écran HDMI, enceintes) : la fenêtre de choix s'ouvre, avec un son de test
+    $so = @(Get-SoundOutputs)
+    if ($so.Count -ge 2) { $sync.SoundOutputs = $so; Log ("   → {0} sorties son possibles : choisis la bonne dans la fenêtre qui s'ouvre." -f $so.Count) }
     Write-VoiceAppAdvice
     Log "✅ Si tu n'entends toujours rien : vérifie que le son sort sur le bon appareil (casque, écran ou enceintes) dans Paramètres > Son, et le volume de l'appareil lui-même."
 }
@@ -2546,13 +2569,14 @@ function Get-PingLine($S, [string]$Label) {
 
 # Mesure en direct pendant ~20 s : processeur, mémoire, disque, carte graphique, bridage, pilotes, connexion
 # -Delay : attend avant de mesurer (le temps de lancer un jeu) ; -Mode 'jeu' : conseils adaptés à une mesure en jeu
-function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
+function Get-SlowReport([int]$Delay = 0, [string]$Mode = '', [int]$Samples = 7) {
     $sync.SlowReport = $null
     if ($Delay -gt 0) {
         Step "La mesure commence dans $Delay secondes : lance ton jeu (ou ce qui rame) maintenant et joue normalement."
         for ($s = 0; $s -lt $Delay; $s++) { if ($sync.Cancel) { return }; Start-Sleep -Seconds 1; $sync.Progress = [math]::Round(30 * ($s + 1) / $Delay) }
     }
-    Step "Analyse des lenteurs : mesure pendant 20 secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
+    $n = [math]::Max(4, [math]::Min(60, $Samples)); $secs = $n * 3
+    Step "Analyse des lenteurs : mesure pendant $secs secondes. Utilise le PC normalement (c'est encore mieux si tu la lances quand il rame)."
     $cores = [math]::Max([double]1, [Environment]::ProcessorCount)
     $me = $PID
     $acc = @{}; $cpuTot = New-Object System.Collections.ArrayList; $diskBusy = New-Object System.Collections.ArrayList; $diskQ = New-Object System.Collections.ArrayList
@@ -2566,7 +2590,7 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
     # Temps de réponse des disques : le vrai signe d'un SSD débordé (le % d'activité, lui, est mal mesuré sur les SSD)
     $lat0 = @{}; try { foreach ($d in @(Get-CimInstance Win32_PerfRawData_PerfDisk_PhysicalDisk -ErrorAction Stop | Where-Object { $_.Name -ne '_Total' })) { $lat0[$d.Name] = $d } } catch {}
     $null = Get-NetThroughput
-    $n = 7
+    $pgIn = New-Object System.Collections.ArrayList; $commit = $null
     for ($i = 0; $i -lt $n; $i++) {
         if ($sync.Cancel) { return }
         # 3 secondes entre deux relevés, occupées par la mesure de la connexion (1 essai par seconde vers la box et Internet)
@@ -2613,6 +2637,11 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
             } catch { $gpuOk = $false }
         }
         $nt = Get-NetThroughput; [void]$rxL.Add($nt.Rx); [void]$txL.Add($nt.Tx)
+        # Mémoire : pages relues depuis le disque (la mémoire déborde) et mémoire réservée par rapport à la limite
+        try {
+            $mm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
+            if ($mm) { [void]$pgIn.Add([double]$mm.PagesInputPersec); if ([double]$mm.CommitLimit -gt 0) { $commit = [math]::Round(100 * [double]$mm.CommittedBytes / [double]$mm.CommitLimit) } }
+        } catch {}
         # Disque le plus occupé (pas la moyenne de tous : un disque dur saturé + un SSD au repos donnerait 50 %)
         $dk = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne '_Total' })
         if ($dk.Count) {
@@ -2632,7 +2661,7 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
     $os = Get-CimInstance Win32_OperatingSystem
     $ramTot = [double]$os.TotalVisibleMemorySize * 1KB
     $ramPct = [math]::Round(100 * (1 - [double]$os.FreePhysicalMemory / [double]$os.TotalVisibleMemorySize))
-    $rep = @{ Mode = $Mode; Cpu = (& $avg $cpuTot); CpuMax = $(if ($cpuTot.Count) { [math]::Round([double](($cpuTot | Measure-Object -Maximum).Maximum)) } else { 0 }); Ram = $ramPct; RamTotal = $ramTot
+    $rep = @{ Seconds = $secs; Mode = $Mode; Cpu = (& $avg $cpuTot); CpuMax = $(if ($cpuTot.Count) { [math]::Round([double](($cpuTot | Measure-Object -Maximum).Maximum)) } else { 0 }); Ram = $ramPct; RamTotal = $ramTot
               Disk = (& $avg $diskBusy); Queue = $(if ($diskQ.Count) { [math]::Round([double](($diskQ | Measure-Object -Average).Average), 1) } else { 0 }); Hdd = $false; Top = @(); Findings = @(); Checked = @()
               GpuOk = ($gpuOk -and $gpuTot.Count -gt 0); Gpu = (& $avg $gpuTot); Dpc = $(if ($dpc.Count) { [math]::Round([double](($dpc | Measure-Object -Average).Average), 1) } else { 0 })
               Limit = $(if ($lim.Count -ge 4) { & $avg $lim } else { $null }) }
@@ -2691,6 +2720,26 @@ function Get-SlowReport([int]$Delay = 0, [string]$Mode = '') {
         [void]$f.Add(@{ Id = 'memoire'; Sev = 'bad'; Title = "La mémoire (RAM) est saturée : $($rep.Ram) %"; Text = $txt; Advice = $(if ($up) { $up } else { "Ferme les programmes et onglets de navigateur inutiles, et retire du démarrage ce qui ne sert pas." }); Action = 'startup' })
     }
     [void]$chk.Add(@{ Ok = ($rep.Ram -lt 85); T = "Mémoire : $($rep.Ram) % utilisée sur $(Format-Size $ramTot)" })
+    # La mémoire déborde sur le disque : Windows a promis plus de mémoire qu'il n'en a (RAM + fichier d'échange),
+    # ou relit sans arrêt des pages depuis le disque. Le PC rame alors que la RAM n'affiche pas forcément 100 %.
+    $pgAvg = [double](& $avg $pgIn)
+    $over = Test-MemoryOverflow $rep.Ram $commit $pgAvg
+    if ($over -and $rep.Ram -lt 85) {
+        $txt = ($byMem | Select-Object -First 3 | ForEach-Object { "{0} : {1}" -f $_.Label, (Format-Size $_.Mem) }) -join ' · '
+        [void]$f.Add(@{ Id = 'memoire-deborde'; Sev = 'bad'; Title = "La mémoire déborde sur le disque" + $(if ($null -ne $commit) { " (réservée à $commit % de la limite)" } else { '' }); Text = $txt
+                        Advice = "Windows range une partie de la mémoire sur le disque, beaucoup plus lent : tout se met à ramer par à-coups. Ferme les programmes et onglets inutiles ; si c'est fréquent, ajoute de la mémoire (RAM)."; Action = 'taskmgr' })
+    }
+    if ($null -ne $commit) { [void]$chk.Add(@{ Ok = -not $over; T = "Mémoire réservée par les programmes : $commit % de la limite" + $(if ($pgAvg -ge 1) { " · $([math]::Round($pgAvg)) pages relues du disque par seconde" } else { '' }) }) }
+    # Historique : Windows a-t-il manqué de mémoire ces dernières 24 h ? (même si tout va bien pendant la mesure)
+    try {
+        $ex = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Resource-Exhaustion-Detector'; Id = 2004; StartTime = (Get-Date).AddHours(-24) })
+        if ($ex.Count) {
+            $who = @($ex[0].Properties | ForEach-Object { "$($_.Value)" } | Where-Object { $_ -match '(?i)\.exe$' } | Select-Object -First 3) -join ', '
+            [void]$f.Add(@{ Id = 'memoire-historique'; Sev = 'warn'; Title = ("Windows a manqué de mémoire {0} fois ces dernières 24 h (dernière fois à {1:HH:mm})" -f $ex.Count, $ex[0].TimeCreated)
+                            Text = $(if ($who) { "Les plus gourmands à ce moment-là : $who" } else { "Windows a dû fermer ou ralentir des programmes." }); Advice = "C'est ce qui a fait ramer le PC à ce moment-là. Ferme ces programmes quand tu ne t'en sers pas, ou ajoute de la mémoire (RAM)."; Action = '' })
+        }
+        [void]$chk.Add(@{ Ok = -not $ex.Count; T = "Manques de mémoire ces dernières 24 h : $($ex.Count)" })
+    } catch {}
     if ($rep.Disk -ge 70) {
         $txt = ($byIo | Select-Object -First 3 | Where-Object { $_.Io -gt 100KB } | ForEach-Object { "{0} : {1}/s" -f $_.Label, (Format-Size $_.Io) }) -join ' · '
         [void]$f.Add(@{ Id = 'disque-sature'; Sev = 'bad'; Title = "Le disque est saturé ($($rep.Disk) % d'activité)"; Text = $txt; Advice = $(if ($rep.Hdd) { "Windows est sur un disque dur classique : c'est la cause n°1 des lenteurs. Un SSD (à partir d'environ 40 €) rend le PC plusieurs fois plus réactif." } else { "Souvent une analyse antivirus, une mise à jour ou une synchronisation (OneDrive…) : ça passe en quelques minutes." }); Action = '' })
@@ -3014,6 +3063,12 @@ function Get-DriveList {
 # Disque de Windows presque plein ? Le pourcentage seul trompe (14 % libres sur 2 To = 280 Go, ce n'est pas « presque plein »),
 # et l'espace seul aussi : il faut peu de place en proportion ET en valeur absolue.
 # 'crit' : moins de 10 % ET moins de 20 Go ; 'warn' : moins de 15 % ET moins de 50 Go ; sinon ''.
+# La mémoire déborde : mémoire réservée à 90 % ou plus de la limite (RAM + fichier d'échange), ou beaucoup de pages
+# relues depuis le disque alors que la RAM est déjà bien remplie
+function Test-MemoryOverflow([double]$RamPct, $CommitPct, [double]$PagesIn) {
+    if ($null -ne $CommitPct -and [double]$CommitPct -ge 90) { return $true }
+    return ($PagesIn -ge 1500 -and $RamPct -ge 75)
+}
 # Temps de réponse moyen d'un disque (ms) entre deux relevés bruts de Windows (« Moy. disque s/transfert »)
 function Get-DiskLatencyMs($A, $B) {
     try {
@@ -3340,6 +3395,27 @@ function Test-StartupRepair {
         -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nContinuer ?" `
         -Steps @($steps)
 }
+# Erreurs matérielles notées par Windows (WHEA) sans écran bleu : le processeur, la RAM ou la carte mère signalent
+# eux-mêmes une erreur grave. Avec un écran bleu, c'est déjà expliqué dans le problème « écrans bleus ».
+function Test-HardwareErrors {
+    if (@($script:Issues | Where-Object { $_.Id -eq 'bsod' }).Count) { return }
+    $ev = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = (Get-StabilitySince 'whea' (Get-Date).AddDays(-30)) } | Where-Object { [int]$_.Level -ge 1 -and [int]$_.Level -le 2 })
+    if (-not $ev.Count) { return }
+    Add-Issue -Id 'whea' -Sev 'crit' -Title ("Le matériel a signalé {0} erreur(s) grave(s) ce mois-ci" -f $ev.Count) -Detail ("Dernière le {0:dd/MM à HH:mm}" -f $ev[0].TimeCreated) `
+        -Cause "Le processeur, la mémoire (RAM) ou la carte mère ont eux-mêmes signalé une erreur à Windows (journal WHEA). Les causes habituelles : overclocking ou undervolting instable, profil XMP / EXPO trop poussé pour la RAM, surchauffe, ou alimentation qui fatigue." `
+        -Effect "Plantages, redémarrages soudains, jeux qui se ferment sans message." `
+        -Steps @("Si tu as overclocké ou undervolté (BIOS, Ryzen Master, Intel XTU, MSI Afterburner) : remets tout par défaut.", "Dans le BIOS : désactive XMP / EXPO pour tester ; si les erreurs s'arrêtent, c'est la RAM (ou son profil trop rapide).", "Vérifie les températures (onglet Gaming) et dépoussière le PC.", "Lance le test de mémoire de Windows (tape « mdsched » dans le menu Démarrer).", "Mets à jour le BIOS (onglet Mon PC).")
+}
+# Le contrôleur de disque a dû être réinitialisé (événement 129) : le PC se fige 30 secondes à 1 minute, puis repart
+function Test-StorageResets {
+    $since = Get-StabilitySince 'diskreset' (Get-Date).AddDays(-30)
+    $ev = @(foreach ($pv in 'storahci', 'stornvme', 'iaStorA', 'iaStorAC', 'iaStorAVC', 'iaStorVD', 'nvme', 'amd_sata', 'amdsbs', 'secnvme', 'storvsc') { Get-EventsSafe @{ LogName = 'System'; ProviderName = $pv; Id = 129; StartTime = $since } })
+    if ($ev.Count -lt 3) { return }
+    Add-Issue -Id 'diskreset' -Sev 'warn' -Title ("Un disque a cessé de répondre {0} fois ce mois-ci" -f $ev.Count) -Detail ("Dernière fois le {0:dd/MM à HH:mm} · pilote {1}" -f $ev[0].TimeCreated, $ev[0].ProviderName) `
+        -Cause "Windows a dû réinitialiser la liaison avec un disque parce qu'il ne répondait plus. Causes habituelles : firmware du SSD, économie d'énergie de la liaison (SATA / NVMe), câble SATA ou prise qui fatigue, ou disque en fin de vie." `
+        -Effect "Le PC se fige complètement 30 secondes à 1 minute, puis repart comme si de rien n'était." `
+        -Steps @("Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard, Kingston SSD Manager…).", "Passe en mode d'alimentation « Performances élevées » (onglet Performances) : il coupe l'économie d'énergie des disques.", "Disque SATA : change le câble SATA ou branche-le sur une autre prise de la carte mère.", "Sauvegarde tes fichiers importants par précaution.")
+}
 function Test-Stability {
     $since = Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)
     $bsod = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since } -ErrorAction SilentlyContinue)
@@ -3426,6 +3502,8 @@ function Test-Stability {
     }
 
     try { Test-StartupRepair } catch { Log "   • Réparation automatique de Windows : journal illisible" }
+    try { Test-HardwareErrors } catch {}
+    try { Test-StorageResets } catch {}
 
     # Le pilote graphique qui « cesse de répondre et récupère » : écran noir quelques secondes qui revient tout seul,
     # jeu qui se fige ou se ferme. Toutes les traces que Windows en garde sont réunies (événement 4101, erreurs du pilote,
@@ -3524,8 +3602,14 @@ function Test-Stability {
                 $g = @{ Name = $g.Name; Count = $after.Count; Group = $after }; $per = "depuis le nouveau pilote graphique"
             }
         }
-        # La bonne réparation selon le coupable : pilote graphique, fichiers de Windows, ou le logiciel lui-même
-        if ($gpuMod -or $g.Name -match '(?i)^dwm\.exe$') {
+        # La bonne réparation selon le coupable : un logiciel qui s'accroche (overlay, audio, antivirus), le pilote
+        # graphique, les fichiers de Windows, ou le logiciel lui-même
+        $cul = Get-CrashCulprit $module '' '' ($g.Name -replace '(?i)\.exe$', '')
+        if ($cul.Kind -in 'overlay', 'audio', 'security') {
+            Add-Issue -Id 'crash' -Sev 'warn' -Title ("{0} a planté {1} fois {2} à cause de {3}" -f $g.Name, $g.Count, $per, $cul.Name) -Detail ("Module en cause : {0}" -f $module) `
+                -Cause ("Windows a noté le fichier fautif à chaque plantage : $module. Ce n'est pas $($g.Name) qui est abîmé, c'est $($cul.Name) qui s'accroche à lui." + $others) `
+                -Effect "Fermetures soudaines et perte de ce qui n'était pas enregistré." -Steps @($cul.Advice, "Ensuite relance le diagnostic dans quelques jours : les plantages doivent s'arrêter.")
+        } elseif ($gpuMod -or $g.Name -match '(?i)^dwm\.exe$') {
             Add-Issue -Id 'crash' -Sev 'warn' -Title "$($g.Name) a planté $($g.Count) fois $per" -Detail ("Module en cause : {0}" -f $module) -Cause ($cause + $others) `
                 -Effect $(if ($isWin) { "Écran qui clignote ou devient noir, fenêtres qui se figent un instant." } else { "Fermetures soudaines et perte de ce qui n'était pas enregistré." }) `
                 -FixLabel "Vérifier les pilotes" -UiFix 'drivers' `
@@ -4378,20 +4462,20 @@ function Repair-Discord {
 }
 # Qui fait planter un logiciel ? D'après le fichier fautif noté par Windows (événement « Application Error » 1000).
 # Renvoie @{ Kind = 'gpu' | 'overlay' | 'audio' | 'security' | 'self' | 'system' | 'other' ; Name ; Advice }
-function Get-CrashCulprit([string]$Module, [string]$ModulePath = '', [string]$AppDir = '') {
+function Get-CrashCulprit([string]$Module, [string]$ModulePath = '', [string]$AppDir = '', [string]$App = 'Discord') {
     $m = "$Module".ToLowerInvariant(); $p = "$ModulePath"
-    if ($AppDir -and $p -and $p.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)) { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de Discord lui-même ($Module) : ses composants sont abîmés, AEROX les fait retélécharger." } }
-    if ($m -match '^(discord_[\w]+\.node|ffmpeg\.dll|libegl\.dll|libglesv2\.dll|vk_swiftshader\.dll|d3dcompiler_47\.dll)$') { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de Discord lui-même ($Module) : ses composants sont abîmés, AEROX les fait retélécharger." } }
-    if ($m -match '^(nvwgf2um|nvd3dum|nvoglv|nvldumd|nvcuda|nvapi|nvumdshim|nvgpucomp)') { return @{ Kind = 'gpu'; Name = 'pilote NVIDIA'; Advice = "Le pilote de la carte graphique NVIDIA fait planter Discord : mets-le à jour (onglet Mises à jour > Pilotes, ou GeForce Experience / NVIDIA App), ou réinstalle-le proprement." } }
-    if ($m -match '^(atidxx|amdxc|aticfx|atio6axx|amdihk|atiumd|amdenc|amfrt)') { return @{ Kind = 'gpu'; Name = 'pilote AMD'; Advice = "Le pilote de la carte graphique AMD fait planter Discord : mets-le à jour (AMD Software), ou réinstalle-le proprement." } }
-    if ($m -match '^(igd|igxelpicd|igc64|intel_gfx|igdumdim)') { return @{ Kind = 'gpu'; Name = 'pilote Intel'; Advice = "Le pilote graphique Intel fait planter Discord : mets-le à jour (Intel Driver & Support Assistant)." } }
-    if ($m -match 'rtsshooks|rtss|riva') { return @{ Kind = 'overlay'; Name = 'RivaTuner (MSI Afterburner)'; Advice = "RivaTuner (installé avec MSI Afterburner) s'accroche à Discord et le fait planter : dans RivaTuner, ajoute Discord.exe et mets « Application detection level » sur « None », ou ferme RivaTuner." } }
-    if ($m -match 'overwolf|ow-|owclient') { return @{ Kind = 'overlay'; Name = 'Overwolf'; Advice = "L'overlay Overwolf fait planter Discord : désactive-le pour Discord ou désinstalle Overwolf s'il ne sert plus." } }
-    if ($m -match 'gameoverlayrenderer') { return @{ Kind = 'overlay'; Name = "l'overlay Steam"; Advice = "L'overlay de Steam s'accroche à Discord : ferme Steam pour tester, ou désactive l'overlay Steam." } }
-    if ($m -match 'medal|obs-|graphics-hook|xsplit|nvspcap|bdcam|action_x64') { return @{ Kind = 'overlay'; Name = 'un logiciel de capture'; Advice = "Un logiciel d'enregistrement d'écran ($Module) s'accroche à Discord : ferme-le pour tester, ou mets-le à jour." } }
-    if ($m -match 'nahimic|a-volute|sonic|sstudio|ss3dev|sonar|nhapo|realtekapo|maxx') { return @{ Kind = 'audio'; Name = "le logiciel audio ($Module)"; Advice = "Un logiciel d'effets audio (Nahimic, Sonic Studio, SteelSeries Sonar…) s'accroche au son de Discord et le fait planter : mets-le à jour, ou désactive-le dans ses réglages (c'est une cause très connue)." } }
-    if ($m -match 'avast|avg|aswhook|bitdefender|atcuf|bdhkm|kaspersky|klhk|eset|ehdrv|norton|mcafee|mfehcs|sophos') { return @{ Kind = 'security'; Name = "l'antivirus ($Module)"; Advice = "L'antivirus s'accroche à Discord et le fait planter : mets-le à jour, ou ajoute Discord à ses programmes de confiance." } }
-    if ($m -match '^(ntdll|kernelbase|ucrtbase|msvcrt|vcruntime140|combase|user32|win32u)\.dll$') { return @{ Kind = 'system'; Name = $Module; Advice = "Plantage dans un fichier de Windows ($Module) : souvent les composants de Discord abîmés, ou la mémoire (RAM) instable." } }
+    if ($AppDir -and $p -and $p.StartsWith($AppDir, [StringComparison]::OrdinalIgnoreCase)) { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de $App lui-même ($Module) : ses fichiers sont abîmés." } }
+    if ($m -match '^(discord_[\w]+\.node|ffmpeg\.dll|libegl\.dll|libglesv2\.dll|vk_swiftshader\.dll|d3dcompiler_47\.dll)$') { return @{ Kind = 'self'; Name = $Module; Advice = "Un fichier de $App lui-même ($Module) : ses fichiers sont abîmés." } }
+    if ($m -match '^(nvwgf2um|nvd3dum|nvoglv|nvldumd|nvcuda|nvapi|nvumdshim|nvgpucomp)') { return @{ Kind = 'gpu'; Name = 'pilote NVIDIA'; Advice = "Le pilote de la carte graphique NVIDIA fait planter $App : mets-le à jour (onglet Mises à jour > Pilotes, ou GeForce Experience / NVIDIA App), ou réinstalle-le proprement." } }
+    if ($m -match '^(atidxx|amdxc|aticfx|atio6axx|amdihk|atiumd|amdenc|amfrt)') { return @{ Kind = 'gpu'; Name = 'pilote AMD'; Advice = "Le pilote de la carte graphique AMD fait planter $App : mets-le à jour (AMD Software), ou réinstalle-le proprement." } }
+    if ($m -match '^(igd|igxelpicd|igc64|intel_gfx|igdumdim)') { return @{ Kind = 'gpu'; Name = 'pilote Intel'; Advice = "Le pilote graphique Intel fait planter $App : mets-le à jour (Intel Driver & Support Assistant)." } }
+    if ($m -match 'rtsshooks|rtss|riva') { return @{ Kind = 'overlay'; Name = 'RivaTuner (MSI Afterburner)'; Advice = "RivaTuner (installé avec MSI Afterburner) s'accroche à $App et le fait planter : dans RivaTuner, ajoute $App et mets « Application detection level » sur « None », ou ferme RivaTuner." } }
+    if ($m -match 'overwolf|ow-|owclient') { return @{ Kind = 'overlay'; Name = 'Overwolf'; Advice = "L'overlay Overwolf fait planter $App : désactive-le pour $App ou désinstalle Overwolf s'il ne sert plus." } }
+    if ($m -match 'gameoverlayrenderer') { return @{ Kind = 'overlay'; Name = "l'overlay Steam"; Advice = "L'overlay de Steam s'accroche à $App : ferme Steam pour tester, ou désactive l'overlay Steam." } }
+    if ($m -match 'medal|obs-|graphics-hook|xsplit|nvspcap|bdcam|action_x64') { return @{ Kind = 'overlay'; Name = 'un logiciel de capture'; Advice = "Un logiciel d'enregistrement d'écran ($Module) s'accroche à $App : ferme-le pour tester, ou mets-le à jour." } }
+    if ($m -match 'nahimic|a-volute|sonic|sstudio|ss3dev|sonar|nhapo|realtekapo|maxx') { return @{ Kind = 'audio'; Name = "le logiciel audio ($Module)"; Advice = "Un logiciel d'effets audio (Nahimic, Sonic Studio, SteelSeries Sonar…) s'accroche au son de $App et le fait planter : mets-le à jour, ou désactive-le dans ses réglages (c'est une cause très connue)." } }
+    if ($m -match 'avast|avg|aswhook|bitdefender|atcuf|bdhkm|kaspersky|klhk|eset|ehdrv|norton|mcafee|mfehcs|sophos') { return @{ Kind = 'security'; Name = "l'antivirus ($Module)"; Advice = "L'antivirus s'accroche à $App et le fait planter : mets-le à jour, ou ajoute $App à ses programmes de confiance." } }
+    if ($m -match '^(ntdll|kernelbase|ucrtbase|msvcrt|vcruntime140|combase|user32|win32u)\.dll$') { return @{ Kind = 'system'; Name = $Module; Advice = "Plantage dans un fichier de Windows ($Module) : souvent les composants de $App abîmés, ou la mémoire (RAM) instable." } }
     return @{ Kind = 'other'; Name = $Module; Advice = "Fichier en cause : $Module." }
 }
 # Plantages et blocages de Discord notés par Windows ces 7 derniers jours
@@ -4425,6 +4509,263 @@ function Reset-DiscordModules([string]$InstDir) {
     foreach ($old in @($apps | Select-Object -Skip 1)) { try { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($old.FullName, 'OnlyErrorDialogs', 'SendToRecycleBin') } catch {} }
     $tmp = Join-Path $InstDir 'packages\SquirrelTemp'; if (Test-Path -LiteralPath $tmp) { $null = Remove-PathContent $tmp }
     return $done
+}
+# ---------------------------------------------------------------- DÉPANNAGES (3.3) : Bluetooth, USB, jeux, applis Windows, veille, icônes
+# Service de Windows désactivé → remis à son réglage d'origine (2 = automatique, 3 = à la demande). Renvoie $true si changé.
+function Enable-ServiceIfDisabled([string]$Name, [int]$Start = 3, [string]$Label = '') {
+    $k = "HKLM:\SYSTEM\CurrentControlSet\Services\$Name"
+    if ($Name -notmatch '^[\w.-]+$' -or -not (Test-Path -LiteralPath $k)) { return $false }
+    try {
+        if ([int](Get-ItemProperty -LiteralPath $k -Name Start -ErrorAction Stop).Start -ne 4) { return $false }
+        Set-ItemProperty -LiteralPath $k -Name Start -Value $Start -Type DWord -ErrorAction Stop
+        Log ("   ✔ Service « {0} » était désactivé : réactivé" -f $(if ($Label) { $Label } else { $Name }))
+        return $true
+    } catch { Log ("   ⚠ Service « {0} » désactivé, impossible de le réactiver : {1}" -f $Name, $_.Exception.Message); return $false }
+}
+function Repair-Bluetooth {
+    Step "Bluetooth : vérification et réparation"
+    $fixed = @()
+    foreach ($sv in 'bthserv', 'BTAGService', 'BthAvctpSvc', 'DeviceAssociationService') { if (Enable-ServiceIfDisabled $sv 3) { $fixed += $sv } }
+    try { $b = Get-Service -Name bthserv -ErrorAction Stop; if ($b.Status -ne 'Running') { Start-Service -Name bthserv -ErrorAction Stop; Log "   ✔ Service Bluetooth de Windows était arrêté : relancé" } else { Log "   ✔ Service Bluetooth de Windows en marche" } } catch { Log "   ⚠ Le service Bluetooth ne démarre pas : $($_.Exception.Message)" }
+    if ($fixed.Count) { Add-Change -Kind 'info' -Title ("Services Bluetooth réactivés : {0}" -f ($fixed -join ', ')) }
+    [void](Enable-DisabledDevices @('Bluetooth') 'Bluetooth')
+    $all = @(Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue)
+    $radio = @($all | Where-Object { $_.InstanceId -match '^(USB|PCI|ACPI|UART|SDIO)\\' })
+    if (-not $radio.Count) {
+        Add-TaskError -Title "Aucun Bluetooth détecté sur ce PC" -Cause "Windows ne voit pas de puce ou de clé Bluetooth : le PC n'en a pas, elle est coupée (mode Avion, touche du clavier, BIOS) ou son pilote manque." -Effect "Aucun appareil Bluetooth ne peut se connecter." `
+            -FixLabel "Ouvrir les réglages Bluetooth" -FixAction "Open-WinUri 'ms-settings:bluetooth'" -Steps @("PC fixe : beaucoup n'ont pas de Bluetooth. Une clé Bluetooth USB (environ 10 €) règle ça.", "PC portable : coupe le mode Avion et vérifie la touche Bluetooth du clavier.", "Carte mère avec Wi-Fi + Bluetooth : visse les antennes à l'arrière et installe le pilote Bluetooth depuis le site du fabricant.")
+        return
+    }
+    foreach ($r in $radio) { Log ("   • Puce Bluetooth : {0} ({1})" -f $r.FriendlyName, $(if ([int]$r.ConfigManagerErrorCode -eq 0) { 'en marche' } else { "problème, code $([int]$r.ConfigManagerErrorCode)" })) }
+    $bad = @($radio | Where-Object { [int]$_.ConfigManagerErrorCode -notin 0, 22 })
+    if ($bad.Count) {
+        Add-TaskError -Title "La puce Bluetooth a un problème de pilote" -Code ("code {0}" -f [int]$bad[0].ConfigManagerErrorCode) -Cause "Windows la voit mais n'arrive pas à la faire fonctionner." -Effect "Les appareils Bluetooth ne se connectent pas." `
+            -FixLabel "Vérifier les pilotes" -FixAction 'Install-DriverUpdates' -Steps @("Redémarre le PC (un vrai « Redémarrer »).", "Installe le pilote Bluetooth depuis le site du fabricant du PC ou de la carte mère.", "Clé Bluetooth USB : change-la de port (évite les ports USB 3 bleus, ils brouillent le Bluetooth).")
+        return
+    }
+    # Puce relancée (comme l'éteindre et la rallumer) : règle les appareils « couplés » qui ne se reconnectent plus
+    foreach ($r in $radio) {
+        try { Disable-PnpDevice -InstanceId $r.InstanceId -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 2; Enable-PnpDevice -InstanceId $r.InstanceId -Confirm:$false -ErrorAction Stop; Log ("   ✔ Puce Bluetooth relancée : {0}" -f $r.FriendlyName) }
+        catch { try { Enable-PnpDevice -InstanceId $r.InstanceId -Confirm:$false -ErrorAction SilentlyContinue } catch {}; Log "   • La puce n'a pas pu être relancée (elle reste en marche)." }
+    }
+    Start-Sleep -Seconds 3
+    $paired = @(Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^BTH(ENUM|LE)\\DEV_' } | ForEach-Object { "$($_.FriendlyName)" } | Sort-Object -Unique)
+    if ($paired.Count) { Log ("   • Appareils déjà associés : {0}" -f ($paired -join ' · ')) }
+    Log "✅ Si un appareil ne se connecte toujours pas : Paramètres > Bluetooth et appareils, clique sur ses « … » > « Supprimer l'appareil », mets-le en mode association (bouton maintenu jusqu'à ce qu'il clignote), puis « Ajouter un appareil »."
+    Log "   Manette, casque ou souris : vérifie aussi sa batterie, et rapproche-le du PC (une clé Bluetooth à l'arrière d'une tour capte mal)."
+}
+function Repair-Usb {
+    Step "USB : périphériques non reconnus"
+    $null = Invoke-Native 'pnputil.exe' @('/scan-devices') -Quiet
+    Log "   ✔ Windows a relancé la recherche des périphériques branchés"
+    [void](Enable-DisabledDevices @('USB', 'HIDClass', 'Keyboard', 'Mouse', 'WPD', 'DiskDrive') 'Périphérique USB' '^(USB|HID|USBSTOR)\\')
+    $dev = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match '^(USB|USBSTOR)\\' })
+    $bad = @($dev | Where-Object { [int]$_.ConfigManagerErrorCode -notin 0, 22 })
+    Log ("   • {0} périphérique(s) USB branché(s), {1} en erreur" -f $dev.Count, $bad.Count)
+    if (-not $bad.Count) {
+        Log "✅ Windows reconnaît tous les périphériques USB branchés. Si l'un d'eux ne marche pas quand même : essaie un autre port (à l'arrière de la tour), un autre câble, et teste-le sur un autre PC."
+        return
+    }
+    foreach ($d in $bad) {
+        $code = [int]$d.ConfigManagerErrorCode
+        $unknown = ($d.InstanceId -match '(?i)VID_0000&PID_000[0-9]' -or $code -eq 43)
+        # Relance du périphérique (comme le débrancher et le rebrancher)
+        $ok = $false
+        try { Disable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 2; Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false -ErrorAction Stop; Start-Sleep -Seconds 3
+              $now = Get-PnpDevice -InstanceId $d.InstanceId -ErrorAction Stop; $ok = ([int]$now.ConfigManagerErrorCode -eq 0) } catch { try { Enable-PnpDevice -InstanceId $d.InstanceId -Confirm:$false -ErrorAction SilentlyContinue } catch {} }
+        if ($ok) { Log ("   ✔ {0} : relancé, il fonctionne de nouveau" -f $d.FriendlyName); continue }
+        if ($unknown) {
+            Add-TaskError -Title "Un périphérique USB n'est pas reconnu" -Code ("code {0}" -f $code) -Cause "Le périphérique ne répond pas correctement à Windows : presque toujours le câble, le port USB, ou le périphérique lui-même qui est en panne (pas un problème de Windows)." -Effect "Il n'apparaît pas ou ne fonctionne pas." `
+                -Steps @("Branche-le sur un autre port USB, directement sur le PC (pas sur un hub ni en façade).", "Change de câble si c'est possible (les câbles de charge seuls ne passent pas les données).", "Teste-le sur un autre PC : s'il n'y marche pas non plus, c'est lui qui est en panne.", "Éteins le PC, débranche-le du courant 30 secondes, rallume.")
+        } else {
+            Add-TaskError -Title ("« {0} » a un problème de pilote" -f $d.FriendlyName) -Code ("code {0}" -f $code) -Cause "Windows voit le périphérique mais n'a pas le bon pilote." -Effect "Il ne fonctionne pas." `
+                -FixLabel "Chercher son pilote" -FixAction 'Install-DriverUpdates' -Steps @("Clique sur le bouton : AEROX installe le pilote que Windows propose.", "Sinon, installe le pilote ou le logiciel depuis le site du fabricant du périphérique.")
+        }
+    }
+}
+# Composants que les jeux réclament : Visual C++ 2015-2022 (64 et 32 bits) et l'ancien DirectX (jeux d'avant 2015)
+function Get-GameRuntimeState {
+    $vc = { param($k) try { [int](Get-ItemProperty -LiteralPath $k -Name Installed -ErrorAction Stop).Installed -eq 1 } catch { $false } }
+    $sys = Join-Path $env:SystemRoot 'System32'; $wow = Join-Path $env:SystemRoot 'SysWOW64'
+    return @{
+        Vc64 = (& $vc 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64') -or (& $vc 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64')
+        Vc32 = (& $vc 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x86') -or (& $vc 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x86')
+        Dx9  = (Test-Path -LiteralPath (Join-Path $sys 'd3dx9_43.dll')) -and (Test-Path -LiteralPath (Join-Path $sys 'xinput1_3.dll')) -and ((-not (Test-Path -LiteralPath $wow)) -or (Test-Path -LiteralPath (Join-Path $wow 'd3dx9_43.dll')))
+    }
+}
+function Install-GameRuntimes {
+    Step "Installation des composants pour les jeux (éditeur : Microsoft)"
+    $st = Get-GameRuntimeState; $done = @()
+    if (-not $st.Vc64) { if (Install-WingetTool 'Microsoft.VCRedist.2015+.x64' 'Visual C++ (64 bits)') { $done += 'Visual C++ 64 bits'; Log "   ✔ Visual C++ 2015-2022 (64 bits) installé" } }
+    if (-not $st.Vc32) { if (Install-WingetTool 'Microsoft.VCRedist.2015+.x86' 'Visual C++ (32 bits)') { $done += 'Visual C++ 32 bits'; Log "   ✔ Visual C++ 2015-2022 (32 bits) installé" } }
+    if (-not $st.Dx9)  { if (Install-WingetTool 'Microsoft.DirectX' 'DirectX (anciens jeux)') { $done += 'DirectX'; Log "   ✔ DirectX pour les anciens jeux installé" } }
+    if ($done.Count) { Add-Change -Kind 'info' -Title ("Composants pour les jeux installés : {0}" -f ($done -join ', ')) -Detail "Composants officiels de Microsoft. Relance ton jeu."; Log "✅ Relance ton jeu." }
+    $st = Get-GameRuntimeState
+    if (-not ($st.Vc64 -and $st.Vc32 -and $st.Dx9)) { Log "   • Tout n'a pas pu être installé : vérifie ta connexion, puis réessaie." }
+}
+function Repair-GameLaunch {
+    Step "Un jeu ne se lance pas : vérification"
+    $st = Get-GameRuntimeState
+    Log ("   {0} Visual C++ 2015-2022 (64 bits)" -f $(if ($st.Vc64) { '✔' } else { '⚠ manque :' }))
+    Log ("   {0} Visual C++ 2015-2022 (32 bits)" -f $(if ($st.Vc32) { '✔' } else { '⚠ manque :' }))
+    Log ("   {0} DirectX pour les jeux d'avant 2015 (d3dx9, xinput1_3)" -f $(if ($st.Dx9) { '✔' } else { '⚠ manque :' }))
+    if (-not ($st.Vc64 -and $st.Vc32 -and $st.Dx9)) {
+        $miss = New-Object System.Collections.ArrayList
+        if (-not $st.Vc64) { [void]$miss.Add('Visual C++ 64 bits') }
+        if (-not $st.Vc32) { [void]$miss.Add('Visual C++ 32 bits') }
+        if (-not $st.Dx9)  { [void]$miss.Add('DirectX pour les anciens jeux') }
+        $missTxt = $miss.ToArray() -join ', '
+        Add-TaskError -Title "Il manque des composants que les jeux réclament : $missTxt" -Cause "Sans eux, un jeu se ferme tout de suite ou affiche « VCRUNTIME140.dll / MSVCP140.dll / d3dx9_43.dll / XINPUT1_3.dll est introuvable »." -Effect "Le jeu ne démarre pas." `
+            -FixLabel "Installer ces composants (Microsoft)" -FixAction 'Install-GameRuntimes' -Confirm "AEROX va installer les composants officiels de Microsoft qui manquent ($missTxt).`n`nContinuer ?"
+    }
+    # Anti-triche désactivé : le jeu refuse de se lancer
+    $ac = [ordered]@{ EasyAntiCheat = 'Easy Anti-Cheat (Fortnite, Apex, Rust…)'; EasyAntiCheat_EOS = 'Easy Anti-Cheat (Epic)'; BEService = 'BattlEye (PUBG, R6, DayZ, GTA…)'; vgc = 'Vanguard (Valorant, LoL)'; vgk = 'Vanguard (Valorant, LoL)'; FACEIT = 'FACEIT' }
+    foreach ($n in $ac.Keys) {
+        $k = "HKLM:\SYSTEM\CurrentControlSet\Services\$n"
+        if (-not (Test-Path -LiteralPath $k)) { continue }
+        $start = -1; try { $start = [int](Get-ItemProperty -LiteralPath $k -Name Start -ErrorAction Stop).Start } catch {}
+        if ($start -eq 4) {
+            Add-TaskError -Title ("L'anti-triche {0} est désactivé" -f $ac[$n]) -Cause "Son service a été désactivé (souvent par un logiciel « d'optimisation » ou à la main)." -Effect "Les jeux qui l'utilisent refusent de se lancer ou t'éjectent." `
+                -Steps @("Dans le launcher du jeu (Steam : clic droit > Propriétés > Fichiers installés > « Vérifier l'intégrité » ; Epic : « … » > Gérer > Vérifier), lance la vérification : elle réinstalle l'anti-triche.", "Valorant / LoL : réinstalle Riot Vanguard depuis le client Riot, puis redémarre le PC.")
+        } else { Log ("   ✔ Anti-triche installé : {0}" -f $ac[$n]) }
+    }
+    # Ce qui a planté cette semaine, avec le coupable noté par Windows
+    $cr = @(Get-EventsSafe @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = (Get-Date).AddDays(-7) } | Where-Object { "$($_.Properties[0].Value)" -notmatch '(?i)^aerox' })
+    if ($cr.Count) {
+        Log "   Plantages notés par Windows ces 7 derniers jours :"
+        foreach ($g in @($cr | Group-Object { "$($_.Properties[0].Value)" } | Sort-Object Count -Descending | Select-Object -First 6)) {
+            $mod = ($g.Group | Group-Object { "$($_.Properties[3].Value)" } | Sort-Object Count -Descending | Select-Object -First 1).Name
+            $cul = Get-CrashCulprit $mod '' '' ($g.Name -replace '(?i)\.exe$', '')
+            Log ("   • {0} : {1} fois (fichier {2}){3}" -f $g.Name, $g.Count, $mod, $(if ($cul.Kind -notin 'other', 'system', 'self') { " → " + $cul.Advice } else { '' }))
+        }
+    } else { Log "   ✔ Aucun plantage de jeu ou de logiciel noté par Windows cette semaine" }
+    Log "✅ Si le jeu ne se lance toujours pas : vérifie ses fichiers dans son launcher, mets à jour le pilote de la carte graphique (onglet Mises à jour), et ferme les overlays (MSI Afterburner / RivaTuner, Overwolf)."
+}
+function Repair-WindowsApps {
+    Step "Applis Windows, Microsoft Store, menu Démarrer et recherche"
+    $fixed = @()
+    foreach ($sv in @(@('AppXSvc', 3), @('ClipSVC', 3), @('InstallService', 3), @('wlidsvc', 3), @('StateRepository', 3), @('WSearch', 2), @('LicenseManager', 3), @('TokenBroker', 3))) { if (Enable-ServiceIfDisabled $sv[0] $sv[1]) { $fixed += $sv[0] } }
+    if ($fixed.Count) { Add-Change -Kind 'info' -Title ("Services des applis Windows réactivés : {0}" -f ($fixed -join ', ')); $sync.NeedReboot = $true }
+    else { Log "   ✔ Les services des applis Windows ne sont pas désactivés" }
+    # Recherche de Windows : service relancé
+    try { $ws = Get-Service -Name WSearch -ErrorAction Stop; if ($ws.StartType -ne 'Disabled') { Restart-Service -Name WSearch -Force -ErrorAction Stop; Log "   ✔ Recherche de Windows relancée" } } catch { Log "   • La recherche de Windows n'a pas pu être relancée (elle repartira au redémarrage)." }
+    # Menu Démarrer, recherche et barre des tâches : leurs programmes sont fermés, Windows les relance tout seul
+    foreach ($pn in 'StartMenuExperienceHost', 'SearchHost', 'SearchApp', 'ShellExperienceHost', 'TextInputHost') { Get-Process -Name $pn -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }
+    Log "   ✔ Menu Démarrer et recherche relancés"
+    # Applis du menu Démarrer réenregistrées pour le compte (seulement si AEROX tourne sur le compte de la personne)
+    if (-not (Test-OtherAccount)) {
+        $n = 0
+        foreach ($pk in 'Microsoft.Windows.StartMenuExperienceHost', 'Microsoft.Windows.ShellExperienceHost', 'Microsoft.WindowsStore', 'Microsoft.StorePurchaseApp', 'Microsoft.DesktopAppInstaller') {
+            foreach ($a in @(Get-AppxPackage -Name $pk -ErrorAction SilentlyContinue)) {
+                $mf = Join-Path "$($a.InstallLocation)" 'AppxManifest.xml'
+                if ($a.InstallLocation -and (Test-Path -LiteralPath $mf)) { try { Add-AppxPackage -DisableDevelopmentMode -Register $mf -ErrorAction Stop; $n++ } catch {} }
+            }
+        }
+        Log ("   ✔ {0} appli(s) de Windows réenregistrée(s) (Store, menu Démarrer)" -f $n)
+    }
+    # Cache du Microsoft Store remis à zéro (outil officiel de Windows, lancé sur le compte de la personne)
+    $wsr = Join-Path $env:SystemRoot 'System32\WSReset.exe'
+    if (Test-Path -LiteralPath $wsr) { if (Start-AsSessionUser $wsr '') { Log "   ✔ Cache du Microsoft Store remis à zéro : le Store va s'ouvrir tout seul dans quelques secondes" } }
+    Log "✅ Si une appli ne s'ouvre toujours pas : Paramètres > Applications > Applications installées > ses « … » > Options avancées > « Réparer » puis « Réinitialiser ». Si le menu Démarrer reste bloqué : « Réparer les fichiers de Windows »."
+}
+# Qui a réveillé le PC, et qui l'empêche de dormir ? (lecture seule)
+function Get-WakeSourceLabel([int]$Type, [string]$Text) {
+    $t = "$Text".Trim()
+    switch ($Type) {
+        1 { return "le bouton d'alimentation" }
+        3 { return "passage automatique en veille prolongée (normal)" }
+        5 { return $(if ($t) { "un périphérique : $t" } else { "un périphérique" }) }
+        6 { return $(if ($t) { "une tâche programmée : $t" } else { "une tâche programmée (mise à jour, maintenance)" }) }
+        default { return $(if ($t) { $t } else { "cause non notée par Windows" }) }
+    }
+}
+function Get-SleepReport {
+    Step "Veille : qui réveille le PC, et qui l'empêche de dormir"
+    # 1. Les derniers réveils (journal de Windows)
+    $wk = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1; StartTime = (Get-Date).AddDays(-14) } | Select-Object -First 12)
+    $devWakes = @{}
+    if ($wk.Count) {
+        Log "   Derniers réveils du PC :"
+        foreach ($e in $wk) {
+            $type = -1; $text = ''
+            try { $x = [xml]$e.ToXml(); foreach ($d in @($x.Event.EventData.Data)) { if ($d.Name -eq 'WakeSourceType') { $type = [int]$d.'#text' } elseif ($d.Name -eq 'WakeSourceText') { $text = "$($d.'#text')" } } } catch {}
+            Log ("   • {0:dd/MM à HH:mm} : réveillé par {1}" -f $e.TimeCreated, (Get-WakeSourceLabel $type $text))
+            if ($type -eq 5 -and $text) { $devWakes[$text] = [int]$devWakes[$text] + 1 }
+        }
+    } else { Log "   • Aucun réveil noté ces 14 derniers jours (le PC n'a pas été mis en veille, ou la veille est désactivée)" }
+    # 2. Périphériques autorisés à réveiller le PC
+    $armed = @(& (Join-Path $env:SystemRoot 'System32\powercfg.exe') /devicequery wake_armed 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -notmatch '^(NONE|AUCUN)$' })
+    if ($armed.Count) { Log ("   Peuvent réveiller le PC : {0}" -f ($armed -join ' · ')) }
+    # 3. Ce qui empêche la veille en ce moment
+    $req = @(& (Join-Path $env:SystemRoot 'System32\powercfg.exe') /requests 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^\[(DRIVER|PROCESS|SERVICE)\]' })
+    if ($req.Count) {
+        Log "   Empêchent la veille en ce moment :"
+        foreach ($r in ($req | Select-Object -Unique)) { Log ("   • {0}" -f ($r -replace '^\[DRIVER\]\s*', 'pilote : ' -replace '^\[PROCESS\]\s*', 'programme : ' -replace '^\[SERVICE\]\s*', 'service : ' -replace '\\Device\\HarddiskVolume\d+', '')) }
+        Log "   → Ferme ces programmes (lecteur vidéo ou audio, jeu, téléchargement, partage d'écran) : la veille se lancera."
+    } else { Log "   ✔ Rien n'empêche la veille en ce moment" }
+    # 4. Réveils répétés par la souris ou la carte réseau : proposer de leur retirer ce droit
+    $noisy = @($armed | Where-Object { $n = $_; ($devWakes.Keys | Where-Object { $_ -like "*$n*" -or $n -like "*$_*" }) -and $n -notmatch '(?i)keyboard|clavier' })
+    if ($noisy.Count) {
+        Add-TaskError -Title ("Le PC est réveillé par : {0}" -f ($noisy -join ', ')) -Cause "Windows a noté ces périphériques comme source des derniers réveils (une souris qui bouge un peu, ou la carte réseau qui reçoit un signal)." -Effect "Le PC se rallume tout seul." `
+            -FixLabel "Ne plus les laisser réveiller le PC" -FixAction ("Set-DeviceWake " + (ConvertTo-PsList $noisy) + " `$false") -Confirm "Ces périphériques ne pourront plus réveiller le PC (le clavier et le bouton d'alimentation le pourront toujours). Annulable dans l'historique.`n`nContinuer ?"
+    } elseif ($wk.Count) { Log "✅ Si le PC se rallume tout seul la nuit : c'est souvent une tâche programmée (mise à jour). Paramètres > Windows Update > Options avancées > règle les « Heures d'activité »." }
+}
+# Autorise ou retire à des périphériques le droit de réveiller le PC (noms tels que powercfg les donne)
+function Set-DeviceWake([string[]]$Names, [bool]$On) {
+    $exe = Join-Path $env:SystemRoot 'System32\powercfg.exe'
+    $known = @(& $exe /devicequery wake_programmable 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $done = @()
+    foreach ($n in @($Names | Where-Object { $_ })) {
+        if ($known -notcontains $n) { continue }
+        $null = & $exe $(if ($On) { '/deviceenablewake' } else { '/devicedisablewake' }) $n 2>&1
+        if ($LASTEXITCODE -eq 0) { $done += $n; Log ("   ✔ {0} : {1}" -f $n, $(if ($On) { 'peut de nouveau réveiller le PC' } else { 'ne réveille plus le PC' })) }
+    }
+    if ($done.Count -and -not $On) { Add-Change -Title ("Ne réveillent plus le PC : {0}" -f ($done -join ', ')) -Undo ("Set-DeviceWake " + (ConvertTo-PsList $done) + " `$true") }
+}
+function Repair-ExplorerCache {
+    Step "Icônes et miniatures : cache remis à zéro"
+    $dir = Join-Path (Get-SessionFolder 'Local AppData') 'Microsoft\Windows\Explorer'
+    if (-not (Test-Path -LiteralPath $dir) -or -not [AeroxSafeDelete]::IsDirectPath($dir)) { Log "   • Dossier du cache introuvable : rien à faire."; return }
+    Get-Process -Name explorer -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+    $n = 0; $sz = [double]0
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '(?i)^(iconcache|thumbcache)_.*\.db$' })) {
+        try { $l = [double]$f.Length; Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $n++; $sz += $l } catch {}
+    }
+    $old = Join-Path (Get-SessionFolder 'Local AppData') 'IconCache.db'
+    if (Test-Path -LiteralPath $old) { try { Remove-Item -LiteralPath $old -Force -ErrorAction Stop; $n++ } catch {} }
+    for ($i = 0; $i -lt 10 -and -not (Get-Process -Name explorer -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
+    if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue) -and -not (Test-OtherAccount)) { Start-Process explorer.exe }
+    Log ("✅ {0} fichier(s) de cache supprimé(s) ({1}) : Windows recrée les icônes et les miniatures au fur et à mesure. Si l'Explorateur reste lent : lance « Pourquoi mon PC rame »." -f $n, (Format-Size $sz))
+    if ($n) { Add-Change -Kind 'info' -Title "Cache des icônes et des miniatures remis à zéro" }
+}
+# Réglages de Windows qui comptent pour les jeux : état lu, rien n'est modifié
+function Get-GameSettingsReport {
+    Step "Réglages de Windows pour les jeux (lecture seule)"
+    $hk = (Get-SessionUser).Hkcu
+    $rd = { param($k, $n) try { (Get-ItemProperty -LiteralPath $k -Name $n -ErrorAction Stop).$n } catch { $null } }
+    $gm = & $rd "$hk\Software\Microsoft\GameBar" 'AutoGameModeEnabled'
+    if ($null -eq $gm -or [int]$gm -eq 1) { Log "   ✔ Mode Jeu : activé (Windows met les mises à jour et les notifications en pause pendant le jeu)" }
+    else { Log "   → Mode Jeu : désactivé. À activer : Paramètres > Jeux > Mode Jeu." }
+    $hags = & $rd 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' 'HwSchMode'
+    if ($null -ne $hags) { Log ("   {0} Planification GPU à accélération matérielle : {1}" -f $(if ([int]$hags -eq 2) { '✔' } else { '•' }), $(if ([int]$hags -eq 2) { 'activée (nécessaire au DLSS 3 / génération d''images)' } else { "désactivée. Utile avec une carte graphique récente : Paramètres > Système > Écran > Graphiques > Paramètres graphiques par défaut." })) }
+    $hv = & $rd 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity' 'Enabled'
+    if ($null -ne $hv -and [int]$hv -eq 1) { Log "   • Isolation du noyau (intégrité de la mémoire) : activée. C'est une protection de Windows ; elle peut coûter quelques FPS (souvent 2 à 5 %). La laisser est le choix le plus sûr ; Valorant et d'autres anti-triche la demandent." }
+    else { Log "   • Isolation du noyau (intégrité de la mémoire) : désactivée (aucun coût en FPS, protection en moins)." }
+    $dvr = & $rd "$hk\System\GameConfigStore" 'GameDVR_Enabled'; $cap = & $rd "$hk\Software\Microsoft\Windows\CurrentVersion\GameDVR" 'AppCaptureEnabled'
+    if (($null -ne $cap -and [int]$cap -eq 1) -or ($null -eq $cap -and $null -ne $dvr -and [int]$dvr -eq 1)) { Log "   • Enregistrement en arrière-plan de la Xbox Game Bar : possible. S'il est activé (Paramètres > Jeux > Captures > « Enregistrer ce qui s'est passé »), il consomme en jeu : coupe-le si tu ne t'en sers pas." }
+    else { Log "   ✔ Enregistrement en arrière-plan de la Xbox Game Bar : désactivé" }
+    try { $pw = Get-PowerStatus; Log ("   {0} Mode d'alimentation : {1}" -f $(if ($pw.Name -match '(?i)économi|saver') { '→' } else { '✔' }), $pw.Name) } catch {}
+    try { foreach ($d in @(Get-Displays)) { Log ("   {0} {1} : {2} Hz{3}" -f $(if ($d.MaxHz -gt $d.Hz + 1) { '→' } else { '✔' }), $d.Name, $d.Hz, $(if ($d.MaxHz -gt $d.Hz + 1) { " alors qu'il peut faire $($d.MaxHz) Hz (le diagnostic te propose de le régler)" } else { ' (le maximum)' })) } } catch {}
+    Log "✅ Les lignes « → » sont celles à changer. Pour mesurer ce qui limite tes FPS : onglet Gaming, lance une mesure pendant que tu joues."
+}
+# Erreurs sur un disque qui n'est pas celui de Windows : réparation tout de suite (le disque est indisponible quelques minutes)
+function Repair-DataVolume([string]$Letter) {
+    if ($Letter -notmatch '^[A-Za-z]$' -or "$Letter".ToUpper() -eq "$($env:SystemDrive[0])".ToUpper()) { return }
+    Step "Réparation du disque ${Letter}:"
+    Log "   Ferme les programmes qui utilisent ce disque (jeux, launchers). La réparation peut prendre plusieurs minutes."
+    try { $res = "$(Repair-Volume -DriveLetter $Letter -OfflineScanAndFix -ErrorAction Stop)"; Log "   Résultat : $res"; Log "✅ Disque ${Letter}: vérifié et réparé."; Add-Change -Kind 'info' -Title "Disque ${Letter}: réparé (système de fichiers)" }
+    catch { Add-TaskError -Title "Le disque ${Letter}: n'a pas pu être réparé maintenant" -Cause $_.Exception.Message -Effect "Les erreurs restent." -Steps @("Ferme tout ce qui utilise ce disque (Steam, jeux, Explorateur ouvert dessus) et réessaie.", "Ou redémarre le PC puis relance « Vérifier le disque ».") }
 }
 # Accélération matérielle de Discord (fichier settings.json de la personne). Renvoie 'changed', 'already' ou '' (pas de Discord)
 function Set-DiscordHwAccel([bool]$On) {
@@ -6102,8 +6443,73 @@ function Test-Internet {
     }
 }
 
+# Services de Windows indispensables à la connexion : un « optimiseur » qui les désactive coupe Internet
+function Repair-NetServices {
+    $want = [ordered]@{ Dhcp = 2; Dnscache = 2; nsi = 2; NlaSvc = 2; netprofm = 3; WlanSvc = 2; Wcmsvc = 2 }
+    $fixed = @()
+    foreach ($n in $want.Keys) {
+        $k = "HKLM:\SYSTEM\CurrentControlSet\Services\$n"
+        if (-not (Test-Path -LiteralPath $k)) { continue }
+        $start = -1; try { $start = [int](Get-ItemProperty -LiteralPath $k -Name Start -ErrorAction Stop).Start } catch {}
+        if ($start -eq 4) {
+            try { Set-ItemProperty -LiteralPath $k -Name Start -Value $want[$n] -Type DWord -ErrorAction Stop; $fixed += $n; Log ("   ✔ Service réseau « {0} » était désactivé : réactivé" -f $n) }
+            catch { Log ("   ⚠ Service réseau « {0} » désactivé, et Windows refuse de le réactiver ici : il se réactive avec « Réparer les fichiers de Windows »." -f $n) }
+        }
+        try { $sv = Get-Service -Name $n -ErrorAction Stop; if ($sv.Status -ne 'Running' -and $sv.StartType -ne 'Disabled' -and $want[$n] -eq 2) { Start-Service -Name $n -ErrorAction Stop; Log ("   ✔ Service réseau « {0} » était arrêté : relancé" -f $n) } } catch {}
+    }
+    if ($fixed.Count) { Add-Change -Kind 'info' -Title ("Services réseau de Windows réactivés : {0}" -f ($fixed -join ', ')) -Detail "Ils avaient été désactivés (souvent par un logiciel « d'optimisation »)."; $sync.NeedReboot = $true }
+    return $fixed.Count
+}
+# Cartes réseau : désactivée, en erreur de pilote, Wi-Fi qui ne voit plus aucun réseau
+function Repair-NetAdapters {
+    $ads = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue)
+    if (-not $ads.Count) {
+        Add-TaskError -Title "Windows ne voit aucune carte réseau" -Cause "Ni carte Ethernet ni carte Wi-Fi : le pilote manque, ou la carte est désactivée dans le BIOS." -Effect "Aucune connexion possible." `
+            -FixLabel "Ouvrir le Gestionnaire de périphériques" -FixAction "Open-SystemTool 'devmgmt.msc'" -Steps @("Télécharge le pilote réseau de ta carte mère (ou de ton PC portable) depuis un autre appareil, sur une clé USB, et installe-le.", "Clé Wi-Fi USB : change-la de port.")
+        return
+    }
+    $up = @($ads | Where-Object { $_.Status -eq 'Up' })
+    foreach ($a in $ads) { Log ("   • {0} ({1}) : {2}" -f $a.Name, $a.InterfaceDescription, $(switch ("$($a.Status)") { 'Up' { 'connectée' } 'Disabled' { 'DÉSACTIVÉE' } 'Disconnected' { 'pas connectée' } 'Not Present' { 'absente' } default { "$($a.Status)" } })) }
+    # Carte désactivée alors que rien n'est connecté : réactivée (jamais si une autre carte marche déjà)
+    if (-not $up.Count) {
+        foreach ($a in @($ads | Where-Object { $_.Status -eq 'Disabled' })) {
+            try { Enable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop; Log ("   ✔ La carte « {0} » était désactivée : réactivée" -f $a.Name); Add-Change -Kind 'info' -Title ("Carte réseau « {0} » réactivée" -f $a.Name); Start-Sleep -Seconds 4 } catch { Log ("   ⚠ Impossible de réactiver « {0} » : {1}" -f $a.Name, $_.Exception.Message) }
+        }
+    }
+    # Pilote en erreur
+    $bad = @(Get-PnpDevice -Class Net -PresentOnly -ErrorAction SilentlyContinue | Where-Object { [int]$_.ConfigManagerErrorCode -notin 0, 22 -and $_.InstanceId -match '^(PCI|USB)\\' })
+    if ($bad.Count) {
+        Add-TaskError -Title ("La carte réseau « {0} » a un problème de pilote" -f $bad[0].FriendlyName) -Code ("code {0}" -f [int]$bad[0].ConfigManagerErrorCode) -Cause "Windows voit la carte mais n'arrive pas à la faire fonctionner." -Effect "Pas de connexion par cette carte." `
+            -Steps @("Redémarre le PC (un vrai « Redémarrer »).", "Installe le pilote réseau depuis le site du fabricant de ta carte mère ou de ton PC (télécharge-le sur un autre appareil si besoin).")
+    }
+    # Wi-Fi : pas connecté et aucun réseau visible → la carte est relancée
+    $wifi = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.PhysicalMediaType -match '802\.11' -or $_.InterfaceDescription -match '(?i)wi-?fi|wireless|802\.11' })
+    if ($wifi.Count -and -not @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }).Count) {
+        $count = { @((& (Join-Path $env:SystemRoot 'System32\netsh.exe') wlan show networks 2>$null) | Where-Object { "$_" -match '^SSID \d+' }).Count }
+        $seen = & $count
+        if ($seen -eq 0) {
+            foreach ($a in @($wifi | Where-Object { $_.Status -ne 'Disabled' })) { try { Restart-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction Stop; Log ("   ✔ Carte Wi-Fi « {0} » relancée" -f $a.Name) } catch {} }
+            Start-Sleep -Seconds 8; $seen = & $count
+        }
+        if ($seen -eq 0) {
+            Add-TaskError -Title "Le Wi-Fi ne voit aucun réseau" -Cause "La carte Wi-Fi est allumée côté Windows mais ne capte rien : Wi-Fi coupé par une touche du clavier ou le mode Avion, antennes débranchées, ou pilote." -Effect "Impossible de se connecter en Wi-Fi." `
+                -FixLabel "Ouvrir les réglages Wi-Fi" -FixAction "Open-WinUri 'ms-settings:network-wifi'" -Steps @("PC portable : cherche la touche avec une antenne ou un avion (souvent Fn + F2, F5 ou F12) et vérifie que le mode Avion est coupé.", "PC fixe : vérifie que les antennes sont bien vissées à l'arrière, ou change la clé Wi-Fi de port USB.", "Redémarre la box, puis le PC.", "Sinon : réinstalle le pilote Wi-Fi depuis le site du fabricant.")
+        } else { Log ("   ✔ Le Wi-Fi voit {0} réseau(x) : clique sur l'icône réseau en bas à droite pour te connecter au tien." -f $seen) }
+    }
+}
+# Outil de Windows avec une durée maximale : au-delà, il est arrêté (ipconfig /renew peut rester bloqué sans fin)
+function Invoke-NativeTimed([string]$File, [string]$Arguments, [int]$Seconds = 60) {
+    if ($File -notmatch '[\\/]') { $File = Join-Path $env:SystemRoot "System32\$File" }
+    try {
+        $p = Start-Process -FilePath $File -ArgumentList $Arguments -WindowStyle Hidden -PassThru -ErrorAction Stop
+        if (-not $p.WaitForExit($Seconds * 1000)) { try { $p.Kill() } catch {}; Log ("   • {0} {1} : pas de réponse au bout de {2} s, étape passée." -f (Split-Path $File -Leaf), $Arguments, $Seconds); return $false }
+        return $true
+    } catch { return $false }
+}
 function Repair-Network {
     Step "Réparation de la connexion Internet"
+    [void](Repair-NetServices)
+    Repair-NetAdapters
     $null = Invoke-Native 'ipconfig.exe' @('/flushdns')
     $null = Invoke-Native 'netsh.exe'   @('winsock', 'reset')
     # « int ip reset » remet toutes les cartes en automatique (DHCP) : une adresse IP fixe réglée à la main serait perdue
@@ -6111,8 +6517,8 @@ function Repair-Network {
     try { $static = @(Get-NetIPInterface -AddressFamily IPv4 -Dhcp Disabled -ConnectionState Connected -ErrorAction Stop | Where-Object { $_.InterfaceAlias -notmatch '(?i)loopback|vEthernet|VirtualBox|VMware' } | ForEach-Object { $_.InterfaceAlias }) } catch {}
     if ($static.Count) { Log ("   • Adresse IP fixe sur « {0} » : gardée (la remise à zéro TCP/IP est sautée)." -f ($static -join ', ')) }
     else { $null = Invoke-Native 'netsh.exe' @('int', 'ip', 'reset') }
-    $null = Invoke-Native 'ipconfig.exe' @('/release')
-    $null = Invoke-Native 'ipconfig.exe' @('/renew')
+    [void](Invoke-NativeTimed 'ipconfig.exe' '/release' 30)
+    [void](Invoke-NativeTimed 'ipconfig.exe' '/renew' 60)
     Log "✅ Réseau réinitialisé. Redémarre le PC pour terminer la réparation."
     Add-Change -Kind 'info' -Title "Réglages réseau de Windows remis à zéro" -Detail "DNS, Winsock et TCP/IP réinitialisés. Les connexions Wi-Fi enregistrées sont gardées."
     $sync.NeedReboot = $true
@@ -6192,10 +6598,26 @@ function Test-Disk {
         $ec = Invoke-Native 'chkdsk.exe' @($env:SystemDrive, '/scan')
         $bad = ($ec -ge 3 -or ($ec -eq 2 -and ($script:NativeOutput -join ' ') -match '(?i)/f|problems|problèmes')); $code = "chkdsk $ec"
     }
+    # Les autres disques internes (jeux, données) : même analyse
+    try {
+        foreach ($v in @(Get-Volume -ErrorAction Stop | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' -and "$($_.FileSystem)" -match '^(NTFS|ReFS)$' -and "$($_.DriveLetter)" -ne "$($env:SystemDrive[0])" })) {
+            if ($sync.Cancel) { break }
+            $l = "$($v.DriveLetter)"
+            try {
+                Log "   Analyse du disque ${l}: ..."
+                $r2 = "$(Repair-Volume -DriveLetter $l -Scan -ErrorAction Stop)"
+                if ($r2 -match '(?i)NoErrorsFound') { Log "   ✔ ${l}: aucun problème" }
+                else {
+                    Add-TaskError -Title "Des erreurs ont été trouvées sur le disque ${l}:" -Code "Repair-Volume $r2" -Cause "Le système de fichiers a des incohérences, souvent après une coupure de courant ou un débranchement à chaud." `
+                        -Effect "Des fichiers ou des jeux sur ce disque peuvent devenir illisibles." -FixLabel "Réparer le disque ${l}:" -FixAction "Repair-DataVolume '$l'" -Confirm "Le disque ${l}: sera indisponible pendant la réparation (quelques minutes). Ferme les jeux et launchers installés dessus.`n`nContinuer ?"
+                }
+            } catch { Log ("   • ${l}: analyse impossible ({0})" -f $_.Exception.Message) }
+        }
+    } catch {}
     if ($bad) {
         Add-TaskError -Title "Des erreurs ont été trouvées sur le disque $env:SystemDrive" -Code $code -Cause "Le système de fichiers a des incohérences, souvent après une coupure de courant ou un arrêt forcé." `
             -Effect "Des fichiers peuvent devenir illisibles et Windows peut buguer." -FixLabel "Réparer au prochain redémarrage" -FixAction 'Set-DiskRepairAtBoot'
-    } else { Log "✅ Aucun problème trouvé sur le disque." }
+    } else { Log "✅ Aucun problème trouvé sur le disque de Windows." }
 }
 function Set-DiskRepairAtBoot {
     Step "Programmation de la réparation du disque"
