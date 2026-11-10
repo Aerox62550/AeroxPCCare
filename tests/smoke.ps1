@@ -129,6 +129,104 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : écrans bleus expliqués
+    Smoke 'Écran bleu : règles (codes, contexte, série, mémoire)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        if ($script:BugChecks.Count -lt 55) { throw "table des codes trop courte : $($script:BugChecks.Count)" }
+        foreach ($k in $script:BugChecks.Keys) { if ($k -notmatch '^0x[0-9A-F]{8}$' -or @($script:BugChecks[$k]).Count -ne 3 -or $script:BugChecks[$k][2] -notin 'drv', 'hw', 'gpu', 'sys', 'ram', 'disk', 'cpu', 'usb', 'manual') { throw "code mal rangé : $k" } }
+        Is 'variante 0x1000007E' (ConvertTo-BugCheckKey '0x1000007E') '0x0000007E'
+        Is 'code NT' (ConvertTo-BugCheckKey '0xC000021A') '0xC000021A'
+        Is 'code illisible' (ConvertTo-BugCheckKey 'zz') ''
+        $c = ConvertFrom-BugCheckText 'The bugcheck was: 0x0000009f (0x0000000000000003, 0xffffe001, 0x0, 0x0). A dump was saved'
+        Is 'texte de Windows' "$($c.Code) $($c.P1)" '0x0000009F 0x3'
+        Is 'WHEA processeur' (Get-BugCheckInfo '0x00000124' '0x0').Kind 'cpu'
+        Is 'WHEA sans détail' (Get-BugCheckInfo '0x00000124' '').Kind 'hw'
+        Is 'bouton maintenu' (Get-BugCheckInfo '0x000001C8').Kind 'manual'
+        Is 'code inconnu' (Get-BugCheckInfo '0x12345678').Name 'Erreur système'
+        foreach ($kd in 'drv', 'hw', 'gpu', 'sys', 'ram', 'disk', 'cpu', 'usb') { if (@(Get-BugCheckSteps $kd).Count -lt 2) { throw "pas d'étapes pour $kd" } }
+        $now = Get-Date
+        $wer = @(@{ Time = $now.AddDays(-2); Code = '0x0000007E'; P1 = ''; Src = 'rapport' })
+        $kp = @(@{ Time = $now.AddDays(-2).AddMinutes(1); Code = '0x0000007E'; P1 = ''; Src = 'redémarrage' }, @{ Time = $now.AddDays(-5); Code = '0x00000124'; P1 = '0x0'; Src = 'redémarrage' })
+        $m = @(Merge-BsodEvents $wer $kp); Is 'même redémarrage compté une fois' $m.Count 2; Is 'tri par date' $m[0].Code '0x00000124'
+        Is 'rien' (@(Merge-BsodEvents $null $null).Count) 0
+        $h = ConvertFrom-DumpHead ("0x0000007E|0x1|0x2|0x3|0x4|{0}|{1}" -f $now.AddHours(-3).ToFileTime(), ([long]125 * 600000000))
+        Is 'durée depuis le démarrage' $h.UpMin 125
+        $h = ConvertFrom-DumpHead '0x0000007E|0x1|0x2|0x3|0x4|12345|99999999999999999999'
+        Is 'en-tête absurde ignoré' "$($h.CrashTime)|$($h.UpMin)" '|-1'
+        Is 'au démarrage' (Get-BsodContext $now 1 @() @()).Kind 'boot'
+        Is 'au réveil' (Get-BsodContext $now 300 @($now.AddMinutes(-2)) @($now.AddMinutes(-30))).Kind 'wake'
+        Is 'à la mise en veille' (Get-BsodContext $now 300 @($now.AddMinutes(-4)) @($now.AddMinutes(-1))).Kind 'sleep'
+        Is 'en pleine utilisation' (Get-BsodContext $now 300 @($now.AddHours(-3)) @()).Text 'en pleine utilisation (PC allumé depuis 5 h)'
+        Is 'contexte inconnu : rien d inventé' (Get-BsodContext $null -1 @() @()).Kind ''
+        $ws = $now.AddDays(-90)
+        Is 'début de série' (Get-BsodSeriesStart @($now.AddDays(-1), $now.AddDays(-3), $now.AddDays(-40)) $ws) $now.AddDays(-3)
+        Is 'série trop ancienne pour être datée' (Get-BsodSeriesStart @($now.AddDays(-80), $now.AddDays(-70)) $ws) ''
+        Is 'historique trop court' (Get-BsodSeriesStart @($now.AddDays(-2)) $now.AddDays(-5)) ''
+        Is 'rapports coupés' (Get-CrashDumpVerdict 0 $true) 'off'
+        Is 'pas de fichier d échange' (Get-CrashDumpVerdict 7 $false) 'nopagefile'
+        Is 'réglage normal' (Get-CrashDumpVerdict 7 $true) 'ok'
+        $d = @{ File = '110126-1.dmp'; Date = $now; CrashTime = $now.AddMinutes(-3); UpMin = 12.5; Code = '0x0000007E'; P1 = '0x1'; Culprit = @{ Name = 'nvlddmkm.sys'; Company = 'NVIDIA|Corp'; Desc = 'x'; Kind = 'gpu' }; Readable = $true; Stack = 'a.sys, b.sys' }
+        $r = ConvertFrom-BsodMemoryLine (ConvertTo-BsodMemoryLine $d)
+        Is 'mémoire relue' "$($r.File) $($r.UpMin) $($r.Culprit.Name) $($r.Culprit.Company) $($r.Readable) $($r.Memory) $($r.Date -eq $now)" '110126-1.dmp 12.5 nvlddmkm.sys NVIDIA Corp True True True'
+        Is 'ligne abîmée ignorée' ((ConvertFrom-BsodMemoryLine 'n importe quoi') -eq $null) True
+    }
+    Smoke 'Écran bleu : faux rapport lu, gardé par le nettoyage, retenu après effacement' {
+        $dir = Join-Path $env:SystemRoot 'Minidump'; $made = -not (Test-Path -LiteralPath $dir)
+        if ($made) { [void](New-Item -ItemType Directory -Path $dir -Force) }
+        $mem = Get-BsodMemoryPath; $bak = $null; if (Test-Path -LiteralPath $mem) { $bak = [IO.File]::ReadAllBytes($mem) }
+        $f = Join-Path $dir 'aerox-test-recent.dmp'; $old = Join-Path $dir 'aerox-test-ancien.dmp'
+        try {
+            $crash = (Get-Date).AddMinutes(-20)
+            $b = New-Object byte[] 0x4000
+            [Text.Encoding]::ASCII.GetBytes('PAGEDU64').CopyTo($b, 0)
+            [BitConverter]::GetBytes([uint32]0x1000007E).CopyTo($b, 0x38)
+            [BitConverter]::GetBytes([uint64]5).CopyTo($b, 0x40)
+            [BitConverter]::GetBytes([uint32]2).CopyTo($b, 0xF98)
+            [BitConverter]::GetBytes([long]$crash.ToFileTime()).CopyTo($b, 0xFA8)
+            [BitConverter]::GetBytes([long](90 * 600000000)).CopyTo($b, 0x1030)
+            [IO.File]::WriteAllBytes($f, $b); [IO.File]::WriteAllBytes($old, $b); (Get-Item -LiteralPath $old).LastWriteTime = (Get-Date).AddDays(-45)
+            $h = ConvertFrom-DumpHead ([AeroxDump]::Head($f))
+            if ($h.Code -ne '0x0000007E' -or $h.P1 -ne '0x5' -or $h.UpMin -ne 90 -or -not $h.CrashTime -or [math]::Abs(($h.CrashTime - $crash).TotalSeconds) -gt 2) { throw "en-tête mal lu : $($h.Code) $($h.P1) $($h.UpMin) $($h.CrashTime)" }
+            $dirs = @(Get-ErrorDirs)
+            if ($dirs -contains $f -or $dirs -contains $dir) { throw "le nettoyage effacerait un rapport d'écran bleu récent" }
+            if ($dirs -notcontains $old) { throw "le rapport de 45 jours devrait partir au nettoyage" }
+            $an = Get-BsodAnalysis (Get-Date).AddDays(-1)
+            $mine = @($an.Dumps | Where-Object { $_.File -eq 'aerox-test-recent.dmp' })
+            if ($mine.Count -ne 1 -or $mine[0].Code -ne '0x0000007E' -or $mine[0].UpMin -ne 90 -or $mine[0].Memory) { throw "rapport mal analysé" }
+            Remove-Item -LiteralPath $f -Force
+            $an = Get-BsodAnalysis (Get-Date).AddDays(-1)
+            $mine = @($an.Dumps | Where-Object { $_.File -eq 'aerox-test-recent.dmp' })
+            if ($mine.Count -ne 1 -or -not $mine[0].Memory -or $mine[0].Code -ne '0x0000007E') { throw "rapport effacé : la mémoire d'AEROX ne l'a pas retenu" }
+            Write-Host ("        contexte : {0}" -f (Get-BsodContext $mine[0].CrashTime $mine[0].UpMin @() @()).Text)
+        } finally {
+            foreach ($x in $f, $old) { if (Test-Path -LiteralPath $x) { Remove-Item -LiteralPath $x -Force -ErrorAction SilentlyContinue } }
+            if ($made) { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue }
+            if ($bak) { [IO.File]::WriteAllBytes($mem, $bak) } elseif (Test-Path -LiteralPath $mem) { Remove-Item -LiteralPath $mem -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'Écran bleu : réglage des rapports (lu, coupé, remis)' {
+        $ds = Get-CrashDumpState
+        Write-Host ("        réglage de ce PC : mode {0}, fichier d'échange {1}, verdict {2}" -f $ds.Mode, $ds.PageFile, $ds.Verdict)
+        $keepUndo = $script:AeroxUndo; $script:AeroxUndo = $true
+        try {
+            Set-CrashDumpMode 0
+            if ((Get-CrashDumpState).Verdict -ne 'off') { throw "réglage coupé mais pas vu" }
+            Set-CrashDumpMode $ds.Mode
+            if ((Get-CrashDumpState).Mode -ne $ds.Mode) { throw "réglage pas remis" }
+            $bad = $false; try { Set-CrashDumpMode 9 } catch { $bad = $true }
+            if (-not $bad) { throw "valeur inconnue acceptée" }
+        } finally { try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name CrashDumpEnabled -Value $ds.Mode -Type DWord } catch {}; $script:AeroxUndo = $keepUndo }
+        if (-not (Test-SafeUndo "Set-CrashDumpMode 7")) { throw "annulation refusée" }
+    }
+    Smoke 'Écran bleu : rapport complet sur ce PC' {
+        $v = Get-BsodVerdict (Get-Date).AddDays(-90)
+        Write-Host ("        {0} écran(s) bleu(s), {1} arrêt(s) forcé(s)" -f $v.Count, $v.Manual)
+        foreach ($l in $v.Lines) { Write-Host "     $l" }
+        $ch = @(Get-ChangesBefore (Get-Date) 30)
+        Write-Host ("        installé ces 30 derniers jours : {0} élément(s)" -f $ch.Count)
+        foreach ($c in ($ch | Select-Object -First 6)) { Write-Host ("        {0:dd/MM} {1} : {2}" -f $c.When, $c.Kind, $c.Text) }
+        Get-BsodReport
+    }
     # ---------------- 3.4.0 : pile de la carte mère
     Smoke 'Pile de la carte mère : horloge qui recule au démarrage' {
         $now = Get-Date

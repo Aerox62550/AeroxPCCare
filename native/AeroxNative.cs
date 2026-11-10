@@ -993,6 +993,15 @@ public static class AeroxDump {
         foreach (Drv d in l) if (v >= d.Base && v < d.Base + d.Size) return d.Name;
         return null;
     }
+    // En-tête d'un vidage (minidump ou MEMORY.DMP, sans lire tout le fichier) : code|p1..p4|heure du plantage (FILETIME)|durée depuis le démarrage (100 ns)
+    public static string Head(string path) {
+        try {
+            byte[] b = new byte[0x1040];
+            using (FileStream f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { if (f.Read(b, 0, b.Length) < b.Length) return ""; }
+            if (Encoding.ASCII.GetString(b, 0, 8) != "PAGEDU64") return "";
+            return string.Format("0x{0:X8}|0x{1:X}|0x{2:X}|0x{3:X}|0x{4:X}|{5}|{6}", U32(b, 0x38), U64(b, 0x40), U64(b, 0x48), U64(b, 0x50), U64(b, 0x58), U64(b, 0xFA8), U64(b, 0x1030));
+        } catch { return ""; }
+    }
     public static string Analyze(string path) {
         try {
             byte[] b = File.ReadAllBytes(path);

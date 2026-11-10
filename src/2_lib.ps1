@@ -612,7 +612,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
+    $allowed = 'Set-CrashDumpMode', 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -3024,7 +3024,7 @@ function Get-WuErrorInfo([string]$Code) {
 $script:BugChecks = @{
     '0x0000000A' = @('IRQL_NOT_LESS_OR_EQUAL', "Un pilote (souvent réseau, audio ou graphique) a accédé à la mémoire au mauvais moment. Ça peut aussi venir de la RAM ou d'un overclocking instable.", 'drv')
     '0x000000D1' = @('DRIVER_IRQL_NOT_LESS_OR_EQUAL', "Un pilote de périphérique est fautif : le plus souvent la carte réseau / Wi-Fi ou la carte graphique.", 'drv')
-    '0x0000001A' = @('MEMORY_MANAGEMENT', "Problème de mémoire vive : barrette de RAM défectueuse, profil XMP/EXPO instable ou pilote fautif.", 'hw')
+    '0x0000001A' = @('MEMORY_MANAGEMENT', "Problème de mémoire vive : barrette de RAM défectueuse, profil XMP/EXPO instable ou pilote fautif.", 'ram')
     '0x0000003B' = @('SYSTEM_SERVICE_EXCEPTION', "Un pilote ou un fichier système a planté (souvent le pilote graphique ou un antivirus tiers).", 'drv')
     '0x00000050' = @('PAGE_FAULT_IN_NONPAGED_AREA', "Windows a voulu lire une zone mémoire invalide : RAM, pilote ou fichier système abîmé.", 'hw')
     '0x0000007E' = @('SYSTEM_THREAD_EXCEPTION_NOT_HANDLED', "Un pilote a planté, souvent juste après une mise à jour de pilote.", 'drv')
@@ -3036,6 +3036,52 @@ $script:BugChecks = @{
     '0x00000133' = @('DPC_WATCHDOG_VIOLATION', "Un pilote a bloqué le système trop longtemps, souvent celui du SSD ou un pilote ancien.", 'drv')
     '0x00000139' = @('KERNEL_SECURITY_CHECK_FAILURE', "Un pilote incompatible, ou des fichiers système / la RAM abîmés.", 'drv')
     '0x000000EF' = @('CRITICAL_PROCESS_DIED', "Un processus vital de Windows s'est arrêté : fichiers système abîmés ou disque défaillant.", 'sys')
+    '0x00000001' = @('APC_INDEX_MISMATCH', "Un pilote a mal terminé une opération : souvent un pilote d'imprimante, audio ou graphique, juste après une mise à jour.", 'drv')
+    '0x00000018' = @('REFERENCE_BY_POINTER', "Un pilote a mal géré un objet de Windows : pilote ancien ou incompatible.", 'drv')
+    '0x00000019' = @('BAD_POOL_HEADER', "La mémoire du système a été abîmée par un pilote, ou la RAM a un défaut.", 'drv')
+    '0x0000001E' = @('KMODE_EXCEPTION_NOT_HANDLED', "Un pilote a fait une opération interdite : le plus souvent un pilote ancien ou incompatible.", 'drv')
+    '0x00000024' = @('NTFS_FILE_SYSTEM', "Erreur dans la lecture du disque (système de fichiers) : disque ou SSD qui fatigue, ou fichiers abîmés par une coupure.", 'disk')
+    '0x0000003D' = @('INTERRUPT_EXCEPTION_NOT_HANDLED', "Un pilote a planté pendant qu'il répondait au matériel.", 'drv')
+    '0x00000044' = @('MULTIPLE_IRP_COMPLETE_REQUESTS', "Un pilote a terminé deux fois la même opération : pilote fautif.", 'drv')
+    '0x0000004E' = @('PFN_LIST_CORRUPT', "La liste des pages de mémoire est abîmée : barrette de RAM défectueuse, profil XMP/EXPO instable, ou pilote fautif.", 'ram')
+    '0x00000051' = @('REGISTRY_ERROR', "Windows n'a pas pu lire sa base de registre : disque défaillant ou fichiers système abîmés.", 'disk')
+    '0x00000074' = @('BAD_SYSTEM_CONFIG_INFO', "La configuration de démarrage de Windows est abîmée, souvent après une coupure ou une mise à jour ratée.", 'sys')
+    '0x00000077' = @('KERNEL_STACK_INPAGE_ERROR', "Windows n'a pas pu relire ses propres données sur le disque : disque ou SSD défaillant, câble SATA, ou RAM.", 'disk')
+    '0x0000007A' = @('KERNEL_DATA_INPAGE_ERROR', "Windows n'a pas pu relire ses propres données sur le disque : disque ou SSD défaillant, câble SATA, ou RAM.", 'disk')
+    '0x0000007B' = @('INACCESSIBLE_BOOT_DEVICE', "Windows ne trouve plus son disque au démarrage : mode SATA changé dans le BIOS (AHCI / RAID), pilote de stockage, ou disque défaillant.", 'disk')
+    '0x00000080' = @('NMI_HARDWARE_FAILURE', "Le matériel a signalé une panne (carte mère, RAM, carte fille).", 'hw')
+    '0x0000008E' = @('KERNEL_MODE_EXCEPTION_NOT_HANDLED', "Un pilote a fait une opération interdite : pilote ancien ou incompatible, parfois la RAM.", 'drv')
+    '0x0000009C' = @('MACHINE_CHECK_EXCEPTION', "Le processeur a signalé lui-même une erreur grave : overclocking instable, surchauffe ou alimentation.", 'cpu')
+    '0x000000A0' = @('INTERNAL_POWER_ERROR', "Erreur dans la gestion de l'alimentation de Windows : mise en veille prolongée, pilote graphique ou pilote de stockage.", 'drv')
+    '0x000000BE' = @('ATTEMPTED_WRITE_TO_READONLY_MEMORY', "Un pilote a écrit dans une zone de mémoire protégée : pilote fautif.", 'drv')
+    '0x000000C1' = @('SPECIAL_POOL_DETECTED_MEMORY_CORRUPTION', "Un pilote a écrit en dehors de sa zone de mémoire : pilote fautif.", 'drv')
+    '0x000000C2' = @('BAD_POOL_CALLER', "Un pilote a mal demandé ou rendu de la mémoire à Windows : pilote fautif.", 'drv')
+    '0x000000C4' = @('DRIVER_VERIFIER_DETECTED_VIOLATION', "Le vérificateur de pilotes de Windows est activé et a attrapé un pilote fautif.", 'drv')
+    '0x000000C5' = @('DRIVER_CORRUPTED_EXPOOL', "Un pilote a abîmé la mémoire du système : pilote fautif.", 'drv')
+    '0x000000CE' = @('DRIVER_UNLOADED_WITHOUT_CANCELLING_PENDING_OPERATIONS', "Un pilote s'est arrêté sans finir son travail : pilote fautif.", 'drv')
+    '0x000000D8' = @('DRIVER_USED_EXCESSIVE_PTES', "Un pilote a consommé trop de ressources du système : pilote fautif.", 'drv')
+    '0x000000E2' = @('MANUALLY_INITIATED_CRASH', "Arrêt déclenché volontairement au clavier.", 'manual')
+    '0x000000EA' = @('THREAD_STUCK_IN_DEVICE_DRIVER', "Le pilote de la carte graphique est resté bloqué : pilote graphique, surchauffe ou carte qui fatigue.", 'gpu')
+    '0x000000ED' = @('UNMOUNTABLE_BOOT_VOLUME', "Windows n'arrive pas à ouvrir son disque au démarrage : fichiers abîmés par une coupure, ou disque défaillant.", 'disk')
+    '0x000000F4' = @('CRITICAL_OBJECT_TERMINATION', "Un processus vital s'est arrêté, souvent parce que le disque de Windows a cessé de répondre.", 'disk')
+    '0x000000F7' = @('DRIVER_OVERRAN_STACK_BUFFER', "Un pilote a débordé de sa zone de mémoire : pilote fautif.", 'drv')
+    '0x000000FC' = @('ATTEMPTED_EXECUTE_OF_NOEXECUTE_MEMORY', "Un pilote a tenté d'exécuter une zone de mémoire interdite : pilote fautif.", 'drv')
+    '0x000000FE' = @('BUGCODE_USB_DRIVER', "Erreur dans un pilote USB : un appareil branché en USB ou le contrôleur USB de la carte mère.", 'usb')
+    '0x00000101' = @('CLOCK_WATCHDOG_TIMEOUT', "Un cœur du processeur ne répond plus : overclocking ou undervolting instable, BIOS ancien, ou processeur qui chauffe.", 'cpu')
+    '0x00000109' = @('CRITICAL_STRUCTURE_CORRUPTION', "Le cœur de Windows a été modifié en mémoire : RAM défectueuse ou pilote fautif.", 'hw')
+    '0x0000010D' = @('WDF_VIOLATION', "Un pilote de périphérique (souvent USB : souris, clavier, casque, manette) a enfreint les règles de Windows.", 'usb')
+    '0x0000010E' = @('VIDEO_MEMORY_MANAGEMENT_INTERNAL', "Erreur dans la gestion de la mémoire vidéo : pilote de la carte graphique.", 'gpu')
+    '0x00000113' = @('VIDEO_DXGKRNL_FATAL_ERROR', "Erreur grave dans l'affichage de Windows : pilote de la carte graphique.", 'gpu')
+    '0x00000119' = @('VIDEO_SCHEDULER_INTERNAL_ERROR', "Erreur grave dans l'affichage de Windows : pilote graphique, surchauffe ou overclocking de la carte graphique.", 'gpu')
+    '0x0000012B' = @('FAULTY_HARDWARE_CORRUPTED_PAGE', "Windows a trouvé une page de mémoire abîmée par le matériel : presque toujours une barrette de RAM défectueuse.", 'ram')
+    '0x00000144' = @('BUGCODE_USB3_DRIVER', "Erreur dans un pilote USB 3 : un appareil branché en USB ou le contrôleur USB de la carte mère.", 'usb')
+    '0x00000154' = @('UNEXPECTED_STORE_EXCEPTION', "Windows a perdu l'accès à son disque en plein fonctionnement : SSD ou disque défaillant, ou son pilote.", 'disk')
+    '0x00000162' = @('KERNEL_AUTO_BOOST_INVALID_LOCK_RELEASE', "Un pilote a mal géré un verrou du système : pilote fautif.", 'drv')
+    '0x00000189' = @('BAD_OBJECT_HEADER', "Un pilote a abîmé un objet de Windows en mémoire : pilote fautif, parfois la RAM.", 'drv')
+    '0x0000019C' = @('WIN32K_POWER_WATCHDOG_TIMEOUT', "L'écran n'a pas réussi à se rallumer à la sortie de veille : le plus souvent le pilote de la carte graphique.", 'gpu')
+    '0x000001C8' = @('MANUALLY_INITIATED_POWER_BUTTON_HOLD', "Le bouton d'allumage a été maintenu plusieurs secondes : Windows l'a noté comme un arrêt forcé.", 'manual')
+    '0x000001CA' = @('SYNTHETIC_WATCHDOG_TIMEOUT', "Le système est resté bloqué trop longtemps : pilote qui fige le PC, ou processeur instable.", 'cpu')
+    '0xC000021A' = @('WINLOGON_FATAL_ERROR', "Un processus vital de Windows (ouverture de session) a planté : fichiers système abîmés, souvent après une mise à jour ratée.", 'sys')
 }
 
 # ---------------------------------------------------------------- DIAGNOSTIC
@@ -3313,9 +3359,10 @@ function Get-BsodAnalysis([datetime]$Since) {
     $list = New-Object System.Collections.ArrayList
     foreach ($f in $files) {
         $a = ''; try { $a = [AeroxDump]::Analyze($f.FullName) } catch {}
-        $o = @{ Date = $f.LastWriteTime; Code = ''; Culprit = $null; Readable = $false; Stack = '' }
+        $o = @{ File = $f.Name; Date = $f.LastWriteTime; Code = ''; P1 = ''; CrashTime = $null; UpMin = -1; Culprit = $null; Readable = $false; Stack = ''; Memory = $false }
+        try { $hd = ConvertFrom-DumpHead ([AeroxDump]::Head($f.FullName)); $o.CrashTime = $hd.CrashTime; $o.UpMin = $hd.UpMin } catch {}
         if ($a) {
-            $q = $a.Split('|'); $o.Code = $q[0]
+            $q = $a.Split('|'); $o.Code = ConvertTo-BugCheckKey $q[0]; $o.P1 = $q[1]
             $mods = @(@($q[5] -split ',') + @($q[6] -split ',') | Where-Object { $_ } | Select-Object -Unique)
             $o.Readable = ($mods.Count -gt 0); $o.Stack = ($q[6] -replace ',', ', ')
             $infos = @($mods | ForEach-Object { Get-DriverFileInfo $_ $paths })
@@ -3325,7 +3372,11 @@ function Get-BsodAnalysis([datetime]$Since) {
         }
         [void]$list.Add($o)
     }
-    $res.Dumps = $list.ToArray()
+    # Rapports effacés depuis par un nettoyage : relus dans la mémoire d'AEROX
+    Save-BsodMemory $list.ToArray()
+    $onDisk = @{}; foreach ($o in $list) { $onDisk[$o.File] = $true }
+    foreach ($m in @(Read-BsodMemory)) { if (-not $onDisk.ContainsKey($m.File) -and $m.Date -ge $Since) { [void]$list.Add($m) } }
+    $res.Dumps = @($list.ToArray() | Sort-Object { $_.Date } -Descending)
     $g = @($res.Dumps | Where-Object { $_.Culprit } | Group-Object { $_.Culprit.Name } | Sort-Object Count -Descending)
     if ($g.Count) { $res.Top = ($g[0].Group | Select-Object -First 1).Culprit; $res.TopCount = $g[0].Count }
     try { $res.Whea = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $Since } -ErrorAction SilentlyContinue | Where-Object { $_.Level -le 2 }).Count } catch {}
@@ -3336,6 +3387,333 @@ function Get-BsodAnalysis([datetime]$Since) {
         if (($t -eq 26 -and $spd -gt 3200) -or ($t -eq 34 -and $spd -gt 6400)) { $res.Xmp = "$(if ($t -eq 26) { 'DDR4' } else { 'DDR5' }) à $spd MT/s" }
     } catch {}
     return $res
+}
+
+# ---------------------------------------------------------------- Écrans bleus : codes, contexte, ce qui a changé avant
+# Les variantes « 0x1000007E » de Windows sont le même arrêt que « 0x0000007E »
+function ConvertTo-BugCheckKey([string]$Code) {
+    $v = [long]0
+    try { $v = [Convert]::ToInt64(($Code -replace '^0x', ''), 16) } catch { return '' }
+    if (($v -band 4026531840) -eq 268435456) { $v = $v -band 268435455 }
+    return ('0x{0:X8}' -f $v)
+}
+function Get-BugCheckInfo([string]$Code, [string]$P1 = '') {
+    $k = ConvertTo-BugCheckKey $Code
+    $i = if ($k -and $script:BugChecks.ContainsKey($k)) { $script:BugChecks[$k] } else { @('Erreur système', "Un pilote ou un composant matériel a provoqué un arrêt brutal de Windows.", 'drv') }
+    $r = @{ Key = $k; Name = $i[0]; Text = $i[1]; Kind = $i[2] }
+    $p = [long]-1; try { if ($P1) { $p = [Convert]::ToInt64(($P1 -replace '^0x', ''), 16) } } catch {}
+    if ($k -eq '0x00000124' -and $p -eq 0) { $r.Text = "Le processeur a signalé lui-même une erreur grave (« machine check ») : overclocking ou undervolting instable, surchauffe, ou alimentation qui fatigue."; $r.Kind = 'cpu' }
+    elseif ($k -eq '0x00000124' -and $p -eq 4) { $r.Text = "Une carte branchée en PCI Express (carte graphique, SSD NVMe) a signalé une erreur grave : carte mal enfoncée, câble riser, ou composant qui fatigue." }
+    elseif ($k -eq '0x0000009F' -and $p -eq 3) { $r.Text = "Un périphérique n'a pas répondu à temps pendant une mise en veille ou un réveil : le plus souvent le pilote de la carte graphique, du Wi-Fi ou d'un appareil USB." }
+    return $r
+}
+function Get-BugCheckSteps([string]$Kind) {
+    switch ($Kind) {
+        'hw'   { return @("Si tu as overclocké le PC ou activé XMP / EXPO dans le BIOS, remets les réglages par défaut.", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Vérifie que le PC ne chauffe pas (poussière, ventilateurs).", "Mets à jour Windows et tes pilotes (onglet Mises à jour).") }
+        'gpu'  { return @("Mets à jour le pilote de la carte graphique avec l'outil officiel (onglet Mises à jour > Pilotes).", "Si tu as overclocké la carte graphique, remets-la par défaut.", "Vérifie que la carte graphique ne chauffe pas (poussière, ventilateurs).") }
+        'ram'  { return @("Si XMP / EXPO est activé dans le BIOS, désactive-le pour tester : c'est la cause la plus fréquente.", "Lance le test de mémoire de Windows : tape « mdsched » dans le menu Démarrer et redémarre.", "Si le test trouve des erreurs : teste les barrettes une par une pour trouver la mauvaise (la RAM est souvent garantie à vie).") }
+        'disk' { return @("Sauvegarde tout de suite tes fichiers importants.", "Lance « Vérifier le disque » (onglet Réparation) et regarde la santé du disque dans le diagnostic.", "Disque SATA : change le câble ou branche-le sur une autre prise de la carte mère.", "Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).") }
+        'cpu'  { return @("Si tu as overclocké ou undervolté (BIOS, Ryzen Master, Intel XTU), remets tout par défaut.", "Vérifie les températures du processeur (onglet Gaming) et dépoussière son ventilateur.", "Mets à jour le BIOS depuis la page du fabricant (onglet Mon PC).") }
+        'usb'  { return @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs, manettes) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.", "Si ça a commencé avec un nouvel appareil USB : essaie sans lui, ou sur une autre prise.") }
+        'sys'  { return @("Lance « Réparer les fichiers Windows » (bouton vert).", "Installe toutes les mises à jour Windows.", "Si ça continue : lance « Vérifier le disque » (onglet Réparation).") }
+        default { return @("Mets à jour le pilote de la carte graphique et du Wi-Fi / réseau (onglet Mises à jour > Pilotes).", "Installe toutes les mises à jour Windows.", "Si les écrans bleus continuent, désinstalle le dernier logiciel ou pilote installé avant qu'ils commencent.") }
+    }
+}
+# Texte de Windows « 0x0000009f (0x0000000000000003, 0x…) » → code et premier paramètre
+function ConvertFrom-BugCheckText([string]$T) {
+    if ($T -match '0x([0-9a-fA-F]{8})\s*\(\s*0x([0-9a-fA-F]+)') { $p = $matches[2].TrimStart('0'); return @{ Code = (ConvertTo-BugCheckKey $matches[1]); P1 = '0x' + $(if ($p) { $p.ToUpper() } else { '0' }) } }
+    if ($T -match '0x([0-9a-fA-F]{1,8})\b') { return @{ Code = (ConvertTo-BugCheckKey $matches[1]); P1 = '' } }
+    return $null
+}
+# Un écran bleu dont le rapport n'a pas pu s'écrire laisse quand même son code dans l'événement 41 du redémarrage :
+# ajouté seulement s'il n'y a pas déjà un rapport de Windows pour ce même redémarrage (à 15 minutes près)
+function Merge-BsodEvents($Wer, $Kp) {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($w in @($Wer)) { if ($w) { [void]$out.Add($w) } }
+    foreach ($k in @($Kp)) {
+        if (-not $k) { continue }
+        if (-not @($out | Where-Object { [math]::Abs(($_.Time - $k.Time).TotalMinutes) -le 15 }).Count) { [void]$out.Add($k) }
+    }
+    return @($out | Sort-Object { $_.Time })
+}
+function Get-BsodEvents([datetime]$Since) {
+    $wer = foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $Since })) {
+        $txt = (($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + ' ' + $e.Message
+        $c = ConvertFrom-BugCheckText $txt
+        @{ Time = $e.TimeCreated; Code = $(if ($c) { $c.Code } else { '' }); P1 = $(if ($c) { $c.P1 } else { '' }); Src = 'rapport' }
+    }
+    $kp = foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $Since })) {
+        $b = [long]0; try { $b = [long]"$($e.Properties[0].Value)" } catch {}
+        if ($b -le 0) { continue }
+        $p1 = ''; try { $p1 = '0x{0:X}' -f [uint64]"$($e.Properties[1].Value)" } catch {}
+        @{ Time = $e.TimeCreated; Code = ('0x{0:X8}' -f $b); P1 = $p1; Src = 'redémarrage' }
+    }
+    return @(Merge-BsodEvents $wer $kp)
+}
+# En-tête d'un rapport ([AeroxDump]::Head) → heure du plantage et minutes depuis le démarrage, ignorées si absurdes
+function ConvertFrom-DumpHead([string]$H) {
+    $r = @{ Code = ''; P1 = ''; CrashTime = $null; UpMin = -1 }
+    $q = @("$H".Split('|')); if ($q.Count -lt 7) { return $r }
+    $r.Code = ConvertTo-BugCheckKey $q[0]; $r.P1 = $q[1]
+    try { $t = [datetime]::FromFileTime([long]$q[5]); if ($t.Year -ge 2015 -and $t -le (Get-Date).AddDays(1)) { $r.CrashTime = $t } } catch {}
+    try { $m = [double]$q[6] / 600000000; if ($m -ge 0 -and $m -lt 525600) { $r.UpMin = [math]::Round($m, 1) } } catch {}
+    return $r
+}
+# Dans quelle situation l'écran bleu est arrivé (faits : durée depuis le démarrage, mise en veille ou réveil juste avant)
+function Get-BsodContext($CrashTime, [double]$UpMin, $Wakes, $Sleeps) {
+    if ($CrashTime) {
+        $w = @($Wakes | Where-Object { $_ -le $CrashTime -and ($CrashTime - $_).TotalMinutes -le 5 } | Sort-Object) | Select-Object -Last 1
+        $s = @($Sleeps | Where-Object { $_ -le $CrashTime -and ($CrashTime - $_).TotalMinutes -le 5 } | Sort-Object) | Select-Object -Last 1
+        if ($w -and (-not $s -or $w -ge $s)) { return @{ Kind = 'wake'; Text = 'à la sortie de veille' } }
+        if ($s) { return @{ Kind = 'sleep'; Text = 'pendant la mise en veille' } }
+    }
+    if ($UpMin -ge 0 -and $UpMin -lt 3) { return @{ Kind = 'boot'; Text = 'juste après le démarrage' } }
+    if ($UpMin -ge 3) {
+        $d = if ($UpMin -lt 90) { "{0:N0} min" -f $UpMin } elseif ($UpMin -lt 2880) { "{0:N0} h" -f ($UpMin / 60) } else { "{0:N0} jours" -f ($UpMin / 1440) }
+        return @{ Kind = 'use'; Text = "en pleine utilisation (PC allumé depuis $d)" }
+    }
+    return @{ Kind = ''; Text = '' }
+}
+# Premier écran bleu de la série en cours : celui qui suit au moins $Quiet jours sans aucun. Rien si l'historique ne
+# remonte pas assez loin pour l'affirmer.
+function Get-BsodSeriesStart($Times, [datetime]$WindowStart, [int]$Quiet = 14) {
+    $t = @($Times | Where-Object { $_ } | Sort-Object)
+    if (-not $t.Count) { return $null }
+    $start = $t[$t.Count - 1]
+    for ($i = $t.Count - 2; $i -ge 0; $i--) { if (($start - $t[$i]).TotalDays -gt $Quiet) { break }; $start = $t[$i] }
+    if (($start - $WindowStart).TotalDays -lt $Quiet) { return $null }
+    return $start
+}
+# Ce qui a été installé dans les $Days jours avant une date : mises à jour Windows, pilotes, logiciels
+function Get-ChangesBefore([datetime]$T, [int]$Days = 3) {
+    $from = $T.AddDays(-$Days); $out = New-Object System.Collections.ArrayList
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WindowsUpdateClient'; Id = 19; StartTime = $from; EndTime = $T } 200)) {
+        $title = ''; try { $title = "$($e.Properties[0].Value)".Trim() } catch {}
+        if (-not $title -or $title -match '(?i)KB2267602|Security Intelligence|veille de sécurité|Defender Antivirus|Malicious Software|logiciels malveillants') { continue }
+        [void]$out.Add(@{ When = $e.TimeCreated; Kind = 'maj'; Class = ''; Text = $title })
+    }
+    try {
+        $infs = @(Get-ChildItem -LiteralPath "$env:SystemRoot\INF" -Filter 'oem*.inf' -File -ErrorAction Stop | Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $T })
+        if ($infs.Count) {
+            $drv = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.InfName })
+            foreach ($f in $infs) {
+                $d = @($drv | Where-Object { $_.InfName -eq $f.Name }) | Select-Object -First 1
+                if (-not $d) { continue }
+                $nm = if ($d.DeviceName) { "$($d.DeviceName)" } else { "$($d.Description)" }
+                [void]$out.Add(@{ When = $f.CreationTime; Kind = 'pilote'; Class = "$($d.DeviceClass)".ToUpperInvariant(); Text = ("{0} (version {1})" -f $nm, $d.DriverVersion) })
+            }
+        }
+    } catch {}
+    $seen = @{}
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+        foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) {
+            if (-not $e.DisplayName -or $e.SystemComponent -eq 1 -or $e.ParentKeyName -or "$($e.InstallDate)" -notmatch '^(\d{4})(\d{2})(\d{2})$') { continue }
+            $date = $null; try { $date = Get-Date -Year $matches[1] -Month $matches[2] -Day $matches[3] -Hour 0 -Minute 0 -Second 0 } catch {}
+            $name = "$($e.DisplayName)".Trim()
+            if (-not $date -or $date -lt $from.Date -or $date -gt $T -or $seen.ContainsKey($name)) { continue }
+            $seen[$name] = $true
+            [void]$out.Add(@{ When = $date; Kind = 'logiciel'; Class = ''; Text = $name })
+        }
+    }
+    return @($out | Sort-Object { $_.When })
+}
+# Réglage « Écriture des informations de débogage » de Windows : sans lui (ou sans fichier d'échange), aucun rapport
+# n'est écrit et le pilote fautif ne peut pas être lu
+function Get-CrashDumpVerdict([int]$Mode, [bool]$PageFile) {
+    if ($Mode -eq 0) { return 'off' }
+    if (-not $PageFile) { return 'nopagefile' }
+    return 'ok'
+}
+function Get-CrashDumpState {
+    $mode = 7; try { $mode = [int](Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name CrashDumpEnabled -ErrorAction Stop).CrashDumpEnabled } catch {}
+    $pf = $true
+    try {
+        $v = @((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name PagingFiles -ErrorAction Stop).PagingFiles | Where-Object { "$_".Trim() })
+        $pf = ($v.Count -gt 0)
+    } catch {}
+    return @{ Mode = $mode; PageFile = $pf; Verdict = (Get-CrashDumpVerdict $mode $pf) }
+}
+# 0 = aucun rapport, 3 = petit rapport, 7 = automatique (réglage d'origine de Windows)
+function Set-CrashDumpMode([int]$Mode) {
+    if ($Mode -notin 0, 1, 2, 3, 7) { throw "réglage inconnu : $Mode" }
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl'
+    $old = 7; try { $old = [int](Get-ItemProperty $key -Name CrashDumpEnabled -ErrorAction Stop).CrashDumpEnabled } catch {}
+    Set-ItemProperty -Path $key -Name CrashDumpEnabled -Value $Mode -Type DWord -ErrorAction Stop
+    Log ("   ✔ Rapports d'écran bleu : {0}" -f $(if ($Mode -eq 0) { 'désactivés' } else { 'activés (pris en compte au prochain redémarrage)' }))
+    if ($old -ne $Mode) { Add-Change -Title "Rapports d'écran bleu de Windows $(if ($Mode -eq 0) { 'désactivés' } else { 'réactivés' })" -Undo "Set-CrashDumpMode $old" }
+}
+# Mémoire des écrans bleus : ce qu'AEROX a lu dans chaque rapport est noté dans son dossier, pour rester disponible même
+# si un nettoyage (CCleaner, Nettoyage de disque) efface ensuite les fichiers de C:\Windows\Minidump
+function ConvertTo-BsodMemoryLine($D) {
+    $c = $D.Culprit
+    $f = @("$($D.File)", $D.Date.Ticks, $(if ($D.CrashTime) { $D.CrashTime.Ticks } else { 0 }), $D.UpMin, "$($D.Code)", "$($D.P1)",
+           $(if ($c) { "$($c.Name)" } else { '' }), $(if ($c) { "$($c.Company)" } else { '' }), $(if ($c) { "$($c.Desc)" } else { '' }), $(if ($c) { "$($c.Kind)" } else { '' }), $(if ($D.Readable) { 1 } else { 0 }), "$($D.Stack)")
+    return (@($f | ForEach-Object { "$_" -replace '[|\r\n]', ' ' }) -join '|')
+}
+function ConvertFrom-BsodMemoryLine([string]$L) {
+    $q = @($L.Split('|')); if ($q.Count -lt 12 -or -not $q[0]) { return $null }
+    try {
+        $o = @{ File = $q[0]; Date = (New-Object datetime ([long]$q[1])); CrashTime = $null; UpMin = [double]::Parse($q[3], [Globalization.CultureInfo]::InvariantCulture); Code = $q[4]; P1 = $q[5]; Culprit = $null; Readable = ($q[10] -eq '1'); Stack = $q[11]; Memory = $true }
+        if ([long]$q[2] -gt 0) { $o.CrashTime = New-Object datetime ([long]$q[2]) }
+        if ($q[6]) { $o.Culprit = @{ Name = $q[6]; Company = $q[7]; Desc = $q[8]; Kind = $q[9]; Ms = $false } }
+        return $o
+    } catch { return $null }
+}
+function Get-BsodMemoryPath { return (Join-Path $AppInfo.LogDir 'ecrans-bleus.txt') }
+function Read-BsodMemory {
+    $p = Get-BsodMemoryPath
+    if (-not (Test-Path -LiteralPath $p)) { return @() }
+    try { return @(Get-Content -LiteralPath $p -Encoding UTF8 -ErrorAction Stop | ForEach-Object { ConvertFrom-BsodMemoryLine $_ } | Where-Object { $_ }) } catch { return @() }
+}
+function Save-BsodMemory($Dumps) {
+    try {
+        $all = @{}
+        foreach ($o in @(Read-BsodMemory)) { if ($o.Date -ge (Get-Date).AddDays(-180)) { $all[$o.File] = $o } }
+        foreach ($d in @($Dumps)) { if ($d.File -and $d.Code -and -not $d.Memory) { $all[$d.File] = $d } }
+        $lines = @($all.Values | Sort-Object { $_.Date } | ForEach-Object { ConvertTo-BsodMemoryLine $_ })
+        [IO.File]::WriteAllLines((Get-BsodMemoryPath), [string[]]$lines, (New-Object Text.UTF8Encoding $true))
+    } catch {}
+}
+# Tout ce qu'on sait des écrans bleus depuis $Since, prêt à afficher : { Count; Manual; Lines; Detail; Code; Cause; Steps; FixL; Ui; NoDump; Last }
+function Find-BsodDump($Ev, $Dumps) {
+    $c = @($Dumps | Where-Object { (-not $Ev.Code -or -not $_.Code -or $_.Code -eq $Ev.Code) -and (([math]::Abs(($_.Date - $Ev.Time).TotalMinutes) -le 30) -or ($_.CrashTime -and $_.CrashTime -le $Ev.Time -and ($Ev.Time - $_.CrashTime).TotalHours -le 24)) })
+    return (@($c | Sort-Object { [math]::Abs(($_.Date - $Ev.Time).TotalMinutes) }) | Select-Object -First 1)
+}
+function Get-BsodVerdict([datetime]$Since) {
+    $res = @{ Count = 0; Manual = 0; Lines = (New-Object System.Collections.ArrayList); Detail = 'Code'; Code = ''; Cause = ''; Steps = @(); FixL = "Réparer les fichiers Windows"; Ui = ''; NoDump = ''; Last = $null }
+    $all = @(Get-BsodEvents $Since)
+    $manual = @($all | Where-Object { (Get-BugCheckInfo $_.Code).Kind -eq 'manual' })
+    $real = @($all | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' })
+    $res.Manual = $manual.Count; $res.Count = $real.Count
+    foreach ($m in $manual) { [void]$res.Lines.Add(("   • {0:dd/MM/yyyy HH:mm} : arrêt forcé à la main ({1}), ce n'est pas une panne de Windows" -f $m.Time, (Get-BugCheckInfo $m.Code).Name)) }
+    if (-not $real.Count) { return $res }
+    $res.Last = $real[$real.Count - 1].Time
+    $main = @($real | Where-Object { $_.Code } | Group-Object { $_.Code } | Sort-Object Count -Descending) | Select-Object -First 1
+    $p1 = ''; if ($main) { $p1 = "$(@($main.Group | Where-Object { $_.P1 } | Select-Object -First 1 | ForEach-Object { $_.P1 }))" }
+    $info = Get-BugCheckInfo $(if ($main) { $main.Name } else { '' }) $p1
+    if ($main) { $res.Code = "{0} ({1})" -f $info.Name, $main.Name }
+    # Les rapports de plantage : quel pilote était en cause à chaque écran bleu, et dans quelle situation
+    $an = Get-BsodAnalysis $Since
+    $wakes = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1; StartTime = $Since.AddDays(-1) } | ForEach-Object { $_.TimeCreated })
+    $sleeps = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 42; StartTime = $Since.AddDays(-1) } | ForEach-Object { $_.TimeCreated })
+    $ctxKinds = New-Object System.Collections.ArrayList; $used = @{}
+    foreach ($e in @($real | Sort-Object { $_.Time } -Descending)) {
+        $bi = Get-BugCheckInfo $e.Code $e.P1
+        $line = "   • Écran bleu du {0:dd/MM/yyyy HH:mm} : {1}{2}" -f $e.Time, $bi.Name, $(if ($e.Code) { " ($($e.Code))" } else { '' })
+        $d = Find-BsodDump $e @($an.Dumps | Where-Object { -not $used.ContainsKey($_.File) })
+        if ($d) {
+            $used[$d.File] = $true
+            $ctx = Get-BsodContext $d.CrashTime $d.UpMin $wakes $sleeps
+            if ($ctx.Kind) { [void]$ctxKinds.Add($ctx.Kind); $line += ", $($ctx.Text)" }
+            $line += $(if ($d.Culprit) { " → pilote en cause : $($d.Culprit.Name)" + $(if ($d.Culprit.Company) { " ($($d.Culprit.Company))" } else { '' }) } elseif ($d.Readable) { " → seulement Windows sur la pile ($($d.Stack))" } else { " → rapport illisible" })
+            if ($d.Memory) { $line += " [rapport effacé depuis, relu dans la mémoire d'AEROX]" }
+        } else { $line += $(if ($e.Src -eq 'redémarrage') { " → Windows n'a pas pu écrire de rapport, seul le code est connu" } else { " → rapport absent (effacé ou jamais écrit), seul le code est connu" }) }
+        [void]$res.Lines.Add($line)
+        [void]$res.Lines.Add("     $($bi.Text)")
+    }
+    $top = $an.Top; $detail = 'Code'; $fixL = "Réparer les fichiers Windows"; $fixA = 'Repair-System'; $ui = ''
+    $cause = $info.Text
+    $steps = @(Get-BugCheckSteps $info.Kind)
+        if ($top) {
+            $extra = (@($top.Desc, $top.Company) | Where-Object { $_ }) -join ', '
+            $who = "« $($top.Name) »" + $(if ($extra) { " ($extra)" } else { '' })
+            $detail = "Pilote en cause : $($top.Name)"
+            $cause = "Les rapports de plantage de Windows désignent $who dans $($an.TopCount) écran(s) bleu(s) sur $(@($an.Dumps).Count) analysé(s). "
+            switch ($top.Kind) {
+                'gpu' { $cause += "C'est le pilote de la carte graphique."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si ça continue : réinstalle-le proprement (option « installation propre / réinitialiser » de l'installateur NVIDIA ou AMD).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.") }
+                'network' { $cause += "C'est un pilote réseau (carte réseau ou Wi-Fi)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote réseau / Wi-Fi depuis le site du fabricant de ta carte mère ou de ton PC (pas seulement Windows Update).", "Si c'est une carte Killer ou Realtek : désinstalle son logiciel d'« optimisation » réseau s'il y en a un.") }
+                'anticheat' { $cause += "C'est l'anti-triche d'un jeu."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour le jeu qui l'utilise (ou réinstalle-le) : l'anti-triche se met à jour avec lui.", "Si tu n'y joues plus, désinstalle le jeu : son anti-triche part avec.") }
+                'antivirus' { $cause += "C'est un antivirus en plus de celui de Windows."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Désinstalle cet antivirus : Windows Defender protège déjà très bien le PC, et deux antivirus se gênent.", "Si tu veux le garder, mets-le à jour depuis son propre menu.") }
+                'storage' { $cause += "C'est un pilote du disque (stockage)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe les pilotes « chipset » et « stockage » du site du fabricant de ta carte mère.", "Mets à jour le firmware de ton SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Sauvegarde tes fichiers importants en attendant.") }
+                'usb' { $cause += "C'est un pilote USB (un appareil branché en USB)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.") }
+                'audio' { $cause += "C'est un pilote audio."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote audio du site du fabricant de ta carte mère ou de ton PC.", "Désinstalle les logiciels d'« effets sonores » en plus (Nahimic, Sonic Studio…) si tu ne t'en sers pas.") }
+                default { $cause += "Il a été installé par $(if ($top.Company) { $top.Company } else { 'un logiciel' })."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour ou désinstalle le logiciel de $(if ($top.Company) { $top.Company } else { 'ce pilote' }).", "Si les écrans bleus ont commencé juste après l'avoir installé, désinstalle-le.") }
+            }
+        } elseif (@($an.Dumps | Where-Object { $_.Readable }).Count) {
+            $cause = "Les rapports de plantage ne montrent que Windows lui-même, aucun pilote en particulier : c'est le signe classique d'un souci de mémoire vive (RAM), d'un réglage trop poussé (XMP/EXPO, overclocking) ou de fichiers de Windows abîmés."
+            $steps = @("Lance « Réparer les fichiers Windows » (bouton vert).", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Si XMP / EXPO est activé dans le BIOS, essaie sans pendant quelques jours.")
+        }
+        # Indices matériels en plus (faits relevés par Windows, pas des suppositions)
+        if ($an.Whea -gt 0) { $cause += " Windows a aussi noté $($an.Whea) erreur(s) matérielle(s) (WHEA) : le processeur, la RAM ou la carte mère signalent eux-mêmes un problème."; $steps = @($steps) + "Erreurs matérielles : enlève tout overclocking, mets à jour le BIOS et vérifie les températures." }
+        if ($an.Xmp -and ($an.Whea -gt 0 -or $info.Kind -in 'hw', 'ram', 'cpu' -or -not $top)) { $cause += " La mémoire tourne en profil XMP/EXPO ($($an.Xmp)) : souvent stable, mais c'est un overclocking, à désactiver pour tester." }
+        # Dans quelle situation ils arrivent (seulement quand au moins 2 rapports le disent pareil)
+        $ck = @($ctxKinds | Group-Object | Sort-Object Count -Descending) | Select-Object -First 1
+        if ($ck -and $ck.Count -ge 2 -and $ck.Count -ge [math]::Ceiling($ctxKinds.Count * 0.6)) {
+            switch ($ck.Name) {
+                'boot'  { $cause += " $($ck.Count) écrans bleus sont arrivés dans les 3 minutes après le démarrage : c'est un pilote chargé au démarrage, ou le matériel (RAM, disque)." }
+                'wake'  { $cause += " $($ck.Count) écrans bleus sont arrivés à la sortie de veille : un pilote gère mal le réveil (carte graphique, Wi-Fi, USB)."; $steps = @($steps) + "Écrans bleus au réveil : mets à jour le pilote graphique et celui du Wi-Fi, et désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons d'alimentation)." }
+                'sleep' { $cause += " $($ck.Count) écrans bleus sont arrivés pendant la mise en veille : un pilote gère mal la veille (carte graphique, Wi-Fi, USB)."; $steps = @($steps) + "Écrans bleus à la mise en veille : mets à jour le pilote graphique et celui du Wi-Fi, et désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons d'alimentation)." }
+            }
+        }
+        # Ce qui a été installé juste avant le premier écran bleu de la série (historique de 90 jours)
+        try {
+            $winStart = (Get-Date).AddDays(-90)
+            try { $old = @(Get-WinEvent -LogName System -Oldest -MaxEvents 1 -ErrorAction Stop); if ($old.Count -and $old[0].TimeCreated -gt $winStart) { $winStart = $old[0].TimeCreated } } catch {}
+            $hist = @(Get-BsodEvents (Get-Date).AddDays(-90) | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' } | ForEach-Object { $_.Time })
+            $start = Get-BsodSeriesStart $hist $winStart
+            if ($start) {
+                $chg = @(Get-ChangesBefore $start 3)
+                if ($chg.Count) {
+                    [void]$res.Lines.Add(("   Installé dans les 3 jours avant le premier écran bleu de la série (le {0:dd/MM/yyyy}) :" -f $start))
+                    foreach ($c in $chg) { [void]$res.Lines.Add(("   • {0:dd/MM} : {1} : {2}" -f $c.When, $(switch ($c.Kind) { 'maj' { 'mise à jour de Windows' } 'pilote' { 'pilote' } default { 'logiciel' } }), $c.Text)) }
+                    $short = @($chg | Select-Object -First 3 | ForEach-Object { "$(switch ($_.Kind) { 'maj' { 'mise à jour' } 'pilote' { 'pilote' } default { 'logiciel' } }) « $($_.Text) » le $('{0:dd/MM}' -f $_.When)" }) -join ' ; '
+                    $cause += " La série a commencé le $('{0:dd/MM/yyyy}' -f $start), après au moins 14 jours sans écran bleu. Installé dans les 3 jours d'avant : $short$(if ($chg.Count -gt 3) { " (et $($chg.Count - 3) autre(s), voir le journal)" })."
+                    $gpuDrv = @($chg | Where-Object { $_.Kind -eq 'pilote' -and $_.Class -eq 'DISPLAY' }).Count -gt 0
+                    if ($gpuDrv -and ($info.Kind -eq 'gpu' -or ($top -and $top.Kind -eq 'gpu'))) {
+                        $cause += " Le pilote graphique a été changé juste avant : c'est le premier suspect."
+                        $steps = @("Reviens au pilote graphique d'avant : clic droit sur Démarrer > Gestionnaire de périphériques > Cartes graphiques > double-clic sur ta carte > onglet Pilote > « Restaurer le pilote » (ou réinstalle la version précédente depuis le site NVIDIA / AMD / Intel).") + @($steps)
+                    } else { $steps = @($steps) + "Les écrans bleus ont commencé juste après ces installations : désinstalle la plus suspecte (pour une mise à jour de Windows : Paramètres > Windows Update > Historique des mises à jour > Désinstaller des mises à jour)." }
+                }
+            }
+        } catch {}
+        # Aucun rapport lisible : pourquoi, et comment en avoir un la prochaine fois
+        if (-not @($an.Dumps).Count) {
+            $ds = Get-CrashDumpState; $res.NoDump = $ds.Verdict
+            switch ($ds.Verdict) {
+                'off' { [void]$res.Lines.Add("   • Windows est réglé pour ne garder aucun rapport d'écran bleu : le pilote fautif ne peut pas être lu."); $cause += " Windows est réglé pour ne garder aucun rapport : seul le code est connu, pas le pilote fautif." }
+                'nopagefile' { [void]$res.Lines.Add("   • Le fichier d'échange de Windows est désactivé : Windows ne peut pas écrire de rapport d'écran bleu."); $cause += " Le fichier d'échange de Windows est désactivé : aucun rapport ne peut s'écrire, seul le code est connu."; $steps = @($steps) + "Réactive le fichier d'échange : Paramètres > Système > Informations système > Paramètres avancés du système > Performances > Avancé > Mémoire virtuelle > coche « Gestion automatique »." }
+                default { [void]$res.Lines.Add("   • Aucun rapport d'écran bleu dans C:\Windows\Minidump (effacé par un nettoyage, ou pas écrit) : le coupable ne peut pas être lu, seulement le code."); $cause += " Les rapports de plantage ne sont plus là (effacés par un nettoyage, ou jamais écrits) : seul le code est connu. AEROX garde maintenant ceux des 30 derniers jours : au prochain écran bleu, relance le diagnostic, le pilote fautif sera nommé." }
+            }
+        }
+    $res.Detail = $detail; $res.Cause = $cause; $res.Steps = @($steps); $res.FixL = $fixL; $res.Ui = $ui
+    return $res
+}
+# Carte « Écran bleu » : le rapport complet des 90 derniers jours, en clair
+function Get-BsodReport {
+    Step "Écrans bleus : ce que Windows a noté, expliqué"
+    $v = Get-BsodVerdict (Get-Date).AddDays(-90)
+    foreach ($l in $v.Lines) { Log $l }
+    if (-not $v.Count) {
+        Log "✅ Aucun écran bleu noté par Windows ces 90 derniers jours."
+        Log "   Si le PC s'éteint ou redémarre d'un coup SANS écran bleu, ce n'est pas un plantage de Windows : c'est le courant, l'alimentation ou une surchauffe (lance le diagnostic, ligne « extinctions brutales »)."
+        $ds = Get-CrashDumpState
+        if ($ds.Verdict -eq 'off') {
+            Add-TaskError -Title "Windows ne garde aucun rapport d'écran bleu" -Cause "Le réglage « Écriture des informations de débogage » est sur Aucun : si un écran bleu arrive, le pilote fautif ne pourra pas être lu." -Effect "Un écran bleu resterait sans explication." `
+                -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAnnulable dans l'historique."
+        } elseif ($ds.Verdict -eq 'nopagefile') { Log "   • Le fichier d'échange de Windows est désactivé : si un écran bleu arrive, aucun rapport ne pourra s'écrire." }
+        else { Log "   ✔ Windows est bien réglé pour garder un rapport au prochain écran bleu" }
+        return
+    }
+    Log ("   Verdict : {0}" -f $v.Cause)
+    $n = 0; foreach ($st in @($v.Steps)) { $n++; Log ("   {0}. {1}" -f $n, $st) }
+    $title = "$($v.Count) écran(s) bleu(s) en 90 jours" + $(if ($v.Detail -and $v.Detail -ne 'Code') { " · $($v.Detail)" } else { '' })
+    if ($v.Ui) { Add-TaskError -Title $title -Code $v.Code -Cause $v.Cause -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -Steps $v.Steps }
+    else {
+        Add-TaskError -Title $title -Code $v.Code -Cause $v.Cause -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -Steps $v.Steps `
+            -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nContinuer ?"
+    }
+    if ($v.NoDump -eq 'off') {
+        Add-TaskError -Title "Windows ne garde aucun rapport d'écran bleu" -Cause "Le réglage « Écriture des informations de débogage » est sur Aucun : impossible de lire quel pilote est fautif." -Effect "Au prochain écran bleu, seul le code sera connu." `
+            -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAnnulable dans l'historique."
+    }
 }
 
 # Programmes qui font partie de Windows : ils ne se « mettent pas à jour » comme un logiciel
@@ -3464,67 +3842,24 @@ function Test-StorageResets {
 }
 function Test-Stability {
     $since = Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)
-    $bsod = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since } -ErrorAction SilentlyContinue)
-    if ($bsod.Count -gt 0) {
-        $codes = foreach ($e in $bsod) {
-            $txt = (($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + ' ' + $e.Message
-            if ($txt -match '0x([0-9a-fA-F]{1,8})') { '0x' + $matches[1].PadLeft(8, '0').ToUpper() }
-        }
-        $main = $codes | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
-        $info = if ($main -and $script:BugChecks.ContainsKey($main.Name)) { $script:BugChecks[$main.Name] } else { @('Erreur système', "Un pilote ou un composant matériel a provoqué un arrêt brutal de Windows.", 'drv') }
-        $codeTxt = if ($main) { "{0} ({1})" -f $info[0], $main.Name } else { '' }
-        # Les rapports de plantage : quel pilote était en cause à chaque écran bleu
-        $an = Get-BsodAnalysis $since
-        foreach ($d in $an.Dumps) {
-            $nm = if ($script:BugChecks.ContainsKey($d.Code)) { $script:BugChecks[$d.Code][0] } else { 'code' }
-            Log ("   • Écran bleu du {0} : {1} ({2}){3}" -f $d.Date.ToString('dd/MM/yyyy HH:mm'), $nm, $d.Code, $(if ($d.Culprit) { " → pilote en cause : $($d.Culprit.Name)" + $(if ($d.Culprit.Company) { " ($($d.Culprit.Company))" } else { '' }) } elseif ($d.Readable) { " → seulement Windows sur la pile ($($d.Stack))" } else { " → rapport illisible" }))
-        }
-        if (-not $an.Dumps.Count) { Log "   • Aucun rapport d'écran bleu gardé par Windows (C:\Windows\Minidump vide) : le coupable ne peut pas être lu, seulement le code." }
-        $top = $an.Top; $detail = 'Code'; $fixL = "Réparer les fichiers Windows"; $fixA = 'Repair-System'; $ui = ''
-        $cause = $info[1]
-        $steps = switch ($info[2]) {
-            'hw'  { @("Si tu as overclocké le PC ou activé XMP / EXPO dans le BIOS, remets les réglages par défaut.", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Vérifie que le PC ne chauffe pas (poussière, ventilateurs).", "Mets à jour Windows et tes pilotes (onglet Mises à jour).") }
-            'gpu' { @("Mets à jour le pilote de la carte graphique avec l'outil officiel (onglet Mises à jour > Pilotes).", "Si tu as overclocké la carte graphique, remets-la par défaut.", "Vérifie que la carte graphique ne chauffe pas (poussière, ventilateurs).") }
-            default { @("Mets à jour le pilote de la carte graphique et du Wi-Fi / réseau (onglet Mises à jour > Pilotes).", "Installe toutes les mises à jour Windows.", "Si les écrans bleus continuent, désinstalle le dernier logiciel ou pilote installé avant qu'ils commencent.") }
-        }
-        if ($top) {
-            $extra = (@($top.Desc, $top.Company) | Where-Object { $_ }) -join ', '
-            $who = "« $($top.Name) »" + $(if ($extra) { " ($extra)" } else { '' })
-            $detail = "Pilote en cause : $($top.Name)"
-            $cause = "Les rapports de plantage de Windows désignent $who dans $($an.TopCount) écran(s) bleu(s) sur $(@($an.Dumps).Count) analysé(s). "
-            switch ($top.Kind) {
-                'gpu' { $cause += "C'est le pilote de la carte graphique."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si ça continue : réinstalle-le proprement (option « installation propre / réinitialiser » de l'installateur NVIDIA ou AMD).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.") }
-                'network' { $cause += "C'est un pilote réseau (carte réseau ou Wi-Fi)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote réseau / Wi-Fi depuis le site du fabricant de ta carte mère ou de ton PC (pas seulement Windows Update).", "Si c'est une carte Killer ou Realtek : désinstalle son logiciel d'« optimisation » réseau s'il y en a un.") }
-                'anticheat' { $cause += "C'est l'anti-triche d'un jeu."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Mets à jour le jeu qui l'utilise (ou réinstalle-le) : l'anti-triche se met à jour avec lui.", "Si tu n'y joues plus, désinstalle le jeu : son anti-triche part avec.") }
-                'antivirus' { $cause += "C'est un antivirus en plus de celui de Windows."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Désinstalle cet antivirus : Windows Defender protège déjà très bien le PC, et deux antivirus se gênent.", "Si tu veux le garder, mets-le à jour depuis son propre menu.") }
-                'storage' { $cause += "C'est un pilote du disque (stockage)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe les pilotes « chipset » et « stockage » du site du fabricant de ta carte mère.", "Mets à jour le firmware de ton SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Sauvegarde tes fichiers importants en attendant.") }
-                'usb' { $cause += "C'est un pilote USB (un appareil branché en USB)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.") }
-                'audio' { $cause += "C'est un pilote audio."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote audio du site du fabricant de ta carte mère ou de ton PC.", "Désinstalle les logiciels d'« effets sonores » en plus (Nahimic, Sonic Studio…) si tu ne t'en sers pas.") }
-                default { $cause += "Il a été installé par $(if ($top.Company) { $top.Company } else { 'un logiciel' })."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Mets à jour ou désinstalle le logiciel de $(if ($top.Company) { $top.Company } else { 'ce pilote' }).", "Si les écrans bleus ont commencé juste après l'avoir installé, désinstalle-le.") }
-            }
-        } elseif (@($an.Dumps | Where-Object { $_.Readable }).Count) {
-            $cause = "Les rapports de plantage ne montrent que Windows lui-même, aucun pilote en particulier : c'est le signe classique d'un souci de mémoire vive (RAM), d'un réglage trop poussé (XMP/EXPO, overclocking) ou de fichiers de Windows abîmés."
-            $steps = @("Lance « Réparer les fichiers Windows » (bouton vert).", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Si XMP / EXPO est activé dans le BIOS, essaie sans pendant quelques jours.")
-        }
-        # Indices matériels en plus (faits relevés par Windows, pas des suppositions)
-        if ($an.Whea -gt 0) { $cause += " Windows a aussi noté $($an.Whea) erreur(s) matérielle(s) (WHEA) : le processeur, la RAM ou la carte mère signalent eux-mêmes un problème."; $steps = @($steps) + "Erreurs matérielles : enlève tout overclocking, mets à jour le BIOS et vérifie les températures." }
-        if ($an.Xmp -and ($an.Whea -gt 0 -or $info[2] -eq 'hw' -or -not $top)) { $cause += " La mémoire tourne en profil XMP/EXPO ($($an.Xmp)) : souvent stable, mais c'est un overclocking, à désactiver pour tester." }
-        if ($ui) {
-            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
-                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -FixLabel $fixL -UiFix $ui -Steps $steps
+    $v = Get-BsodVerdict $since
+    foreach ($l in $v.Lines) { Log $l }
+    if ($v.Count -gt 0) {
+        if ($v.Ui) {
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($v.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $v.Detail -Code $v.Code -Cause $v.Cause `
+                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -FixLabel $v.FixL -UiFix $v.Ui -Steps $v.Steps
         } else {
-            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($v.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $v.Detail -Code $v.Code -Cause $v.Cause `
                 -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." `
                 -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nElle corrige les fichiers système abîmés ; pour les pilotes, suis aussi les étapes « Voir comment faire »." `
-                -Steps $steps
+                -Steps $v.Steps
+        }
+        if ($v.NoDump -eq 'off') {
+            Add-Issue -Id 'nodump' -Sev 'warn' -Title "Windows ne garde aucun rapport d'écran bleu" -Detail "Réglage « Écriture des informations de débogage » sur Aucun" `
+                -Cause "Windows est réglé pour ne rien noter quand il plante : impossible de lire quel pilote est fautif. Ce réglage est parfois coupé par un logiciel d'« optimisation »." `
+                -Effect "Au prochain écran bleu, seul le code sera connu, pas le coupable." -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' `
+                -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAu prochain écran bleu, AEROX pourra lire le pilote fautif. Annulable dans l'historique." `
+                -Steps @("Clique sur « Réactiver les rapports ».", "Au prochain écran bleu, relance le diagnostic : le pilote fautif sera nommé.")
         }
     } else { Add-Ok "Aucun écran bleu ces 30 derniers jours" }
 
@@ -5566,7 +5901,9 @@ function Get-TempOnlyDirs {
     return $d
 }
 function Get-ErrorDirs {
-    $d = @("$env:SystemRoot\Minidump", "$env:SystemRoot\LiveKernelReports", "$env:SystemRoot\MEMORY.DMP",
+    # Les rapports d'écrans bleus des 30 derniers jours sont gardés : ce sont eux qui nomment le pilote fautif
+    $d = @(Get-ChildItem -LiteralPath "$env:SystemRoot\Minidump" -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | ForEach-Object { $_.FullName })
+    $d += @("$env:SystemRoot\LiveKernelReports", "$env:SystemRoot\MEMORY.DMP",
            "$env:ProgramData\Microsoft\Windows\WER\ReportArchive", "$env:ProgramData\Microsoft\Windows\WER\ReportQueue")
     foreach ($p in Get-UserProfiles) { $d += (Join-Path $p 'AppData\Local\CrashDumps') }
     return $d
@@ -5575,7 +5912,7 @@ $script:DoPath = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\M
 $script:WinOldPaths = @("$env:SystemDrive\Windows.old", "$env:SystemDrive\`$Windows.~BT", "$env:SystemDrive\`$Windows.~WS")
 $script:CleanMgrSafe = @('Active Setup Temp Folders', 'BranchCache', 'D3D Shader Cache', 'Delivery Optimization Files', 'Device Driver Packages', 'Diagnostic Data Viewer database files',
     'Downloaded Program Files', 'Feedback Hub Archive log files', 'Internet Cache Files', 'Old ChkDsk Files', 'RetailDemo Offline Content', 'Setup Log Files',
-    'System error memory dump files', 'System error minidump files', 'Temporary Files', 'Temporary Setup Files', 'Thumbnail Cache', 'Update Cleanup',
+    'System error memory dump files', 'Temporary Files', 'Temporary Setup Files', 'Thumbnail Cache', 'Update Cleanup',
     'Upgrade Discarded Files', 'Windows Defender', 'Windows Error Reporting Files', 'Windows Upgrade Log Files')
 
 function Get-CleanupAnalysis {
@@ -5600,7 +5937,7 @@ function Get-CleanupAnalysis {
     & $add @{ Id = 'wupdate'; Name = 'Fichiers de mises à jour Windows'; Default = $true; Size = (Get-PathsSize @("$env:SystemRoot\SoftwareDistribution\Download", $script:DoPath))
               Desc = "Mises à jour déjà installées et cache d'optimisation de distribution. Windows les retélécharge si besoin." }
     & $add @{ Id = 'errors'; Name = "Rapports d'erreurs et de plantages"; Default = $true; Size = (Get-PathsSize (Get-ErrorDirs))
-              Desc = "Fichiers créés quand un logiciel ou Windows plante (écrans bleus compris). Inutiles une fois le problème réglé." }
+              Desc = "Fichiers créés quand un logiciel ou Windows plante. Les rapports d'écrans bleus de moins de 30 jours sont gardés : ils servent à trouver le pilote fautif." }
     & $add @{ Id = 'windows'; Name = 'Nettoyage de disque Windows'; Default = $true; Size = -1
               Desc = "L'outil officiel de Windows : journaux d'installation, anciens pilotes, fichiers de mise à niveau, cache Defender, etc. Peut prendre plusieurs minutes." }
     & $add @{ Id = 'components'; Name = 'Anciens composants Windows'; Default = $true; Size = -1

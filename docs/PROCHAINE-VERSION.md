@@ -2,7 +2,20 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.4.0 : pile de la carte mère (validé par Sam le 10/11)
+## Prêt pour 3.4.0 : écrans bleus expliqués, pile de la carte mère (validé par Sam le 10/11)
+
+### Écrans bleus (« principale chose des testeurs, aucune idée de pourquoi »)
+
+- Cause trouvée : le nettoyage (case « Rapports d'erreurs et de plantages », cochée par défaut, et le Nettoyage de disque de Windows) effaçait `C:\Windows\Minidump`, donc le diagnostic lancé après n'avait plus que le code.
+- Le nettoyage garde les rapports d'écrans bleus de moins de 30 jours ; ce qu'AEROX y lit est noté dans `ecrans-bleus.txt` (dossier des journaux, 180 jours) et relu si un autre nettoyeur efface les fichiers.
+- Écran bleu sans rapport : code lu dans l'événement 41 du redémarrage (`BugcheckCode`), compté une seule fois avec le rapport de Windows du même redémarrage.
+- 60 codes expliqués (14 avant), rangés par famille (pilote, RAM, disque, processeur, carte graphique, USB, Windows), variantes `0x1000007E` reconnues, détail du premier paramètre pour 0x124 et 0x9F. Arrêts forcés à la main (0xE2, 0x1C8) non comptés comme des pannes.
+- Contexte de chaque écran bleu lu dans l'en-tête du rapport (`[AeroxDump]::Head` : heure du plantage, durée depuis le démarrage) : juste après le démarrage, à la sortie de veille, pendant la mise en veille, en pleine utilisation. Dit dans la cause seulement si au moins 2 rapports concordent.
+- Début de la série (premier écran bleu après 14 jours sans, sur 90 jours d'historique) et ce qui a été installé dans les 3 jours d'avant : mises à jour Windows (événement 19), pilotes (`oem*.inf`), logiciels. Pilote graphique changé juste avant + code ou coupable graphique : étape « Restaurer le pilote » en premier.
+- Rapports désactivés dans Windows (`CrashDumpEnabled = 0`) : alerte « Windows ne garde aucun rapport d'écran bleu » avec réactivation annulable (`Set-CrashDumpMode 7`) ; fichier d'échange désactivé : expliqué.
+- Nouvelle carte « Écran bleu » (Réparation > Dépannage rapide) : rapport complet sur 90 jours (`Get-BsodReport`).
+
+### Pile de la carte mère
 
 - Idée née du pote de Jazon : LDLC a annoncé « Windows corrompu + BIOS pas à jour + pile CM HS » pour 500 €.
 - `Test-RtcBattery` : au démarrage (Kernel-General 12), l'horloge indique une date plus ancienne d'au moins un jour que le dernier événement noté avant (lu dans l'ordre d'écriture, pas par date). Remise à l'heure par Windows lue pour le détail (Kernel-General 1). Alerte à partir de 2 fois en 180 jours, une seule fois seulement notée dans le journal. « C'est fait » après le changement de pile : seuls les nouveaux cas comptent.
