@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.3.0 : dépannages élargis (plan validé par Sam le 09/11 après relecture complète du code)
+## Publié en 3.3.0 : dépannages élargis (plan validé par Sam le 09/11 après relecture complète du code)
 
 - Priorité 1 :
   - « Ça rame » : mémoire réservée / limite et pages relues du disque (`Test-MemoryOverflow`), manques de mémoire des 24 h (événement 2004), mesure longue de 2 minutes (`-Samples 40`).
