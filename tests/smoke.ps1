@@ -129,6 +129,209 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : vitesse des disques, sauvegarde, boîte noire, récupération
+    Smoke 'Vitesse des disques : règles et mesure réelle' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'NVMe' (Get-DiskKindName 'SSD' 'NVMe') 'nvme'
+        Is 'SSD SATA' (Get-DiskKindName 'SSD' 'SATA') 'ssd'
+        Is 'disque dur' (Get-DiskKindName 'HDD' 'SATA') 'hdd'
+        Is 'clé USB : pas de référence' (Get-DiskKindName 'SSD' 'USB') ''
+        Is 'disque virtuel' (Get-DiskKindName 'Unspecified' 'File Backed Virtual') ''
+        Is 'type inconnu' (Get-DiskKindName 'Unspecified' 'SATA') ''
+        Is 'NVMe normal' (Get-DiskSpeedVerdict 'nvme' 3200 2800 55).Level 'ok'
+        Is 'NVMe au ralenti' (Get-DiskSpeedVerdict 'nvme' 180 900 40).Level 'warn'
+        Is 'SSD SATA normal' (Get-DiskSpeedVerdict 'ssd' 520 480 30).Level 'ok'
+        Is 'SSD petits fichiers lents' (Get-DiskSpeedVerdict 'ssd' 500 450 3).Level 'warn'
+        Is 'disque dur normal (petits fichiers lents : normal)' (Get-DiskSpeedVerdict 'hdd' 140 130 0.8).Level 'ok'
+        Is 'disque dur mourant' (Get-DiskSpeedVerdict 'hdd' 22 18 0.3).Level 'warn'
+        Is 'type inconnu : jamais de verdict' (Get-DiskSpeedVerdict '' 5 5 0.1).Level 'info'
+        $m = ConvertFrom-BenchResult '512.4|1830.9|41.25'
+        Is 'résultat lu' "$($m.Write)|$($m.Read)|$($m.Rand)" '512.4|1830.9|41.25'
+        Is 'erreur' ((ConvertFrom-BenchResult 'ERR:5') -eq $null) $true
+        $sync.Errors.Clear(); $sync.DiskSpeed = $null
+        Test-DiskSpeed
+        $r = @($sync.DiskSpeed)
+        if (-not $r.Count) { throw "aucune mesure" }
+        foreach ($x in $r) { Write-Host ("        {0}: lecture {1:N0} Mo/s, écriture {2:N0} Mo/s, 4 Ko {3:N1} Mo/s ({4})" -f $x.Letter, $x.Read, $x.Write, $x.Rand, $(if ($x.Kind) { $x.Kind } else { 'type sans référence' })); if ($x.Read -le 0 -or $x.Write -le 0 -or $x.Rand -le 0) { throw "mesure nulle" } }
+        foreach ($l in @($r | ForEach-Object { $_.Letter })) { if (Test-Path -LiteralPath "${l}:\aerox-test-vitesse.tmp") { throw "fichier de test pas supprimé sur ${l}:" } }
+        $sync.Errors.Clear(); $sync.Progress = 0
+    }
+    Smoke 'Sauvegarde : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'disque externe' (Test-BackupTarget 'Removable' 'exFAT' 2 0 $false) $true
+        Is 'deuxième disque interne' (Test-BackupTarget 'Fixed' 'NTFS' 1 0 $false) $true
+        Is 'même disque que Windows (autre partition)' (Test-BackupTarget 'Fixed' 'NTFS' 0 0 $false) $false
+        Is 'protégé en écriture' (Test-BackupTarget 'Removable' 'FAT32' 2 0 $true) $false
+        Is 'illisible' (Test-BackupTarget 'Removable' 'RAW' 2 0 $false) $false
+        Is 'lecteur réseau' (Test-BackupTarget 'Network' 'NTFS' 2 0 $false) $false
+        Is 'disque inconnu' (Test-BackupTarget 'Fixed' 'NTFS' $null 0 $false) $false
+        Is 'robocopy 0' (Get-RobocopyVerdict 0) 'ok'; Is 'robocopy 1 (copié)' (Get-RobocopyVerdict 1) 'ok'; Is 'robocopy 3' (Get-RobocopyVerdict 3) 'ok'
+        Is 'robocopy 8 (échecs)' (Get-RobocopyVerdict 8) 'partial'; Is 'robocopy 9' (Get-RobocopyVerdict 9) 'partial'
+        Is 'robocopy 16 (grave)' (Get-RobocopyVerdict 16) 'fatal'; Is 'arrêté' (Get-RobocopyVerdict -1) 'fatal'
+        Is 'fichier en ligne seulement' (Test-CloudOnly 0x1020) $true
+        Is 'fichier à la demande' (Test-CloudOnly 0x400020) $true
+        Is 'fichier normal' (Test-CloudOnly 0x20) $false
+    }
+    Smoke 'Sauvegarde : copie réelle vers un autre disque, vérifiée' {
+        $vhd = 'C:\aerox\test-sauvegarde.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        $desk = Get-SessionFolder 'Desktop'
+        if (-not $desk -or -not (Test-Path -LiteralPath $desk)) { throw "Bureau introuvable" }
+        $mine = Join-Path $desk 'aerox-test-sauvegarde'
+        try {
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk2.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            Initialize-EmptyDisk $n "$((Get-Disk -Number $n).UniqueId)"
+            $letter = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            [void](New-Item -ItemType Directory -Path (Join-Path $mine 'Sous-dossier été') -Force)
+            [IO.File]::WriteAllText((Join-Path $mine 'note.txt'), 'bonjour')
+            [IO.File]::WriteAllBytes((Join-Path $mine 'Sous-dossier été\photo à garder.jpg'), (New-Object byte[] 300000))
+            [IO.File]::WriteAllBytes((Join-Path $mine 'gros.bin'), (New-Object byte[] 3MB))
+            $sync.Errors.Clear(); $sync.BackupPlan = $null
+            Get-BackupPlan
+            if (-not $sync.BackupPlan -or -not @($sync.BackupPlan.Targets | Where-Object { $_.Letter -eq $letter }).Count) { throw "le deuxième disque n'est pas proposé" }
+            if (@($sync.BackupPlan.Targets | Where-Object { $_.Letter -eq $env:SystemDrive.Substring(0, 1) }).Count) { throw "le disque de Windows est proposé comme destination" }
+            $refused = $false; try { Start-UserBackup @($desk) ($env:SystemDrive.Substring(0, 1)) } catch { $refused = $true }
+            if (-not $refused) { throw "sauvegarde acceptée sur le disque de Windows" }
+            $sync.BackupDone = $null
+            Start-UserBackup @('C:\Windows\System32', $desk) $letter
+            $b = $sync.BackupDone
+            if (-not $b -or -not $b.Ok) { throw "sauvegarde pas terminée : $(@($sync.Errors | ForEach-Object { $_.Title }) -join ' | ')" }
+            Write-Host ("        {0} fichier(s), {1}, dans {2}" -f $b.Files, (Format-Size $b.Bytes), $b.Root)
+            foreach ($rel in 'Bureau\aerox-test-sauvegarde\note.txt', 'Bureau\aerox-test-sauvegarde\Sous-dossier été\photo à garder.jpg', 'Bureau\aerox-test-sauvegarde\gros.bin') { if (-not (Test-Path -LiteralPath (Join-Path $b.Root $rel))) { throw "fichier manquant dans la sauvegarde : $rel" } }
+            if ((Get-Item -LiteralPath (Join-Path $b.Root 'Bureau\aerox-test-sauvegarde\gros.bin')).Length -ne 3MB) { throw "taille différente à l'arrivée" }
+            if (Test-Path -LiteralPath (Join-Path $b.Root 'System32')) { throw "un dossier hors liste a été copié" }
+            foreach ($f in 'note.txt', 'gros.bin') { if (-not (Test-Path -LiteralPath (Join-Path $mine $f))) { throw "LA SOURCE A ÉTÉ MODIFIÉE" } }
+        } finally {
+            Remove-Item -LiteralPath $mine -Recurse -Force -ErrorAction SilentlyContinue
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
+    }
+    Smoke 'Fenêtres : sauvegarde' {
+        $sync.BackupPlan = @{ Pc = 'PC-TEST'; Folders = @(@{ Name = 'Bureau'; Path = 'C:\Users\x\Desktop'; Files = 42; Bytes = 1.2GB; Cloud = 0; Max = 1GB }, @{ Name = 'Documents'; Path = 'C:\Users\x\Documents'; Files = 3100; Bytes = 18GB; Cloud = 250; Max = 2GB }, @{ Name = 'Musique'; Path = 'C:\Users\x\Music'; Files = 0; Bytes = 0; Cloud = 0; Max = 0 });
+                              Targets = @(@{ Letter = 'D'; Label = 'Données'; Free = 400GB; Size = 931GB; Fs = 'NTFS'; External = $false }, @{ Letter = 'F'; Label = 'Disque externe'; Free = 12GB; Size = 465GB; Fs = 'exFAT'; External = $true }) }
+        Show-BackupDialog
+        $sync.BackupPlan = @{ Pc = 'PC-TEST'; Folders = @(@{ Name = 'Bureau'; Path = 'C:\Users\x\Desktop'; Files = 42; Bytes = 1.2GB; Cloud = 0; Max = 1GB }); Targets = @() }
+        Show-BackupDialog
+        $sync.BackupPlan = $null
+    }
+    Smoke 'Boîte noire : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $t = (Get-Date).AddHours(-3)
+        $l = Format-BlackBoxLine $t 37.4 91 99 74.6 62 'GTA V | Online'
+        $r = ConvertFrom-BlackBoxLine $l
+        Is 'ligne relue' "$($r.Cpu)|$($r.CpuT)|$($r.Gpu)|$($r.GpuT)|$($r.Ram)|$($r.Game)|$($r.Stop)|$($r.Time -eq $t)" '37|91|99|75|62|GTA V   Online|False|True'
+        $r = ConvertFrom-BlackBoxLine (Format-BlackBoxLine $t 12 $null $null $null 40 '')
+        Is 'sans capteurs' "$($r.Cpu)|$($null -eq $r.CpuT)|$($null -eq $r.GpuT)|$($r.Ram)" '12|True|True|40'
+        Is 'arrêt normal' (ConvertFrom-BlackBoxLine ($t.ToString('o') + '|X')).Stop $true
+        Is 'ligne abîmée' ((ConvertFrom-BlackBoxLine 'xx|S|1') -eq $null) $true
+        function Row($sec, $cpuT = 70, $gpuT = 65) { return @{ Time = $t.AddSeconds($sec); Stop = $false; Cpu = 80; CpuT = $cpuT; Gpu = 95; GpuT = $gpuT; Ram = 60; Game = 'Jeu' } }
+        $rows = @(); for ($i = 0; $i -le 300; $i += 10) { $rows += (Row $i) }
+        $boot = $t.AddSeconds(400); $alive = $t.AddSeconds(290)
+        Is 'dernière minute retrouvée' (@(Get-BlackBoxBefore $rows $boot $alive 120).Count) 13
+        Is 'AEROX fermé avant la coupure' (@(Get-BlackBoxBefore ($rows + @(@{ Time = $t.AddSeconds(305); Stop = $true })) $boot $alive).Count) 0
+        Is 'AEROX arrêté bien avant le PC' (@(Get-BlackBoxBefore $rows $t.AddHours(2) $t.AddHours(1.9)).Count) 0
+        Is 'relevés après le redémarrage ignorés' (@(Get-BlackBoxBefore @((Row 500), (Row 510)) $boot $alive).Count) 0
+        Is 'rien' (@(Get-BlackBoxBefore @() $boot $alive).Count) 0
+        $s = Get-BlackBoxSummary (Get-BlackBoxBefore $rows $boot $alive)
+        Is 'températures normales' "$($s.Hot)|$($s.CpuT)|$($s.GpuT)|$($s.HasTemp)" 'False|70|65|True'
+        if ($s.Text -notmatch 'pas une surchauffe') { throw "phrase attendue absente : $($s.Text)" }
+        $hot = @((Row 0), (Row 10 97), (Row 20 99))
+        $s = Get-BlackBoxSummary $hot; Is 'surchauffe' "$($s.Hot)|$($s.CpuT)" 'True|99'
+        Is 'Ryzen prévu pour 95 °C' (Get-BlackBoxSummary @((Row 0 95), (Row 10 96)) $true).Hot $false
+        Is 'carte graphique à 92 °C' (Get-BlackBoxSummary @((Row 0 60 92), (Row 10 60 91))).Hot $true
+        $nt = @(@{ Time = $t; Stop = $false; Cpu = 20; CpuT = $null; Gpu = $null; GpuT = $null; Ram = 98; Game = '' }, @{ Time = $t.AddSeconds(10); Stop = $false; Cpu = 25; CpuT = $null; Gpu = $null; GpuT = $null; Ram = 99; Game = '' })
+        $s = Get-BlackBoxSummary $nt
+        Is 'sans températures : aucune conclusion sur la chaleur' "$($s.Hot)|$($s.HasTemp)|$($s.Text -match 'surchauffe')|$($s.Text -match 'mémoire était pleine')" 'False|False|False|True'
+        Is 'un seul relevé : rien' ((Get-BlackBoxSummary @((Row 0))) -eq $null) $true
+    }
+    Smoke 'Boîte noire : relevés écrits, arrêt noté, fichier limité' {
+        $p = Get-BlackBoxPath; $bak = $null; if (Test-Path -LiteralPath $p) { $bak = [IO.File]::ReadAllBytes($p) }
+        $keep = $script:Settings.BlackBox; $keepLast = $script:BbLast; $keepN = $script:BbCount
+        try {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            $script:Settings.BlackBox = $false; $script:BbLast = $null; Add-BlackBoxSample
+            if (Test-Path -LiteralPath $p) { throw "relevé écrit alors que la boîte noire est désactivée" }
+            $script:Settings.BlackBox = $true
+            Add-BlackBoxSample; Add-BlackBoxSample
+            if (@(Read-BlackBox).Count -ne 1) { throw "un seul relevé attendu en moins de 10 secondes, obtenu $(@(Read-BlackBox).Count)" }
+            $script:BbLast = (Get-Date).AddSeconds(-11); Start-Sleep -Milliseconds 300; Add-BlackBoxSample
+            $rows = @(Read-BlackBox)
+            if ($rows.Count -ne 2 -or $null -eq $rows[1].Ram -or $null -eq $rows[1].Cpu) { throw "deuxième relevé incomplet" }
+            Write-Host ("        relevé : processeur {0} %, mémoire {1} %" -f $rows[1].Cpu, $rows[1].Ram)
+            Stop-BlackBox
+            if (-not @(Read-BlackBox)[-1].Stop) { throw "arrêt normal pas noté" }
+            $old = 1..800 | ForEach-Object { Format-BlackBoxLine (Get-Date).AddSeconds(-10 * (900 - $_)) 10 $null $null $null 50 '' }
+            [IO.File]::WriteAllLines($p, [string[]]$old)
+            $script:BbCount = 359; $script:BbLast = $null; Add-BlackBoxSample
+            $n = @(Get-Content -LiteralPath $p).Count
+            if ($n -ne 360) { throw "fichier pas limité : $n lignes" }
+            if (Get-BlackBoxForCrash (Get-Date).AddDays(-400)) { throw "boîte noire associée à un arrêt qui n'existe pas" }
+        } finally {
+            $script:Settings.BlackBox = $keep; $script:BbLast = $keepLast; $script:BbCount = $keepN
+            if ($bak) { [IO.File]::WriteAllBytes($p, $bak) } else { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'Récupération : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'photos, recherche rapide' ((Get-WinfrArgs 'e' 'd' 'regular' 'photos') -join ' ').Substring(0, 30) 'E: D: /regular /a /n *.jpg /n '
+        Is 'tout, approfondie' ((Get-WinfrArgs 'E' 'C' 'extensive' 'all') -join ' ') 'E: C: /extensive /a'
+        foreach ($bad in @(@('E', 'E', 'regular', 'photos'), @('E:', 'D', 'regular', 'photos'), @('E', 'D', 'format', 'photos'), @('E', 'D', 'regular', 'tout /x'), @('E & calc', 'D', 'regular', 'photos'))) {
+            $refused = $false; try { $null = Get-WinfrArgs $bad[0] $bad[1] $bad[2] $bad[3] } catch { $refused = $true }
+            if (-not $refused) { throw "arguments acceptés : $($bad -join ' ')" }
+        }
+        Is 'NTFS effacé récemment' (Get-RecoveryMode 'NTFS' $true) 'regular'
+        Is 'NTFS effacé il y a longtemps' (Get-RecoveryMode 'NTFS' $false) 'extensive'
+        Is 'clé FAT32' (Get-RecoveryMode 'FAT32' $true) 'extensive'
+        Is 'disque illisible' (Get-RecoveryMode '' $true) 'extensive'
+        $sync.RecoverPlan = $null; Get-RecoveryPlan
+        if (-not $sync.RecoverPlan -or -not @($sync.RecoverPlan.Sources).Count) { throw "aucun disque listé" }
+        $refused = $false; try { Start-FileRecovery ($env:SystemDrive.Substring(0, 1)) ($env:SystemDrive.Substring(0, 1)) 'photos' 'regular' } catch { $refused = $true }
+        if (-not $refused) { throw "récupération acceptée vers le disque fouillé" }
+    }
+    Smoke 'Récupération : essai réel avec l outil de Microsoft (si le Store répond sur ce serveur)' {
+        $vhd = 'C:\aerox\test-recup.vhd'
+        try {
+            $tool = Get-Winfr
+            if (-not $tool) { $sync.Errors.Clear(); $ok = Install-Winfr; $tool = Get-Winfr; Write-Host ("        installation depuis le Store : {0}" -f $(if ($tool) { 'réussie' } else { 'impossible sur ce serveur' })) }
+            if (-not $tool) { $sync.Errors.Clear(); return }
+            Write-Host "        outil : $tool"
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk3.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            Initialize-EmptyDisk $n "$((Get-Disk -Number $n).UniqueId)"
+            $letter = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            $rnd = New-Object Random 5
+            foreach ($i in 1..6) { $b = New-Object byte[] 400000; $rnd.NextBytes($b); $b[0] = 0xFF; $b[1] = 0xD8; $b[2] = 0xFF; $b[3] = 0xE0; $b[399998] = 0xFF; $b[399999] = 0xD9; [IO.File]::WriteAllBytes("${letter}:\vacances $i.jpg", $b) }
+            Start-Sleep -Seconds 2
+            Remove-Item -Path "${letter}:\vacances *.jpg" -Force
+            $sync.Errors.Clear(); $sync.RecoverDone = $null
+            Start-FileRecovery $letter ($env:SystemDrive.Substring(0, 1)) 'photos' 'regular'
+            $d = $sync.RecoverDone
+            Write-Host ("        6 photos effacées, {0} retrouvée(s){1}" -f $(if ($d) { $d.Files } else { '?' }), $(if ($d -and $d.Folder) { " dans $($d.Folder)" } else { '' }))
+            foreach ($e in @($sync.Errors)) { Write-Host ("        message : {0} | {1}" -f $e.Title, $e.Cause) }
+            if ($d -and $d.Folder -and $d.Folder -like "$($env:SystemDrive)\Recovery_*") { Remove-Item -LiteralPath $d.Folder -Recurse -Force -ErrorAction SilentlyContinue }
+        } finally {
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
+    }
+    Smoke 'Fenêtres : récupération' {
+        $sync.RecoverPlan = @{ Tool = $false; Sources = @(@{ Letter = 'C'; Label = 'Windows'; Fs = 'NTFS'; Size = 931GB; External = $false; Name = 'Samsung SSD 980' }, @{ Letter = 'E'; Label = ''; Fs = ''; Size = 29GB; External = $true; Name = 'SanDisk Ultra' });
+                               Targets = @(@{ Letter = 'C'; Label = 'Windows'; Free = 210GB; External = $false }) }
+        Show-RecoverDialog
+        $sync.RecoverPlan = @{ Tool = $true; Sources = @(@{ Letter = 'C'; Label = 'Windows'; Fs = 'NTFS'; Size = 931GB; External = $false; Name = '' }); Targets = @(@{ Letter = 'C'; Label = 'Windows'; Free = 210GB; External = $false }) }
+        Show-RecoverDialog
+        $sync.RecoverPlan = $null
+    }
     # ---------------- 3.4.0 : tests du matériel (stabilité, mémoire) et disques externes
     Smoke 'Test de stabilité : règles du verdict' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }

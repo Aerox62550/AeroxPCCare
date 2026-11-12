@@ -3683,6 +3683,8 @@ function Get-BsodVerdict([datetime]$Since) {
                 default { [void]$res.Lines.Add("   • Aucun rapport d'écran bleu dans C:\Windows\Minidump (effacé par un nettoyage, ou pas écrit) : le coupable ne peut pas être lu, seulement le code."); $cause += " Les rapports de plantage ne sont plus là (effacés par un nettoyage, ou jamais écrits) : seul le code est connu. AEROX garde maintenant ceux des 30 derniers jours : au prochain écran bleu, relance le diagnostic, le pilote fautif sera nommé." }
             }
         }
+        $bb = Get-BlackBoxForCrash $res.Last
+        if ($bb) { $cause += " " + $bb.Text; [void]$res.Lines.Add("   • " + $bb.Text) }
     $res.Detail = $detail; $res.Cause = $cause; $res.Steps = @($steps); $res.FixL = $fixL; $res.Ui = $ui
     return $res
 }
@@ -3878,6 +3880,9 @@ function Test-Stability {
         $cutDays = @($kp | Group-Object { $_.TimeCreated.ToString('yyyy-MM-dd') }).Count
         if ($cut -ge 3 -and $cutDays -ge 3 -and -not $btn) { $cause += " Ça arrive presque à chaque utilisation ($cutDays jours différents) : le PC est très probablement coupé au courant (multiprise, prise débranchée) sans avoir été éteint avant. C'est ce qui abîme les fichiers de démarrage de Windows."; $steps += "Avant de débrancher le PC ou d'éteindre la multiprise : Démarrer > Arrêter, puis attends que tout soit éteint." }
         if ($cut) { $cause += " Une coupure nette sans bouton, c'est le courant (multiprise, coupure), l'alimentation du PC qui flanche sous la charge, ou une surchauffe."; $steps += "Si ça arrive surtout en jeu : poussière, ventilateurs, et l'alimentation du PC (bloc d'alim) peut être trop faible ou fatiguée."; $steps += "Branche le PC directement au mur (sans multiprise douteuse) pour éliminer le courant." }
+        # Boîte noire : ce que faisait le PC juste avant la dernière coupure (si AEROX tournait à ce moment-là)
+        $bb = Get-BlackBoxForCrash (@($kp | Sort-Object TimeCreated)[-1].TimeCreated)
+        if ($bb) { $cause += " " + $bb.Text; Log ("   • " + $bb.Text) }
         Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" -Cause $cause `
             -Effect "Risque de fichiers abîmés et de perte de travail." -Steps $steps
     }
@@ -7028,6 +7033,387 @@ function Reset-WindowsUpdate {
     } else { Log "✅ Windows Update remis à zéro." }
 }
 
+# ---------------------------------------------------------------- Vitesse des disques
+# Type du disque derrière une lettre : nvme | ssd | hdd | '' (USB, virtuel, RAID : pas de valeur attendue fiable)
+function Get-DiskKindName([string]$MediaType, [string]$BusType) {
+    if ("$BusType" -match '(?i)^(USB|SD|MMC|File Backed Virtual|Virtual|iSCSI|RAID|Storage Spaces|Spaces)$') { return '' }
+    if ("$BusType" -match '(?i)^NVMe$') { return 'nvme' }
+    if ("$MediaType" -match '(?i)^SSD$') { return 'ssd' }
+    if ("$MediaType" -match '(?i)^HDD$') { return 'hdd' }
+    return ''
+}
+# Verdict d'une mesure, avec des seuils volontairement bas : « lent » veut dire nettement sous ce que fait un disque
+# de ce type en bon état, pas « moins bien que le meilleur du marché ».
+function Get-DiskSpeedVerdict([string]$Kind, [double]$Read, [double]$Write, [double]$Rand) {
+    $lim = switch ($Kind) {
+        'nvme' { @{ R = 500; W = 250; Q = 10; Name = 'SSD NVMe'; Typ = "1 500 à 7 000 Mo/s en lecture" } }
+        'ssd'  { @{ R = 250; W = 150; Q = 10; Name = 'SSD SATA'; Typ = "450 à 550 Mo/s en lecture" } }
+        'hdd'  { @{ R = 50;  W = 40;  Q = 0;  Name = 'disque dur'; Typ = "80 à 200 Mo/s en lecture" } }
+        default { $null }
+    }
+    if (-not $lim) { return @{ Level = 'info'; Name = ''; Typ = ''; Slow = @() } }
+    $slow = @()
+    if ($Read -lt $lim.R) { $slow += "lecture à $([math]::Round($Read)) Mo/s" }
+    if ($Write -lt $lim.W) { $slow += "écriture à $([math]::Round($Write)) Mo/s" }
+    if ($lim.Q -gt 0 -and $Rand -lt $lim.Q) { $slow += ("petits fichiers à {0:N1} Mo/s" -f $Rand) }
+    return @{ Level = $(if ($slow.Count) { 'warn' } else { 'ok' }); Name = $lim.Name; Typ = $lim.Typ; Slow = $slow }
+}
+function ConvertFrom-BenchResult([string]$S) {
+    if (-not $S -or $S -like 'ERR:*') { return $null }
+    $q = @($S.Split('|')); if ($q.Count -lt 3) { return $null }
+    $ci = [Globalization.CultureInfo]::InvariantCulture
+    try { return @{ Write = [double]::Parse($q[0], $ci); Read = [double]::Parse($q[1], $ci); Rand = [double]::Parse($q[2], $ci) } } catch { return $null }
+}
+function Test-DiskSpeed {
+    Step "Vitesse des disques : écriture, lecture, petits fichiers"
+    $vols = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -eq 'Fixed' -and "$($_.FileSystem)" -match '^(NTFS|ReFS|exFAT|FAT32)$' } | Sort-Object DriveLetter | Select-Object -First 4)
+    if (-not $vols.Count) { Log "   • Aucun disque interne à mesurer."; return }
+    $pds = @(); try { $pds = @(Get-PhysicalDisk -ErrorAction Stop) } catch {}
+    $results = New-Object System.Collections.ArrayList
+    $i = 0
+    foreach ($v in $vols) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande."; break }
+        $i++; $l = "$($v.DriveLetter)".ToUpper()
+        $kind = ''; $name = ''
+        try { $dn = (Get-Partition -DriveLetter $l -ErrorAction Stop).DiskNumber; $pd = $pds | Where-Object { "$($_.DeviceId)" -eq "$dn" } | Select-Object -First 1; if ($pd) { $kind = Get-DiskKindName "$($pd.MediaType)" "$($pd.BusType)"; $name = "$($pd.FriendlyName)".Trim() } } catch {}
+        $free = [double]$v.SizeRemaining
+        $size = if ($free -ge 8GB) { 1024 } elseif ($free -ge 2GB) { 256 } else { 0 }
+        if (-not $size) { Log ("   • {0}: pas assez de place libre pour mesurer ({1} libres, il faut 2 Go)." -f $l, (Format-Size $free)); continue }
+        Log ("   {0}: {1}{2} : mesure avec un fichier de {3} (supprimé à la fin)…" -f $l, $(if ($name) { "$name " } else { '' }), $(switch ($kind) { 'nvme' { '(SSD NVMe)' } 'ssd' { '(SSD SATA)' } 'hdd' { '(disque dur)' } default { '' } }), (Format-Size ([double]$size * 1MB)))
+        $file = "${l}:\aerox-test-vitesse.tmp"
+        [AeroxDiskBench]::Cancel = $false
+        $best = $null; $err = ''
+        # Une mesure lente est refaite une fois (un autre programme écrivait peut-être) : on garde la meilleure
+        foreach ($try in 1, 2) {
+            $raw = [AeroxDiskBench]::Run($file, $size, 5)
+            $m = ConvertFrom-BenchResult $raw
+            if (-not $m) { $err = "$raw"; break }
+            if (-not $best) { $best = $m } else { foreach ($k in 'Write', 'Read', 'Rand') { if ($m[$k] -gt $best[$k]) { $best[$k] = $m[$k] } } }
+            if ((Get-DiskSpeedVerdict $kind $best.Read $best.Write $best.Rand).Level -ne 'warn' -or $sync.Cancel) { break }
+            if ($try -eq 1) { Log "     Résultat bas : deuxième mesure pour confirmer…" }
+        }
+        try { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } } catch {}
+        $sync.Progress = [int](100 * $i / $vols.Count)
+        if (-not $best) {
+            if ($err -ne 'ERR:cancel') { Log ("     • Mesure impossible sur {0}: ({1})." -f $l, $(if ($err) { $err } else { 'pas de réponse' })) }
+            continue
+        }
+        $vd = Get-DiskSpeedVerdict $kind $best.Read $best.Write $best.Rand
+        Log ("     Lecture {0:N0} Mo/s · Écriture {1:N0} Mo/s · Petits fichiers (4 Ko) {2:N1} Mo/s" -f $best.Read, $best.Write, $best.Rand)
+        [void]$results.Add(@{ Letter = $l; Kind = $kind; Name = $name; Read = $best.Read; Write = $best.Write; Rand = $best.Rand; Level = $vd.Level })
+        switch ($vd.Level) {
+            'ok'   { Log ("     ✔ Normal pour un {0} (en bon état : {1})." -f $vd.Name, $vd.Typ) }
+            'info' { Log "     • Disque d'un type particulier (USB, virtuel, RAID) : pas de valeur de référence fiable, les chiffres sont donnés pour information." }
+            default {
+                $pct = if ([double]$v.Size -gt 0) { [math]::Round(100 * (1 - $free / [double]$v.Size)) } else { 0 }
+                $cause = "Mesuré deux fois : $($vd.Slow -join ', '). Un $($vd.Name) en bon état fait $($vd.Typ)."
+                if ($kind -ne 'hdd' -and $pct -ge 90) { $cause += " Le disque est rempli à $pct % : un SSD presque plein devient très lent." }
+                Add-TaskError -Title ("Le disque {0}: est anormalement lent" -f $l) -Cause $cause -Effect "Windows, les jeux et les logiciels mettent longtemps à s'ouvrir et à charger." `
+                    -Steps @($(if ($kind -ne 'hdd' -and $pct -ge 85) { "Libère de la place : garde au moins 15 % du SSD libre (accueil > Libérer de la place)." } else { "Ferme les téléchargements et les installations en cours, puis refais la mesure." }),
+                             "Lance le diagnostic : il vérifie la santé du disque, sa température et, pour un NVMe, s'il est branché sur un emplacement bridé.",
+                             $(if ($kind -eq 'hdd') { "Un disque dur qui ralentit est souvent en fin de vie : sauvegarde tes fichiers (carte « Sauvegarder mes fichiers »)." } else { "Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…)." }))
+            }
+        }
+    }
+    $sync.DiskSpeed = $results.ToArray()
+}
+# ---------------------------------------------------------------- Sauvegarder mes fichiers
+$script:BackupFolders = @(@{ Key = 'Desktop'; Name = 'Bureau' }, @{ Key = 'Personal'; Name = 'Documents' }, @{ Key = 'My Pictures'; Name = 'Images' }, @{ Key = 'My Video'; Name = 'Vidéos' }, @{ Key = 'My Music'; Name = 'Musique' }, @{ Key = 'Downloads'; Name = 'Téléchargements' })
+# Fichiers « en ligne seulement » (OneDrive) : ils ne sont pas sur le disque, les copier forcerait à tout télécharger
+function Test-CloudOnly($Attributes) { return ((([int]$Attributes) -band 0x1000) -ne 0 -or (([int]$Attributes) -band 0x400000) -ne 0) }
+function Measure-BackupFolder([string]$Path) {
+    $r = @{ Files = 0; Bytes = [double]0; Cloud = 0; Max = [double]0 }
+    try {
+        $di = New-Object IO.DirectoryInfo $Path
+        $stack = New-Object System.Collections.Stack; $stack.Push($di)
+        while ($stack.Count) {
+            if ($sync.Cancel) { break }
+            $d = $stack.Pop()
+            try {
+                foreach ($f in $d.GetFiles()) { if (Test-CloudOnly $f.Attributes) { $r.Cloud++ } else { $r.Files++; $r.Bytes += $f.Length; if ($f.Length -gt $r.Max) { $r.Max = [double]$f.Length } } }
+                foreach ($s in $d.GetDirectories()) { if (-not ($s.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $stack.Push($s) } }
+            } catch {}
+        }
+    } catch {}
+    return $r
+}
+# Une sauvegarde sur le même disque que Windows ne protège de rien (panne du disque, réinstallation) : refusée
+function Test-BackupTarget([string]$DriveType, [string]$FileSystem, $DiskNumber, $SystemDiskNumber, [bool]$ReadOnly) {
+    if ($DriveType -notin 'Fixed', 'Removable') { return $false }
+    if (-not $FileSystem -or $FileSystem -match '(?i)^(RAW|Unknown|CDFS|UDF)$' -or $ReadOnly) { return $false }
+    if ($null -eq $DiskNumber -or $null -eq $SystemDiskNumber) { return $false }
+    return ([int]$DiskNumber -ne [int]$SystemDiskNumber)
+}
+function Get-BackupTargets {
+    $out = New-Object System.Collections.ArrayList
+    $sysDisk = $null; try { $sysDisk = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop).DiskNumber } catch {}
+    foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter } | Sort-Object DriveLetter)) {
+        $l = "$($v.DriveLetter)".ToUpper(); $dn = $null; $ro = $false; $bus = ''
+        try { $pt = Get-Partition -DriveLetter $l -ErrorAction Stop; $dn = $pt.DiskNumber; $ro = [bool]$pt.IsReadOnly; $dk = Get-Disk -Number $dn -ErrorAction Stop; $bus = "$($dk.BusType)"; if ($dk.IsReadOnly) { $ro = $true } } catch {}
+        if (-not (Test-BackupTarget "$($v.DriveType)" "$($v.FileSystem)" $dn $sysDisk $ro)) { continue }
+        [void]$out.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Free = [double]$v.SizeRemaining; Size = [double]$v.Size; Fs = "$($v.FileSystem)"; External = ($bus -match '(?i)^(USB|SD|MMC)$') })
+    }
+    return $out.ToArray()
+}
+function Get-BackupPlan {
+    Step "Sauvegarde : tes dossiers et où les copier"
+    $sync.BackupPlan = $null
+    $folders = New-Object System.Collections.ArrayList
+    foreach ($f in $script:BackupFolders) {
+        if ($sync.Cancel) { return }
+        $p = Get-SessionFolder $f.Key
+        if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
+        if (@($folders | Where-Object { $_.Path -eq $p }).Count) { continue }
+        $m = Measure-BackupFolder $p
+        Log ("   • {0} : {1} fichier(s), {2}{3}" -f $f.Name, $m.Files, (Format-Size $m.Bytes), $(if ($m.Cloud) { " (+ $($m.Cloud) en ligne seulement, déjà dans OneDrive)" } else { '' }))
+        [void]$folders.Add(@{ Name = $f.Name; Path = $p; Files = $m.Files; Bytes = $m.Bytes; Cloud = $m.Cloud; Max = $m.Max })
+    }
+    $targets = @(Get-BackupTargets)
+    foreach ($t in $targets) { Log ("   → Disque possible : {0}: {1} ({2} libres{3})" -f $t.Letter, $t.Label, (Format-Size $t.Free), $(if ($t.External) { ', externe' } else { '' })) }
+    if (-not $targets.Count) { Log "   • Aucun autre disque que celui de Windows n'est branché : branche un disque dur externe ou une clé USB." }
+    $sync.BackupPlan = @{ Folders = $folders.ToArray(); Targets = $targets; Pc = $env:COMPUTERNAME }
+}
+# Code de sortie de robocopy : un champ de bits. 8 = des fichiers n'ont pas pu être copiés, 16 = erreur grave.
+function Get-RobocopyVerdict([int]$Code) {
+    if ($Code -lt 0 -or ($Code -band 16)) { return 'fatal' }
+    if ($Code -band 8) { return 'partial' }
+    return 'ok'
+}
+function Invoke-Robocopy([string]$Source, [string]$Dest) {
+    $exe = Join-Path $env:SystemRoot 'System32\robocopy.exe'
+    # /E sous-dossiers · /XJ pas de jonctions (boucles) · /XA:O pas les fichiers « en ligne seulement » · /R:1 /W:1 un seul
+    # nouvel essai · /MT copie en parallèle · jamais /MIR ni /PURGE : rien n'est supprimé, ni à la source ni à la destination
+    $a = '"{0}" "{1}" /E /COPY:DAT /DCOPY:T /XJ /XA:O /R:1 /W:1 /MT:8 /NP /NFL /NDL /NJH /NJS' -f $Source.TrimEnd('\'), $Dest.TrimEnd('\')
+    $p = Start-Process -FilePath $exe -ArgumentList $a -WindowStyle Hidden -PassThru -ErrorAction Stop
+    while (-not $p.HasExited) {
+        if ($sync.Cancel) { try { $p.Kill() } catch {}; return -1 }
+        Start-Sleep -Milliseconds 400
+    }
+    return [int]$p.ExitCode
+}
+function Start-UserBackup([string[]]$Paths, [string]$Letter) {
+    Step "Sauvegarde de tes fichiers"
+    if ($Letter -notmatch '^[A-Za-z]$') { throw "disque de destination invalide" }
+    $Letter = $Letter.ToUpper()
+    $t = @(Get-BackupTargets | Where-Object { $_.Letter -eq $Letter })[0]
+    if (-not $t) { throw "Le disque ${Letter}: n'est plus branché, ou c'est le disque de Windows : rien n'a été copié." }
+    $known = @($script:BackupFolders | ForEach-Object { Get-SessionFolder $_.Key } | Where-Object { $_ })
+    $todo = @($Paths | Where-Object { $_ -and ($known -contains $_) -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
+    if (-not $todo.Count) { Log "   • Aucun dossier choisi."; return }
+    # Place et taille des fichiers revérifiées juste avant de copier
+    $meas = @{}; $total = [double]0; $max = [double]0
+    foreach ($p in $todo) { $m = Measure-BackupFolder $p; $meas[$p] = $m; $total += $m.Bytes; if ($m.Max -gt $max) { $max = $m.Max } }
+    if ($sync.Cancel) { return }
+    if ($total + 500MB -gt $t.Free) {
+        Add-TaskError -Title "Pas assez de place sur ${Letter}: pour la sauvegarde" -Cause ("Il faut {0}, le disque a {1} de libre." -f (Format-Size $total), (Format-Size $t.Free)) -Effect "Rien n'a été copié." -Steps @("Décoche un dossier (Téléchargements et Vidéos sont souvent les plus gros).", "Ou libère de la place sur ${Letter}:, ou prends un disque plus grand.")
+        return
+    }
+    if ($t.Fs -eq 'FAT32' -and $max -ge 4GB) {
+        Add-TaskError -Title "Le disque ${Letter}: ne peut pas recevoir tes gros fichiers" -Cause ("Il est au format FAT32, limité à 4 Go par fichier, et ton plus gros fichier fait {0}." -f (Format-Size $max)) -Effect "Rien n'a été copié." -Steps @("Prends un disque au format exFAT ou NTFS.", "Ou formate celui-ci en exFAT (clic droit sur le disque > Formater) : attention, ça efface ce qu'il contient.")
+        return
+    }
+    $root = "${Letter}:\Sauvegarde AEROX\{0} {1:yyyy-MM-dd HH\hmm}" -f ($env:COMPUTERNAME -replace '[^\w\-]', ''), (Get-Date)
+    [void](New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop)
+    Log ("   Vers : {0}" -f $root)
+    Log ("   {0} à copier. Rien n'est supprimé ni déplacé : tes fichiers restent à leur place." -f (Format-Size $total))
+    $i = 0; $okAll = $true; $doneBytes = [double]0; $doneFiles = 0
+    foreach ($p in $todo) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande : la sauvegarde est incomplète."; $okAll = $false; break }
+        $i++; $name = @($script:BackupFolders | Where-Object { (Get-SessionFolder $_.Key) -eq $p })[0].Name
+        $dest = Join-Path $root $name
+        Log ("   {0} ({1} sur {2}) : {3} fichier(s), {4}…" -f $name, $i, $todo.Count, $meas[$p].Files, (Format-Size $meas[$p].Bytes))
+        $code = Invoke-Robocopy $p $dest
+        if ($code -eq -1 -and $sync.Cancel) { Log "   • Arrêté à ta demande : la sauvegarde est incomplète."; $okAll = $false; break }
+        # Vérification : même nombre de fichiers et même taille totale à l'arrivée
+        $got = Measure-BackupFolder $dest
+        $missing = [int]$meas[$p].Files - [int]$got.Files
+        $state = Get-RobocopyVerdict $code
+        if ($state -eq 'ok' -and $missing -le 0 -and $got.Bytes -ge $meas[$p].Bytes) { Log ("     ✔ {0} copié et vérifié : {1} fichier(s), {2}" -f $name, $got.Files, (Format-Size $got.Bytes)); $doneBytes += $got.Bytes; $doneFiles += $got.Files }
+        else {
+            $okAll = $false; $doneBytes += $got.Bytes; $doneFiles += $got.Files
+            Add-TaskError -Title ("{0} : {1} fichier(s) n'ont pas pu être copiés" -f $name, [math]::Max(1, $missing)) -Cause "Fichiers ouverts dans un logiciel, noms trop longs pour le disque, ou erreur de lecture / d'écriture pendant la copie." -Effect "La sauvegarde de ce dossier est incomplète. Le reste est bien copié." `
+                -Steps @("Ferme les logiciels qui utilisent ces fichiers et relance la sauvegarde.", "Si ça recommence : lance « Clé USB ou disque externe illisible » pour vérifier le disque de destination.")
+        }
+        $sync.Progress = [int](100 * $i / $todo.Count)
+    }
+    $sync.BackupDone = @{ Root = $root; Ok = $okAll; Files = $doneFiles; Bytes = $doneBytes }
+    if ($okAll) {
+        Log ("✅ Sauvegarde terminée et vérifiée : {0} fichier(s), {1}, dans {2}" -f $doneFiles, (Format-Size $doneBytes), $root)
+        Log "   Ce qui n'est PAS dedans : tes logiciels et tes jeux (à réinstaller), les mots de passe du navigateur (connecte-toi à ton compte Google / Microsoft / Firefox pour les retrouver), et les fichiers rangés ailleurs que dans ces dossiers."
+        Add-Change -Kind 'info' -Title "Sauvegarde de tes fichiers" -Detail ("{0}, {1}" -f $root, (Format-Size $doneBytes))
+    }
+}
+# ---------------------------------------------------------------- Boîte noire
+# Pendant qu'AEROX est ouvert (ou près de l'horloge), un relevé toutes les 10 secondes est ajouté à un petit fichier :
+# charge, mémoire, températures quand les capteurs tournent. Après un arrêt brutal, on relit la dernière minute.
+# Ligne : « date ISO|S|charge|temp. processeur|charge carte graphique|temp. carte graphique|mémoire %|jeu », ou « date ISO|X »
+# quand AEROX est fermé normalement.
+function Get-BlackBoxPath { return (Join-Path $AppInfo.LogDir 'boite-noire.txt') }
+function ConvertFrom-BlackBoxLine([string]$L) {
+    $q = @("$L".Split('|')); if ($q.Count -lt 2) { return $null }
+    $t = $null; try { $t = [datetime]::Parse($q[0], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch { return $null }
+    if ($q[1] -eq 'X') { return @{ Time = $t; Stop = $true } }
+    if ($q[1] -ne 'S' -or $q.Count -lt 7) { return $null }
+    $n = { param($s) $v = 0.0; if ("$s" -ne '' -and [double]::TryParse("$s", [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and $v -ge 0) { $v } else { $null } }
+    return @{ Time = $t; Stop = $false; Cpu = (& $n $q[2]); CpuT = (& $n $q[3]); Gpu = (& $n $q[4]); GpuT = (& $n $q[5]); Ram = (& $n $q[6]); Game = $(if ($q.Count -gt 7) { $q[7] } else { '' }) }
+}
+function Read-BlackBox {
+    $p = Get-BlackBoxPath
+    if (-not (Test-Path -LiteralPath $p)) { return @() }
+    try { return @(Get-Content -LiteralPath $p -Encoding UTF8 -ErrorAction Stop | ForEach-Object { ConvertFrom-BlackBoxLine $_ } | Where-Object { $_ }) } catch { return @() }
+}
+# Les relevés juste avant un arrêt brutal. $Boot = heure du redémarrage, $LastAlive = dernière chose notée par Windows
+# avant ce redémarrage. Rien si AEROX avait été fermé, ou s'il s'était arrêté bien avant que le PC ne s'arrête.
+function Get-BlackBoxBefore($Rows, [datetime]$Boot, [datetime]$LastAlive, [int]$Seconds = 120) {
+    $before = @($Rows | Where-Object { $_ -and $_.Time -lt $Boot } | Sort-Object { $_.Time })
+    if (-not $before.Count) { return @() }
+    $last = $before[$before.Count - 1]
+    if ($last.Stop) { return @() }
+    if ($last.Time -lt $LastAlive.AddSeconds(-90)) { return @() }
+    return @($before | Where-Object { -not $_.Stop -and ($last.Time - $_.Time).TotalSeconds -le $Seconds })
+}
+function Get-BlackBoxSummary($Rows, [bool]$Ryzen95 = $false) {
+    $rows = @($Rows | Where-Object { $_ -and -not $_.Stop })
+    if ($rows.Count -lt 2) { return $null }
+    $max = { param($k) $v = @($rows | ForEach-Object { $_[$k] } | Where-Object { $null -ne $_ }); if ($v.Count) { [math]::Round(($v | Measure-Object -Maximum).Maximum) } else { $null } }
+    $r = @{ Count = $rows.Count; At = $rows[$rows.Count - 1].Time; Cpu = (& $max 'Cpu'); CpuT = (& $max 'CpuT'); Gpu = (& $max 'Gpu'); GpuT = (& $max 'GpuT'); Ram = (& $max 'Ram'); Game = "$(@($rows | ForEach-Object { $_.Game } | Where-Object { $_ }) | Select-Object -Last 1)" }
+    $parts = @()
+    if ($null -ne $r.CpuT) { $parts += "processeur jusqu'à $($r.CpuT) °C" }
+    if ($null -ne $r.GpuT) { $parts += "carte graphique jusqu'à $($r.GpuT) °C" }
+    if ($null -ne $r.Cpu) { $parts += "processeur chargé à $($r.Cpu) %" }
+    if ($null -ne $r.Ram) { $parts += "mémoire remplie à $($r.Ram) %" }
+    if ($r.Game) { $parts += "jeu en cours : $($r.Game)" }
+    $r.HasTemp = ($null -ne $r.CpuT -or $null -ne $r.GpuT)
+    $r.Hot = (($null -ne $r.CpuT -and $r.CpuT -ge $(if ($Ryzen95) { 98 } else { 95 })) -or ($null -ne $r.GpuT -and $r.GpuT -ge 90))
+    $r.Text = "Boîte noire d'AEROX, dernière minute avant l'arrêt (le $('{0:dd/MM à HH:mm}' -f $r.At)) : " + ($parts -join ', ') + '.'
+    if ($r.Hot) { $r.Text += " Ça chauffait trop juste avant : la surchauffe est la cause la plus probable." }
+    elseif ($r.HasTemp) { $r.Text += " Les températures étaient normales : ce n'est pas une surchauffe, regarde plutôt le courant et l'alimentation du PC." }
+    if ($null -ne $r.Ram -and $r.Ram -ge 97) { $r.Text += " La mémoire était pleine." }
+    return $r
+}
+# Pour un arrêt brutal que Windows a noté à $EventTime (au redémarrage) : le résumé de la boîte noire, ou rien
+function Get-BlackBoxForCrash([datetime]$EventTime) {
+    try {
+        $rows = @(Read-BlackBox); if (-not $rows.Count) { return $null }
+        $boot = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 12; StartTime = $EventTime.AddMinutes(-15); EndTime = $EventTime.AddMinutes(1) } | Sort-Object TimeCreated) | Select-Object -Last 1
+        if (-not $boot) { return $null }
+        $prev = @(Get-WinEvent -LogName System -FilterXPath ("*[System[EventRecordID < {0}]]" -f [long]$boot.RecordId) -MaxEvents 1 -ErrorAction Stop) | Select-Object -First 1
+        if (-not $prev) { return $null }
+        $cpu = "$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)"
+        return (Get-BlackBoxSummary (Get-BlackBoxBefore $rows $boot.TimeCreated $prev.TimeCreated) (Test-RyzenTarget95 $cpu))
+    } catch { return $null }
+}
+# ---------------------------------------------------------------- Récupérer des fichiers effacés
+# AEROX ne récupère rien lui-même : il pilote « Windows File Recovery », l'outil officiel de Microsoft (winfr), qui lit
+# le disque sans rien écrire dessus et range ce qu'il retrouve sur un AUTRE disque.
+$script:RecoverKinds = [ordered]@{
+    photos = @{ Name = 'Photos et images'; Ext = @('jpg', 'jpeg', 'png', 'heic', 'gif', 'bmp', 'cr2', 'nef', 'arw', 'dng') }
+    videos = @{ Name = 'Vidéos'; Ext = @('mp4', 'mov', 'avi', 'mkv', 'wmv', 'm4v') }
+    docs   = @{ Name = 'Documents'; Ext = @('pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'txt', 'rtf') }
+    music  = @{ Name = 'Musique'; Ext = @('mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg') }
+    all    = @{ Name = 'Tout ce qui est retrouvable'; Ext = @() }
+}
+function Test-WinfrRuns([string]$Path) {
+    try { $o = (& $Path '/?' 2>&1 | Out-String) -replace "`0", ''; return ($o -match '(?i)winfr|File Recovery') } catch { return $false }
+}
+function Get-Winfr {
+    # D'abord la copie officielle dans Program Files (protégée), signée par Microsoft ; le raccourci du dossier perso ensuite
+    $cands = New-Object System.Collections.ArrayList
+    foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.WindowsFileRecovery_*__8wekyb3d8bbwe\winfr.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { if (Test-ToolSignature $p.FullName 'Microsoft Corporation') { [void]$cands.Add($p.FullName) } }
+    if ($cands.Count) {
+        $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winfr.exe'
+        if ((Test-Path -LiteralPath $alias) -and ((Get-Item -LiteralPath $alias -Force -ErrorAction SilentlyContinue).Attributes -band [IO.FileAttributes]::ReparsePoint)) { [void]$cands.Add($alias) }
+    }
+    foreach ($c in $cands) { if (Test-WinfrRuns $c) { return $c } }
+    return $null
+}
+function Install-Winfr {
+    $wg = Get-Winget
+    if (-not $wg) { Add-WingetError "L'installation de l'outil de récupération de Microsoft est"; return $false }
+    Log "   Installation de « Windows File Recovery » (outil officiel de Microsoft, depuis le Microsoft Store)…"
+    # 5 minutes au plus : le Store peut ne jamais répondre (désactivé, pas de compte)
+    $null = Invoke-NativeTimed $wg ((@('install', '--id', '9N26S50LN705', '--source', 'msstore', '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) -join ' ') 300
+    return [bool](Get-Winfr)
+}
+# Arguments de winfr : toujours /a (pas de question), jamais le même lecteur des deux côtés
+function Get-WinfrArgs([string]$Source, [string]$Dest, [string]$Mode, [string]$Kind) {
+    if ($Source -notmatch '^[A-Za-z]$' -or $Dest -notmatch '^[A-Za-z]$' -or $Source -ieq $Dest) { throw "lecteurs invalides" }
+    if ($Mode -notin 'regular', 'extensive') { throw "mode inconnu" }
+    if (-not $script:RecoverKinds.Contains($Kind)) { throw "type de fichiers inconnu" }
+    $a = New-Object System.Collections.ArrayList
+    [void]$a.Add("$($Source.ToUpper()):"); [void]$a.Add("$($Dest.ToUpper()):"); [void]$a.Add("/$Mode"); [void]$a.Add('/a')
+    foreach ($e in $script:RecoverKinds[$Kind].Ext) { [void]$a.Add('/n'); [void]$a.Add("*.$e") }
+    return $a.ToArray()
+}
+# Le mode rapide de l'outil ne marche que sur un disque NTFS lisible ; tout le reste demande le mode approfondi
+function Get-RecoveryMode([string]$FileSystem, [bool]$Recent) { if ($FileSystem -eq 'NTFS' -and $Recent) { return 'regular' } else { return 'extensive' } }
+function Get-RecoveryPlan {
+    Step "Récupération : les disques branchés"
+    $sync.RecoverPlan = $null
+    $src = New-Object System.Collections.ArrayList; $dst = New-Object System.Collections.ArrayList
+    foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -in 'Fixed', 'Removable' } | Sort-Object DriveLetter)) {
+        $l = "$($v.DriveLetter)".ToUpper(); $fs = "$($v.FileSystem)"; $ok = ($fs -and $fs -notmatch '(?i)^(RAW|Unknown)$')
+        $size = [double]$v.Size; $ro = $false; $ext = $false; $pn = ''
+        try { $pt = Get-Partition -DriveLetter $l -ErrorAction Stop; if (-not $size) { $size = [double]$pt.Size }; $dk = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop; $ro = [bool]($pt.IsReadOnly -or $dk.IsReadOnly); $ext = ("$($dk.BusType)" -match '(?i)^(USB|SD|MMC)$'); $pn = "$($dk.FriendlyName)".Trim() } catch {}
+        [void]$src.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Fs = $(if ($ok) { $fs } else { '' }); Size = $size; External = $ext; Name = $pn })
+        if ($ok -and -not $ro) { [void]$dst.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Free = [double]$v.SizeRemaining; External = $ext }) }
+        Log ("   • {0}: {1} {2} ({3}{4})" -f $l, "$($v.FileSystemLabel)", $(if ($ok) { $fs } else { 'illisible' }), (Format-Size $size), $(if ($ext) { ', externe' } else { '' }))
+    }
+    $sync.RecoverPlan = @{ Sources = $src.ToArray(); Targets = $dst.ToArray(); Tool = [bool](Get-Winfr) }
+}
+function Start-FileRecovery([string]$Source, [string]$Dest, [string]$Kind, [string]$Mode) {
+    Step "Récupération de fichiers effacés"
+    $sync.RecoverDone = $null
+    $arguments = @(Get-WinfrArgs $Source $Dest $Mode $Kind)
+    $Source = $Source.ToUpper(); $Dest = $Dest.ToUpper()
+    $dv = Get-Volume -DriveLetter $Dest -ErrorAction Stop
+    if (-not "$($dv.FileSystem)" -or "$($dv.FileSystem)" -match '(?i)^(RAW|Unknown)$') { throw "Le disque ${Dest}: n'est pas lisible : choisis un autre disque pour ranger les fichiers retrouvés." }
+    try { $ps = Get-Partition -DriveLetter $Source -ErrorAction Stop; $pd = Get-Partition -DriveLetter $Dest -ErrorAction Stop; if ($ps.DiskNumber -eq $pd.DiskNumber -and $ps.PartitionNumber -eq $pd.PartitionNumber) { throw "même partition" } } catch { if ("$_" -match 'même partition') { throw "Les fichiers retrouvés doivent aller sur un autre disque que celui qu'on fouille." } }
+    if ([double]$dv.SizeRemaining -lt 1GB) { Add-TaskError -Title "Pas assez de place sur ${Dest}: pour ranger les fichiers retrouvés" -Cause ("Il reste {0}." -f (Format-Size ([double]$dv.SizeRemaining))) -Effect "La récupération n'a pas démarré." -Steps @("Choisis un autre disque, ou libère de la place sur ${Dest}:."); return }
+    $tool = Get-Winfr
+    if (-not $tool) { if (Install-Winfr) { $tool = Get-Winfr } }
+    if (-not $tool) {
+        Add-TaskError -Title "L'outil de récupération de Microsoft n'a pas pu être installé" -Cause "« Windows File Recovery » s'installe depuis le Microsoft Store, qui n'a pas répondu (Store désactivé, pas de connexion, ou compte sans accès au Store)." -Effect "La récupération n'a pas démarré. Rien n'a été écrit sur le disque à fouiller." `
+            -Steps @("Ouvre le Microsoft Store, cherche « Windows File Recovery » (éditeur : Microsoft Corporation) et installe-le.", "Reviens ici et relance la récupération.", "En attendant, n'écris plus rien sur le disque à fouiller : chaque fichier ajouté peut écraser ceux à retrouver.")
+        return
+    }
+    Log ("   Disque fouillé : {0}: (rien n'est écrit dessus) · Fichiers retrouvés rangés sur {1}: · Recherche {2} · {3}" -f $Source, $Dest, $(if ($Mode -eq 'regular') { 'rapide' } else { 'approfondie' }), $script:RecoverKinds[$Kind].Name)
+    Log "   Ça peut être long : quelques minutes pour une clé USB, plusieurs heures pour un gros disque. « Annuler » arrête proprement."
+    $out = Join-Path $env:TEMP ("aerox-winfr-{0}.txt" -f [guid]::NewGuid().ToString('N'))
+    $start = Get-Date
+    $argLine = (@($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+    $p = Start-Process -FilePath $tool -ArgumentList $argLine -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -ErrorAction Stop
+    $full = $false; $lastPct = -1
+    while (-not $p.HasExited) {
+        Start-Sleep -Seconds 2
+        if ($sync.Cancel) { try { $p.Kill() } catch {}; Log "   • Arrêté à ta demande. Ce qui a déjà été retrouvé reste sur ${Dest}:."; break }
+        # Disque d'arrivée presque plein : l'outil poserait une question à laquelle personne ne peut répondre
+        try { if ([double](New-Object IO.DriveInfo "${Dest}:").AvailableFreeSpace -lt 200MB) { $full = $true; try { $p.Kill() } catch {}; break } } catch {}
+        try {
+            $fs = New-Object IO.FileStream ($out, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try { $len = [math]::Min(600, $fs.Length); $fs.Position = $fs.Length - $len; $b = New-Object byte[] $len; [void]$fs.Read($b, 0, $len) } finally { $fs.Dispose() }
+            $m = [regex]::Matches(([Text.Encoding]::UTF8.GetString($b) -replace "`0", ''), '(\d{1,3})\s?%')
+            if ($m.Count) { $pct = [int]$m[$m.Count - 1].Groups[1].Value; if ($pct -ge 0 -and $pct -le 100 -and $pct -ne $lastPct) { $lastPct = $pct; $sync.Progress = $pct } }
+        } catch {}
+    }
+    $code = -1; try { $p.WaitForExit(5000) | Out-Null; $code = [int]$p.ExitCode } catch {}
+    $tail = ''; try { $tail = ((Get-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop | ForEach-Object { "$_" -replace "`0", '' } | Where-Object { "$_".Trim() } | Select-Object -Last 4) -join ' · ') } catch {}
+    try { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue } catch {}
+    # Ce que l'outil a rangé : dossier « Recovery_date » créé sur le disque d'arrivée pendant cette recherche
+    $dir = @(Get-ChildItem -LiteralPath "${Dest}:\" -Directory -Filter 'Recovery_*' -ErrorAction SilentlyContinue | Where-Object { $_.CreationTime -ge $start.AddSeconds(-5) } | Sort-Object CreationTime) | Select-Object -Last 1
+    $files = 0; $bytes = [double]0
+    if ($dir) { foreach ($f in @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)^RecoveryLog' })) { $files++; $bytes += $f.Length } }
+    $sync.RecoverDone = @{ Folder = $(if ($dir) { $dir.FullName } else { '' }); Files = $files; Bytes = $bytes }
+    if ($full) { Add-TaskError -Title "Le disque ${Dest}: est plein : la récupération s'est arrêtée" -Cause "Il n'y a plus de place pour ranger les fichiers retrouvés." -Effect ("{0} fichier(s) ont été retrouvés avant l'arrêt." -f $files) -Steps @("Relance avec un disque d'arrivée plus grand, ou en choisissant un seul type de fichiers.") }
+    if ($files) {
+        Log ("✅ {0} fichier(s) retrouvé(s), {1}, dans {2}" -f $files, (Format-Size $bytes), $dir.FullName)
+        Log "   Ouvre-les pour vérifier : un fichier retrouvé peut être incomplet si une partie a déjà été écrasée. Les noms d'origine sont parfois perdus."
+    } elseif (-not $sync.Cancel -and -not $full) {
+        Log ("   • Aucun fichier retrouvé{0}." -f $(if ($tail) { " (l'outil a répondu : $tail)" } else { '' }))
+        Add-TaskError -Title "Aucun fichier n'a pu être retrouvé" -Cause $(if ($Mode -eq 'regular') { "La recherche rapide ne retrouve que ce qui a été effacé récemment sur un disque en bon état." } else { "Les fichiers ont sans doute déjà été écrasés par d'autres, ou le disque est trop abîmé. Sur un SSD interne, un fichier effacé est le plus souvent détruit pour de bon en quelques minutes (fonction TRIM)." }) -Effect "Rien n'a été écrit sur le disque fouillé." `
+            -Steps @($(if ($Mode -eq 'regular') { "Relance en recherche approfondie (plus longue, elle fouille tout le disque)." } else { "Essaie avec « Tout ce qui est retrouvable » si tu avais choisi un seul type de fichiers." }), "Si les fichiers sont très importants : n'utilise plus ce disque et confie-le à un service de récupération de données.")
+    }
+}
 # ---------------------------------------------------------------- Test de la mémoire (RAM) au redémarrage
 # C'est le « Diagnostic de mémoire Windows » de Microsoft, programmé comme le fait mdsched.exe (démarrage unique sur
 # l'outil de test). AEROX note l'heure pour afficher le résultat à sa prochaine ouverture.
@@ -7330,7 +7716,7 @@ function Get-ExternalDiskReport {
         if (-not $pb.Count) { Log "     ✔ Lisible, rien d'anormal"; continue }
         $okAll = $false
         $canFormat = Test-ExtDiskFormattable $d
-        $fmtConfirm = "TOUT ce qui est sur ce disque sera effacé définitivement :`n`n{0} ({1})`n`nSi des fichiers importants sont dessus, réponds Non et essaie d'abord de les récupérer (autre PC, logiciel de récupération).`n`nEffacer et remettre à neuf ?" -f $nm, (Format-Size $d.Size)
+        $fmtConfirm = "TOUT ce qui est sur ce disque sera effacé définitivement :`n`n{0} ({1})`n`nSi des fichiers importants sont dessus, réponds Non et essaie d'abord la carte « Récupérer des fichiers effacés ».`n`nEffacer et remettre à neuf ?" -f $nm, (Format-Size $d.Size)
         $fmtDone = $false
         foreach ($x in $pb) {
             switch ($x.Kind) {
@@ -7355,7 +7741,7 @@ function Get-ExternalDiskReport {
                         'damaged' { "Le début du disque est abîmé (souvent un débranchement pendant une écriture, ou une mémoire qui fatigue). Windows ne peut plus lire la liste des fichiers." }
                         default { "Windows ne reconnaît pas ce qu'il y a dessus : format abîmé, disque chiffré, ou mémoire en fin de vie." }
                     }
-                    $st = if ($x.Kind -in 'empty', 'unformatted' -and ($x.Kind -ne 'empty' -or $x.Blank)) { @("Il n'y a rien à perdre dessus : clique sur le bouton pour le préparer.") } else { @("Des fichiers importants dessus ? Ne formate pas : essaie d'abord un autre PC, puis un logiciel de récupération (PhotoRec, Recuva) qui lit le disque sans rien écrire.", "Rien d'important dessus ? Clique sur le bouton : le disque repart à neuf.", "Si la remise à neuf échoue, la mémoire du disque est morte : il faut le remplacer.") }
+                    $st = if ($x.Kind -in 'empty', 'unformatted' -and ($x.Kind -ne 'empty' -or $x.Blank)) { @("Il n'y a rien à perdre dessus : clique sur le bouton pour le préparer.") } else { @("Des fichiers importants dessus ? Ne formate pas : essaie d'abord la carte « Récupérer des fichiers effacés » (elle lit le disque sans rien écrire dessus), ou un autre PC.", "Rien d'important dessus ? Clique sur le bouton : le disque repart à neuf.", "Si la remise à neuf échoue, la mémoire du disque est morte : il faut le remplacer.") }
                     if ($fmtDone -or -not $canFormat) { Log ("     • {0} : {1}" -f $t, $c) }
                     else { Add-TaskError -Title $t -Cause $c -Effect "Le disque est inutilisable en l'état." -Steps $st -FixLabel "Effacer et remettre à neuf" -FixAction "Format-ExternalDisk $($d.Number) $idL" -Confirm $fmtConfirm; $fmtDone = $true }
                 }

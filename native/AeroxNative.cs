@@ -1112,6 +1112,75 @@ public static class AeroxStress {
         ts.Clear(); GC.Collect();
     }
 }
+// Test de vitesse d'un disque : un fichier temporaire écrit puis relu sans passer par le cache de Windows (comme les
+// outils de mesure habituels), puis des lectures de 4 Ko au hasard. Le fichier se supprime tout seul à la fermeture,
+// même si le logiciel est arrêté en plein test.
+public static class AeroxDiskBench {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteFile(IntPtr h, IntPtr buf, uint n, out uint done, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadFile(IntPtr h, IntPtr buf, uint n, out uint done, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetFilePointerEx(IntPtr h, long dist, out long pos, uint method);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr VirtualAlloc(IntPtr addr, UIntPtr size, uint type, uint protect);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool VirtualFree(IntPtr addr, UIntPtr size, uint type);
+    public static volatile bool Cancel;
+    // Renvoie « écriture Mo/s|lecture Mo/s|4 Ko au hasard Mo/s » (nombres en notation invariante), ou « ERR:code »
+    public static string Run(string path, int sizeMb, int randSeconds) {
+        const int Block = 1024 * 1024;
+        IntPtr buf = VirtualAlloc(IntPtr.Zero, (UIntPtr)Block, 0x3000, 0x04);
+        if (buf == IntPtr.Zero) return "ERR:mem";
+        IntPtr h = new IntPtr(-1);
+        try {
+            // Données impossibles à compresser (sinon certains SSD et NTFS trichent sur la vitesse)
+            byte[] rnd = new byte[Block]; new Random(12345).NextBytes(rnd); Marshal.Copy(rnd, 0, buf, Block);
+            // GENERIC_READ|WRITE, pas de partage, CREATE_ALWAYS, NO_BUFFERING | WRITE_THROUGH | DELETE_ON_CLOSE | TEMPORARY
+            h = CreateFileW(path, 0xC0000000, 0, IntPtr.Zero, 2, 0x20000000u | 0x80000000u | 0x04000000u | 0x100u, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return "ERR:" + Marshal.GetLastWin32Error();
+            uint done; long pos;
+            Stopwatch sw = Stopwatch.StartNew();
+            for (int i = 0; i < sizeMb; i++) { if (Cancel) return "ERR:cancel"; if (!WriteFile(h, buf, (uint)Block, out done, IntPtr.Zero) || done != Block) return "ERR:" + Marshal.GetLastWin32Error(); }
+            double w = sizeMb / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            if (!SetFilePointerEx(h, 0, out pos, 0)) return "ERR:" + Marshal.GetLastWin32Error();
+            sw = Stopwatch.StartNew();
+            for (int i = 0; i < sizeMb; i++) { if (Cancel) return "ERR:cancel"; if (!ReadFile(h, buf, (uint)Block, out done, IntPtr.Zero) || done != Block) return "ERR:" + Marshal.GetLastWin32Error(); }
+            double r = sizeMb / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            Random pick = new Random(777); long blocks4k = (long)sizeMb * 256; long n = 0;
+            sw = Stopwatch.StartNew();
+            while (sw.Elapsed.TotalSeconds < randSeconds && !Cancel) {
+                long off = (long)(pick.NextDouble() * blocks4k) * 4096;
+                if (!SetFilePointerEx(h, off, out pos, 0) || !ReadFile(h, buf, 4096, out done, IntPtr.Zero) || done != 4096) return "ERR:" + Marshal.GetLastWin32Error();
+                n++;
+            }
+            double q = (n * 4096.0 / Block) / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            return w.ToString("0.0", CultureInfo.InvariantCulture) + "|" + r.ToString("0.0", CultureInfo.InvariantCulture) + "|" + q.ToString("0.00", CultureInfo.InvariantCulture);
+        } catch (Exception e) { return "ERR:" + e.GetType().Name; }
+        finally { if (h != new IntPtr(-1)) CloseHandle(h); VirtualFree(buf, UIntPtr.Zero, 0x8000); }
+    }
+}
+// Charge du processeur et mémoire utilisée, lues directement auprès de Windows (presque gratuit : sert à la boîte noire)
+public static class AeroxLoad {
+    [StructLayout(LayoutKind.Sequential)] struct FT { public uint lo, hi; }
+    [StructLayout(LayoutKind.Sequential)] struct MEMSTAT { public uint len, load; public ulong totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, availExt; }
+    [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out FT idle, out FT kernel, out FT user);
+    [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMSTAT m);
+    static ulong pIdle, pTotal; static bool has;
+    static ulong U(FT f) { return ((ulong)f.hi << 32) | f.lo; }
+    // « charge processeur % depuis l'appel précédent|mémoire utilisée % » ; charge = -1 au premier appel
+    public static string Sample() {
+        int cpu = -1, mem = -1;
+        try {
+            FT i, k, u;
+            if (GetSystemTimes(out i, out k, out u)) {
+                ulong idle = U(i), total = U(k) + U(u);
+                if (has && total > pTotal) { cpu = (int)Math.Round(100.0 * (1.0 - (double)(idle - pIdle) / (double)(total - pTotal))); if (cpu < 0) cpu = 0; if (cpu > 100) cpu = 100; }
+                pIdle = idle; pTotal = total; has = true;
+            }
+            MEMSTAT m = new MEMSTAT(); m.len = (uint)Marshal.SizeOf(typeof(MEMSTAT));
+            if (GlobalMemoryStatusEx(ref m)) mem = (int)m.load;
+        } catch { }
+        return cpu + "|" + mem;
+    }
+}
 public static class AeroxWin {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     public static void DarkTitle(IntPtr hwnd, string hex) {
