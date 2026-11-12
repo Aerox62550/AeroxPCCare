@@ -129,6 +129,564 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : vitesse des disques, sauvegarde, boîte noire, récupération
+    Smoke 'Vitesse des disques : règles et mesure réelle' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'NVMe' (Get-DiskKindName 'SSD' 'NVMe') 'nvme'
+        Is 'SSD SATA' (Get-DiskKindName 'SSD' 'SATA') 'ssd'
+        Is 'disque dur' (Get-DiskKindName 'HDD' 'SATA') 'hdd'
+        Is 'clé USB : pas de référence' (Get-DiskKindName 'SSD' 'USB') ''
+        Is 'disque virtuel' (Get-DiskKindName 'Unspecified' 'File Backed Virtual') ''
+        Is 'type inconnu' (Get-DiskKindName 'Unspecified' 'SATA') ''
+        Is 'NVMe normal' (Get-DiskSpeedVerdict 'nvme' 3200 2800 55).Level 'ok'
+        Is 'NVMe au ralenti' (Get-DiskSpeedVerdict 'nvme' 180 900 40).Level 'warn'
+        Is 'SSD SATA normal' (Get-DiskSpeedVerdict 'ssd' 520 480 30).Level 'ok'
+        Is 'SSD petits fichiers lents' (Get-DiskSpeedVerdict 'ssd' 500 450 3).Level 'warn'
+        Is 'disque dur normal (petits fichiers lents : normal)' (Get-DiskSpeedVerdict 'hdd' 140 130 0.8).Level 'ok'
+        Is 'disque dur mourant' (Get-DiskSpeedVerdict 'hdd' 22 18 0.3).Level 'warn'
+        Is 'type inconnu : jamais de verdict' (Get-DiskSpeedVerdict '' 5 5 0.1).Level 'info'
+        $m = ConvertFrom-BenchResult '512.4|1830.9|41.25'
+        Is 'résultat lu' "$($m.Write)|$($m.Read)|$($m.Rand)" '512.4|1830.9|41.25'
+        Is 'erreur' ((ConvertFrom-BenchResult 'ERR:5') -eq $null) $true
+        $sync.Errors.Clear(); $sync.DiskSpeed = $null
+        Test-DiskSpeed
+        $r = @($sync.DiskSpeed)
+        if (-not $r.Count) { throw "aucune mesure" }
+        foreach ($x in $r) { Write-Host ("        {0}: lecture {1:N0} Mo/s, écriture {2:N0} Mo/s, 4 Ko {3:N1} Mo/s ({4})" -f $x.Letter, $x.Read, $x.Write, $x.Rand, $(if ($x.Kind) { $x.Kind } else { 'type sans référence' })); if ($x.Read -le 0 -or $x.Write -le 0 -or $x.Rand -le 0) { throw "mesure nulle" } }
+        foreach ($l in @($r | ForEach-Object { $_.Letter })) { if (Test-Path -LiteralPath "${l}:\aerox-test-vitesse.tmp") { throw "fichier de test pas supprimé sur ${l}:" } }
+        $sync.Errors.Clear(); $sync.Progress = 0
+    }
+    Smoke 'Sauvegarde : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'disque externe' (Test-BackupTarget 'Removable' 'exFAT' 2 0 $false) $true
+        Is 'deuxième disque interne' (Test-BackupTarget 'Fixed' 'NTFS' 1 0 $false) $true
+        Is 'même disque que Windows (autre partition)' (Test-BackupTarget 'Fixed' 'NTFS' 0 0 $false) $false
+        Is 'protégé en écriture' (Test-BackupTarget 'Removable' 'FAT32' 2 0 $true) $false
+        Is 'illisible' (Test-BackupTarget 'Removable' 'RAW' 2 0 $false) $false
+        Is 'lecteur réseau' (Test-BackupTarget 'Network' 'NTFS' 2 0 $false) $false
+        Is 'disque inconnu' (Test-BackupTarget 'Fixed' 'NTFS' $null 0 $false) $false
+        Is 'robocopy 0' (Get-RobocopyVerdict 0) 'ok'; Is 'robocopy 1 (copié)' (Get-RobocopyVerdict 1) 'ok'; Is 'robocopy 3' (Get-RobocopyVerdict 3) 'ok'
+        Is 'robocopy 8 (échecs)' (Get-RobocopyVerdict 8) 'partial'; Is 'robocopy 9' (Get-RobocopyVerdict 9) 'partial'
+        Is 'robocopy 16 (grave)' (Get-RobocopyVerdict 16) 'fatal'; Is 'arrêté' (Get-RobocopyVerdict -1) 'fatal'
+        Is 'fichier en ligne seulement' (Test-CloudOnly 0x1020) $true
+        Is 'fichier à la demande' (Test-CloudOnly 0x400020) $true
+        Is 'fichier normal' (Test-CloudOnly 0x20) $false
+    }
+    Smoke 'Sauvegarde : copie réelle vers un autre disque, vérifiée' {
+        $vhd = 'C:\aerox\test-sauvegarde.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        $desk = Get-SessionFolder 'Desktop'
+        if (-not $desk -or -not (Test-Path -LiteralPath $desk)) { throw "Bureau introuvable" }
+        $mine = Join-Path $desk 'aerox-test-sauvegarde'
+        try {
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk2.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            Initialize-EmptyDisk $n "$((Get-Disk -Number $n).UniqueId)"
+            $letter = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            [void](New-Item -ItemType Directory -Path (Join-Path $mine 'Sous-dossier été') -Force)
+            [IO.File]::WriteAllText((Join-Path $mine 'note.txt'), 'bonjour')
+            [IO.File]::WriteAllBytes((Join-Path $mine 'Sous-dossier été\photo à garder.jpg'), (New-Object byte[] 300000))
+            [IO.File]::WriteAllBytes((Join-Path $mine 'gros.bin'), (New-Object byte[] 3MB))
+            $sync.Errors.Clear(); $sync.BackupPlan = $null
+            Get-BackupPlan
+            if (-not $sync.BackupPlan -or -not @($sync.BackupPlan.Targets | Where-Object { $_.Letter -eq $letter }).Count) { throw "le deuxième disque n'est pas proposé" }
+            if (@($sync.BackupPlan.Targets | Where-Object { $_.Letter -eq $env:SystemDrive.Substring(0, 1) }).Count) { throw "le disque de Windows est proposé comme destination" }
+            $refused = $false; try { Start-UserBackup @($desk) ($env:SystemDrive.Substring(0, 1)) } catch { $refused = $true }
+            if (-not $refused) { throw "sauvegarde acceptée sur le disque de Windows" }
+            $sync.BackupDone = $null
+            Start-UserBackup @('C:\Windows\System32', $desk) $letter
+            $b = $sync.BackupDone
+            if (-not $b -or -not $b.Ok) { throw "sauvegarde pas terminée : $(@($sync.Errors | ForEach-Object { $_.Title }) -join ' | ')" }
+            Write-Host ("        {0} fichier(s), {1}, dans {2}" -f $b.Files, (Format-Size $b.Bytes), $b.Root)
+            foreach ($rel in 'Bureau\aerox-test-sauvegarde\note.txt', 'Bureau\aerox-test-sauvegarde\Sous-dossier été\photo à garder.jpg', 'Bureau\aerox-test-sauvegarde\gros.bin') { if (-not (Test-Path -LiteralPath (Join-Path $b.Root $rel))) { throw "fichier manquant dans la sauvegarde : $rel" } }
+            if ((Get-Item -LiteralPath (Join-Path $b.Root 'Bureau\aerox-test-sauvegarde\gros.bin')).Length -ne 3MB) { throw "taille différente à l'arrivée" }
+            if (Test-Path -LiteralPath (Join-Path $b.Root 'System32')) { throw "un dossier hors liste a été copié" }
+            foreach ($f in 'note.txt', 'gros.bin') { if (-not (Test-Path -LiteralPath (Join-Path $mine $f))) { throw "LA SOURCE A ÉTÉ MODIFIÉE" } }
+        } finally {
+            Remove-Item -LiteralPath $mine -Recurse -Force -ErrorAction SilentlyContinue
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
+    }
+    Smoke 'Fenêtres : sauvegarde' {
+        $sync.BackupPlan = @{ Pc = 'PC-TEST'; Folders = @(@{ Name = 'Bureau'; Path = 'C:\Users\x\Desktop'; Files = 42; Bytes = 1.2GB; Cloud = 0; Max = 1GB }, @{ Name = 'Documents'; Path = 'C:\Users\x\Documents'; Files = 3100; Bytes = 18GB; Cloud = 250; Max = 2GB }, @{ Name = 'Musique'; Path = 'C:\Users\x\Music'; Files = 0; Bytes = 0; Cloud = 0; Max = 0 });
+                              Targets = @(@{ Letter = 'D'; Label = 'Données'; Free = 400GB; Size = 931GB; Fs = 'NTFS'; External = $false }, @{ Letter = 'F'; Label = 'Disque externe'; Free = 12GB; Size = 465GB; Fs = 'exFAT'; External = $true }) }
+        Show-BackupDialog
+        $sync.BackupPlan = @{ Pc = 'PC-TEST'; Folders = @(@{ Name = 'Bureau'; Path = 'C:\Users\x\Desktop'; Files = 42; Bytes = 1.2GB; Cloud = 0; Max = 1GB }); Targets = @() }
+        Show-BackupDialog
+        $sync.BackupPlan = $null
+    }
+    Smoke 'Boîte noire : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $t = (Get-Date).AddHours(-3)
+        $l = Format-BlackBoxLine $t 37.4 91 99 74.6 62 'GTA V | Online'
+        $r = ConvertFrom-BlackBoxLine $l
+        Is 'ligne relue' "$($r.Cpu)|$($r.CpuT)|$($r.Gpu)|$($r.GpuT)|$($r.Ram)|$($r.Game)|$($r.Stop)|$($r.Time -eq $t)" '37|91|99|75|62|GTA V   Online|False|True'
+        $r = ConvertFrom-BlackBoxLine (Format-BlackBoxLine $t 12 $null $null $null 40 '')
+        Is 'sans capteurs' "$($r.Cpu)|$($null -eq $r.CpuT)|$($null -eq $r.GpuT)|$($r.Ram)" '12|True|True|40'
+        Is 'arrêt normal' (ConvertFrom-BlackBoxLine ($t.ToString('o') + '|X')).Stop $true
+        Is 'ligne abîmée' ((ConvertFrom-BlackBoxLine 'xx|S|1') -eq $null) $true
+        function Row($sec, $cpuT = 70, $gpuT = 65) { return @{ Time = $t.AddSeconds($sec); Stop = $false; Cpu = 80; CpuT = $cpuT; Gpu = 95; GpuT = $gpuT; Ram = 60; Game = 'Jeu' } }
+        $rows = @(); for ($i = 0; $i -le 300; $i += 10) { $rows += (Row $i) }
+        $boot = $t.AddSeconds(400); $alive = $t.AddSeconds(290)
+        Is 'dernière minute retrouvée' (@(Get-BlackBoxBefore $rows $boot $alive 120).Count) 13
+        Is 'AEROX fermé avant la coupure' (@(Get-BlackBoxBefore ($rows + @(@{ Time = $t.AddSeconds(305); Stop = $true })) $boot $alive).Count) 0
+        Is 'AEROX arrêté bien avant le PC' (@(Get-BlackBoxBefore $rows $t.AddHours(2) $t.AddHours(1.9)).Count) 0
+        Is 'relevés après le redémarrage ignorés' (@(Get-BlackBoxBefore @((Row 500), (Row 510)) $boot $alive).Count) 0
+        Is 'rien' (@(Get-BlackBoxBefore @() $boot $alive).Count) 0
+        $s = Get-BlackBoxSummary (Get-BlackBoxBefore $rows $boot $alive)
+        Is 'températures normales' "$($s.Hot)|$($s.CpuT)|$($s.GpuT)|$($s.HasTemp)" 'False|70|65|True'
+        if ($s.Text -notmatch 'pas une surchauffe') { throw "phrase attendue absente : $($s.Text)" }
+        $hot = @((Row 0), (Row 10 97), (Row 20 99))
+        $s = Get-BlackBoxSummary $hot; Is 'surchauffe' "$($s.Hot)|$($s.CpuT)" 'True|99'
+        Is 'Ryzen prévu pour 95 °C' (Get-BlackBoxSummary @((Row 0 95), (Row 10 96)) $true).Hot $false
+        Is 'carte graphique à 92 °C' (Get-BlackBoxSummary @((Row 0 60 92), (Row 10 60 91))).Hot $true
+        $nt = @(@{ Time = $t; Stop = $false; Cpu = 20; CpuT = $null; Gpu = $null; GpuT = $null; Ram = 98; Game = '' }, @{ Time = $t.AddSeconds(10); Stop = $false; Cpu = 25; CpuT = $null; Gpu = $null; GpuT = $null; Ram = 99; Game = '' })
+        $s = Get-BlackBoxSummary $nt
+        Is 'sans températures : aucune conclusion sur la chaleur' "$($s.Hot)|$($s.HasTemp)|$($s.Text -match 'surchauffe')|$($s.Text -match 'mémoire était pleine')" 'False|False|False|True'
+        Is 'un seul relevé : rien' ((Get-BlackBoxSummary @((Row 0))) -eq $null) $true
+    }
+    Smoke 'Boîte noire : relevés écrits, arrêt noté, fichier limité' {
+        $p = Get-BlackBoxPath; $bak = $null; if (Test-Path -LiteralPath $p) { $bak = [IO.File]::ReadAllBytes($p) }
+        $keep = $script:Settings.BlackBox; $keepLast = $script:BbLast; $keepN = $script:BbCount
+        try {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+            $script:Settings.BlackBox = $false; $script:BbLast = $null; Add-BlackBoxSample
+            if (Test-Path -LiteralPath $p) { throw "relevé écrit alors que la boîte noire est désactivée" }
+            $script:Settings.BlackBox = $true
+            Add-BlackBoxSample; Add-BlackBoxSample
+            if (@(Read-BlackBox).Count -ne 1) { throw "un seul relevé attendu en moins de 10 secondes, obtenu $(@(Read-BlackBox).Count)" }
+            $script:BbLast = (Get-Date).AddSeconds(-11); Start-Sleep -Milliseconds 300; Add-BlackBoxSample
+            $rows = @(Read-BlackBox)
+            if ($rows.Count -ne 2 -or $null -eq $rows[1].Ram -or $null -eq $rows[1].Cpu) { throw "deuxième relevé incomplet" }
+            Write-Host ("        relevé : processeur {0} %, mémoire {1} %" -f $rows[1].Cpu, $rows[1].Ram)
+            Stop-BlackBox
+            if (-not @(Read-BlackBox)[-1].Stop) { throw "arrêt normal pas noté" }
+            $old = 1..800 | ForEach-Object { Format-BlackBoxLine (Get-Date).AddSeconds(-10 * (900 - $_)) 10 $null $null $null 50 '' }
+            [IO.File]::WriteAllLines($p, [string[]]$old)
+            $script:BbCount = 359; $script:BbLast = $null; Add-BlackBoxSample
+            $n = @(Get-Content -LiteralPath $p).Count
+            if ($n -ne 360) { throw "fichier pas limité : $n lignes" }
+            if (Get-BlackBoxForCrash (Get-Date).AddDays(-400)) { throw "boîte noire associée à un arrêt qui n'existe pas" }
+        } finally {
+            $script:Settings.BlackBox = $keep; $script:BbLast = $keepLast; $script:BbCount = $keepN
+            if ($bak) { [IO.File]::WriteAllBytes($p, $bak) } else { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'Récupération : règles' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'photos, recherche rapide' ((Get-WinfrArgs 'e' 'd' 'regular' 'photos') -join ' ').Substring(0, 30) 'E: D: /regular /a /n *.jpg /n '
+        Is 'tout, approfondie' ((Get-WinfrArgs 'E' 'C' 'extensive' 'all') -join ' ') 'E: C: /extensive /a'
+        foreach ($bad in @(@('E', 'E', 'regular', 'photos'), @('E:', 'D', 'regular', 'photos'), @('E', 'D', 'format', 'photos'), @('E', 'D', 'regular', 'tout /x'), @('E & calc', 'D', 'regular', 'photos'))) {
+            $refused = $false; try { $null = Get-WinfrArgs $bad[0] $bad[1] $bad[2] $bad[3] } catch { $refused = $true }
+            if (-not $refused) { throw "arguments acceptés : $($bad -join ' ')" }
+        }
+        Is 'NTFS effacé récemment' (Get-RecoveryMode 'NTFS' $true) 'regular'
+        Is 'NTFS effacé il y a longtemps' (Get-RecoveryMode 'NTFS' $false) 'extensive'
+        Is 'clé FAT32' (Get-RecoveryMode 'FAT32' $true) 'extensive'
+        Is 'disque illisible' (Get-RecoveryMode '' $true) 'extensive'
+        $sync.RecoverPlan = $null; Get-RecoveryPlan
+        if (-not $sync.RecoverPlan -or -not @($sync.RecoverPlan.Sources).Count) { throw "aucun disque listé" }
+        $refused = $false; try { Start-FileRecovery ($env:SystemDrive.Substring(0, 1)) ($env:SystemDrive.Substring(0, 1)) 'photos' 'regular' } catch { $refused = $true }
+        if (-not $refused) { throw "récupération acceptée vers le disque fouillé" }
+    }
+    Smoke 'Récupération : essai réel avec l outil de Microsoft (si le Store répond sur ce serveur)' {
+        $vhd = 'C:\aerox\test-recup.vhd'
+        try {
+            $tool = Get-Winfr
+            if (-not $tool) { $sync.Errors.Clear(); $ok = Install-Winfr; $tool = Get-Winfr; Write-Host ("        installation depuis le Store : {0}" -f $(if ($tool) { 'réussie' } else { 'impossible sur ce serveur' })) }
+            if (-not $tool) { $sync.Errors.Clear(); return }
+            Write-Host "        outil : $tool"
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk3.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            Initialize-EmptyDisk $n "$((Get-Disk -Number $n).UniqueId)"
+            $letter = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            $rnd = New-Object Random 5
+            foreach ($i in 1..6) { $b = New-Object byte[] 400000; $rnd.NextBytes($b); $b[0] = 0xFF; $b[1] = 0xD8; $b[2] = 0xFF; $b[3] = 0xE0; $b[399998] = 0xFF; $b[399999] = 0xD9; [IO.File]::WriteAllBytes("${letter}:\vacances $i.jpg", $b) }
+            Start-Sleep -Seconds 2
+            Remove-Item -Path "${letter}:\vacances *.jpg" -Force
+            $sync.Errors.Clear(); $sync.RecoverDone = $null
+            Start-FileRecovery $letter ($env:SystemDrive.Substring(0, 1)) 'photos' 'regular'
+            $d = $sync.RecoverDone
+            Write-Host ("        6 photos effacées, {0} retrouvée(s){1}" -f $(if ($d) { $d.Files } else { '?' }), $(if ($d -and $d.Folder) { " dans $($d.Folder)" } else { '' }))
+            foreach ($e in @($sync.Errors)) { Write-Host ("        message : {0} | {1}" -f $e.Title, $e.Cause) }
+            if ($d -and $d.Folder -and $d.Folder -like "$($env:SystemDrive)\Recovery_*") { Remove-Item -LiteralPath $d.Folder -Recurse -Force -ErrorAction SilentlyContinue }
+        } finally {
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
+    }
+    Smoke 'Fenêtres : récupération' {
+        $sync.RecoverPlan = @{ Tool = $false; Sources = @(@{ Letter = 'C'; Label = 'Windows'; Fs = 'NTFS'; Size = 931GB; External = $false; Name = 'Samsung SSD 980' }, @{ Letter = 'E'; Label = ''; Fs = ''; Size = 29GB; External = $true; Name = 'SanDisk Ultra' });
+                               Targets = @(@{ Letter = 'C'; Label = 'Windows'; Free = 210GB; External = $false }) }
+        Show-RecoverDialog
+        $sync.RecoverPlan = @{ Tool = $true; Sources = @(@{ Letter = 'C'; Label = 'Windows'; Fs = 'NTFS'; Size = 931GB; External = $false; Name = '' }); Targets = @(@{ Letter = 'C'; Label = 'Windows'; Free = 210GB; External = $false }) }
+        Show-RecoverDialog
+        $sync.RecoverPlan = $null
+    }
+    # ---------------- 3.4.0 : tests du matériel (stabilité, mémoire) et disques externes
+    Smoke 'Test de stabilité : règles du verdict' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $base = @{ Seconds = 600; Errors = 0; MemErrors = 0; MemPasses = 9; Iter = 5000; Whea = 0; MaxTemp = 78; HeatStop = $false; Ryzen95 = $false; MinPerf = 100; Cancelled = $false }
+        function V($Over) { $r = $base.Clone(); foreach ($k in $Over.Keys) { $r[$k] = $Over[$k] }; return (Get-StabilityVerdict $r) }
+        Is 'tout va bien' (V @{}).Level 'ok'
+        Is 'une erreur de calcul' (V @{ Errors = 1 }).Level 'crit'
+        Is 'une erreur de mémoire' (V @{ MemErrors = 3 }).Level 'crit'
+        Is 'erreur matérielle notée par Windows' (V @{ Whea = 1 }).Level 'crit'
+        Is 'arrêt pour surchauffe' (V @{ HeatStop = $true; MaxTemp = 101 }).Level 'crit'
+        Is 'arrêté après 40 s : pas de conclusion' (V @{ Cancelled = $true; Seconds = 40 }).Level 'info'
+        Is 'arrêté après 5 min sans erreur' (V @{ Cancelled = $true; Seconds = 300 }).Level 'ok'
+        Is '96 °C' (V @{ MaxTemp = 96 }).Level 'warn'
+        Is '95 °C sur un Ryzen prévu pour' (V @{ MaxTemp = 95; Ryzen95 = $true }).Level 'ok'
+        Is 'processeur bridé' (V @{ MinPerf = 55 }).Level 'warn'
+        Is 'température non lue' (V @{ MaxTemp = $null }).Level 'ok'
+        Is 'une erreur passe avant la chaleur' (V @{ Errors = 2; MaxTemp = 97 }).Level 'crit'
+        $t = Get-Date
+        Is 'plantage pendant le test' (Get-StressCrashVerdict $t.AddHours(-2) $t.AddHours(-1) @($t.AddMinutes(-65))) $true
+        Is 'test jamais fini mais pas de plantage noté' (Get-StressCrashVerdict $t.AddHours(-2) $t.AddHours(-1) @()) $false
+        Is 'pas de redémarrage depuis' (Get-StressCrashVerdict $t.AddHours(-1) $t.AddHours(-5) @($t.AddMinutes(-30))) $false
+        Is 'plantage 3 jours après : sans rapport' (Get-StressCrashVerdict $t.AddDays(-4) $t.AddHours(-1) @($t.AddDays(-1))) $false
+        $ev = @([pscustomobject]@{ Id = 1201; TimeCreated = $t.AddDays(-9) }, [pscustomobject]@{ Id = 1202; TimeCreated = $t.AddHours(-1) })
+        Is 'mémoire : erreurs' (Get-MemTestVerdict $ev $t.AddDays(-1)).State 'errors'
+        Is 'mémoire : dernier test sans erreur' (Get-MemTestVerdict @($ev[0]) $t.AddDays(-30)).State 'ok'
+        Is 'mémoire : test pas encore passé' (Get-MemTestVerdict @($ev[0]) $t.AddDays(-1)).State 'none'
+        Is 'mémoire : rien' (Get-MemTestVerdict @() $t.AddDays(-1)).State 'none'
+    }
+    Smoke 'Test de stabilité : 14 secondes pour de vrai, puis arrêt tout seul' {
+        $sync.Errors.Clear(); $sync.StressResult = $null
+        Start-StabilityTest -Seconds 14
+        $r = $sync.StressResult
+        if (-not $r) { throw "pas de résultat" }
+        Write-Host ("        {0} calculs vérifiés, {1} passe(s) de mémoire, {2} erreur(s), {3:N0} s" -f $r.Iter, $r.MemPasses, ($r.Errors + $r.MemErrors), $r.Seconds)
+        if ($r.Iter -lt 1) { throw "aucun calcul fait" }
+        if ($r.Errors -ne 0 -or $r.MemErrors -ne 0) { throw "erreurs de calcul sur un PC sain : $($r.Errors) / $($r.MemErrors)" }
+        if ([AeroxStress]::Running) { throw "le test tourne encore après la fin" }
+        if (Test-Path -LiteralPath (Get-StressMarker)) { throw "marqueur pas retiré après un test terminé" }
+        # Sans nouvelles de la tâche pendant 20 secondes (fenêtre fermée, tâche tuée), la charge s'arrête toute seule
+        [AeroxStress]::Start(2, 64)
+        if (-not [AeroxStress]::Running) { throw "charge pas démarrée" }
+        Start-Sleep -Seconds 26
+        $still = [AeroxStress]::Running; [AeroxStress]::Stop()
+        if ($still) { throw "la charge continue alors que plus personne ne la surveille" }
+        $sync.Progress = 0
+    }
+    Smoke 'Test de mémoire : programmé puis annulé' {
+        $sync.Errors.Clear()
+        $bcd = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+        try {
+            Start-MemoryTest
+            if ($sync.Errors.Count) { Write-Host "        (outil de test absent sur ce serveur : message d'erreur affiché, rien de programmé)"; $sync.Errors.Clear() }
+            else {
+                if ("$(& $bcd /enum '{bootmgr}' 2>&1)" -notmatch '(?i)bootsequence') { throw "test pas programmé" }
+                if (-not (Test-Path -LiteralPath (Get-MemTestMarker))) { throw "heure du test pas notée" }
+                $st = Get-MemTestCardStatus
+                if (-not $st -or $st.A -ne 'Clear-MemoryTest') { throw "la carte ne propose pas d'annuler" }
+                if (-not (Test-SafeUndo 'Clear-MemoryTest')) { throw "annulation refusée" }
+                Clear-MemoryTest
+                if ("$(& $bcd /enum '{bootmgr}' 2>&1)" -match '(?i)bootsequence') { throw "test pas annulé" }
+                if (Test-Path -LiteralPath (Get-MemTestMarker)) { throw "marqueur pas retiré" }
+            }
+        } finally { $null = & $bcd /deletevalue '{bootmgr}' bootsequence 2>&1; Remove-Item -LiteralPath (Get-MemTestMarker) -Force -ErrorAction SilentlyContinue; $sync.NeedReboot = $false }
+        # Un test de stabilité jamais terminé, sans plantage noté depuis : rien n'est affiché, le marqueur est retiré
+        [IO.File]::WriteAllText((Get-StressMarker), (Get-Date).AddMinutes(-1).ToString('o'))
+        $p = @(Get-PendingTestResults)
+        if ($p.Count -or (Test-Path -LiteralPath (Get-StressMarker))) { throw "faux résultat de test en attente" }
+    }
+    Smoke 'Fenêtres : résultat des tests' {
+        Show-TestResultDialog @{ Kind = 'mem'; State = 'ok'; Time = (Get-Date).AddMinutes(-20) }
+        Show-TestResultDialog @{ Kind = 'mem'; State = 'errors'; Time = (Get-Date).AddMinutes(-20) }
+        Show-TestResultDialog @{ Kind = 'stress'; State = 'crash'; Time = (Get-Date).AddMinutes(-20) }
+    }
+    Smoke 'Disque externe : règles (signatures, problèmes, ce qui peut être formaté)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        function Buf([int]$At, [string]$Text) { $b = New-Object byte[] 4096; [Text.Encoding]::ASCII.GetBytes($Text).CopyTo($b, $At); return ,$b }
+        Is 'BitLocker' (ConvertTo-FsSignature (Buf 3 '-FVE-FS-')) 'bitlocker'
+        Is 'NTFS' (ConvertTo-FsSignature (Buf 3 'NTFS    ')) 'ntfs'
+        Is 'exFAT' (ConvertTo-FsSignature (Buf 3 'EXFAT   ')) 'exfat'
+        Is 'FAT32' (ConvertTo-FsSignature (Buf 0x52 'FAT32   ')) 'fat'
+        $ext = New-Object byte[] 4096; $ext[0x438] = 0x53; $ext[0x439] = 0xEF
+        Is 'Linux (ext4)' (ConvertTo-FsSignature $ext) 'linux'
+        Is 'Linux chiffré' (ConvertTo-FsSignature (Buf 0 'LUKS')) 'linux'
+        Is 'Mac (APFS)' (ConvertTo-FsSignature (Buf 32 'NXSB')) 'mac'
+        Is 'vierge' (ConvertTo-FsSignature (New-Object byte[] 4096)) 'blank'
+        $rnd = New-Object byte[] 4096; (New-Object Random 3).NextBytes($rnd); $rnd[0x438] = 0; $rnd[3] = 0; $rnd[0] = 0; $rnd[32] = 0; $rnd[1024] = 0; $rnd[0x52] = 0; $rnd[0x36] = 0
+        Is 'inconnu' (ConvertTo-FsSignature $rnd) 'unknown'
+        Is 'trop court' (ConvertTo-FsSignature (New-Object byte[] 100)) ''
+        function D($Over) { $d = @{ Size = 32GB; IsOffline = $false; IsReadOnly = $false; Blank = $false; Parts = @() }; foreach ($k in $Over.Keys) { $d[$k] = $Over[$k] }; return $d }
+        function Kinds($d) { return ((@(Get-ExtDiskProblems $d) | ForEach-Object { $_.Kind }) -join ',') }
+        $good = @{ Number = 1; Letter = 'E'; Fs = 'FAT32'; Size = 30GB; Dirty = $false; Sig = '' }
+        Is 'clé saine' (Kinds (D @{ Parts = @($good) })) ''
+        Is 'lecteur sans carte' (Kinds (D @{ Size = 0 })) 'nomedia'
+        Is 'hors ligne' (Kinds (D @{ IsOffline = $true; Parts = @($good) })) 'offline'
+        Is 'protégée en écriture' (Kinds (D @{ IsReadOnly = $true; Parts = @($good) })) 'readonly'
+        Is 'sans lettre' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = ''; Fs = 'NTFS'; Dirty = $false; Sig = '' }) })) 'noletter'
+        Is 'fichiers abîmés' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'exFAT'; Dirty = $true; Sig = '' }) })) 'dirty'
+        Is 'aucune partition' (Kinds (D @{})) 'empty'
+        Is 'BitLocker : pas une panne' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = ''; Sig = 'bitlocker' }) })) 'bitlocker'
+        Is 'disque de Mac' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = ''; Fs = 'RAW'; Sig = 'mac' }) })) 'foreign'
+        Is 'partition vierge' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'blank' }) })) 'unformatted'
+        Is 'NTFS abîmé' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'ntfs' }) })) 'damaged'
+        Is 'illisible' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'unknown' }) })) 'rawunknown'
+        Is 'formatable : illisible' (Test-ExtDiskFormattable (D @{ Parts = @(@{ Number = 1; Fs = 'RAW'; Sig = 'unknown' }) })) $true
+        Is 'formatable : aucune partition' (Test-ExtDiskFormattable (D @{})) $true
+        Is 'jamais : une partition lisible' (Test-ExtDiskFormattable (D @{ Parts = @($good) })) $false
+        Is 'jamais : une lisible + une illisible' (Test-ExtDiskFormattable (D @{ Parts = @($good, @{ Number = 2; Fs = 'RAW'; Sig = 'unknown' }) })) $false
+        Is 'jamais : BitLocker' (Test-ExtDiskFormattable (D @{ Parts = @(@{ Number = 1; Fs = ''; Sig = 'bitlocker' }) })) $false
+        Is 'jamais : hors ligne' (Test-ExtDiskFormattable (D @{ IsOffline = $true })) $false
+        Is 'jamais : lecteur sans carte' (Test-ExtDiskFormattable (D @{ Size = 0 })) $false
+    }
+    Smoke 'Disque externe : un disque interne est toujours refusé' {
+        $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
+        $n = [int]$sys.Number; $id = "$($sys.UniqueId)"; $before = @(Get-Partition -DiskNumber $n).Count
+        foreach ($t in @({ Format-ExternalDisk $n $id }, { Set-ExtDiskOnline $n $id }, { Clear-ExtDiskReadOnly $n $id }, { Add-ExtDiskLetter $n 1 $id }, { Repair-ExternalVolume ($env:SystemDrive.Substring(0, 1)) }, { Repair-ExternalVolume 'C:\' })) {
+            $refused = $false; try { & $t } catch { $refused = $true }
+            if (-not $refused) { throw "DISQUE INTERNE ACCEPTÉ : $t" }
+        }
+        if (@(Get-Partition -DiskNumber $n).Count -ne $before) { throw "LE DISQUE DE WINDOWS A ÉTÉ MODIFIÉ" }
+        if (@(Get-ExternalDisks | Where-Object { $_.Number -eq $n }).Count) { throw "le disque de Windows est listé comme externe" }
+        $sync.Errors.Clear(); Get-ExternalDiskReport
+        foreach ($e in @($sync.Errors)) { Write-Host ("        {0}" -f $e.Title) }
+        $sync.Errors.Clear()
+    }
+    # ---------------- 3.4.0 : PC neuf / Windows réinstallé
+    Smoke 'PC neuf : règles (âge de Windows, disque vide, mémoire)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $now = Get-Date; $u = { param($d) [long]([DateTimeOffset]$d).ToUnixTimeSeconds() }
+        Is 'installé il y a 5 jours' (Get-InstallAgeDays @((& $u $now.AddDays(-5))) $now) 5
+        Is 'grosse mise à jour il y a 5 jours, Windows de 2 ans' (Get-InstallAgeDays @((& $u $now.AddDays(-5)), (& $u $now.AddDays(-700))) $now) 700
+        Is 'date illisible' (Get-InstallAgeDays @(0) $now) -1
+        $d = [pscustomobject]@{ IsBoot = $false; IsSystem = $false; IsOffline = $false; IsReadOnly = $false; BusType = 'NVMe'; Size = 1000GB; PartitionStyle = 'RAW' }
+        Is 'disque neuf vierge' (Test-EmptyDisk $d 0 $true) $true
+        Is 'non initialisé mais pas vierge (chiffré ?)' (Test-EmptyDisk $d 0 $false) $false
+        Is 'a une partition' (Test-EmptyDisk $d 1 $true) $false
+        $g = $d.PSObject.Copy(); $g.PartitionStyle = 'GPT'
+        Is 'initialisé sans partition' (Test-EmptyDisk $g 0 $false) $true
+        Is 'initialisé avec partition' (Test-EmptyDisk $g 2 $false) $false
+        foreach ($prop in 'IsBoot', 'IsSystem', 'IsOffline', 'IsReadOnly') { $x = $d.PSObject.Copy(); $x.$prop = $true; Is "refusé : $prop" (Test-EmptyDisk $x 0 $true) $false }
+        foreach ($bus in 'USB', 'SD', 'MMC') { $x = $d.PSObject.Copy(); $x.BusType = $bus; Is "refusé : $bus" (Test-EmptyDisk $x 0 $true) $false }
+        $x = $d.PSObject.Copy(); $x.Size = 4GB; Is 'trop petit' (Test-EmptyDisk $x 0 $true) $false
+        Is 'rien' (Test-EmptyDisk $null 0 $true) $false
+        Is 'DDR4 2133' (Test-RamBaseSpeed 26 2133) $true
+        Is 'DDR4 3600' (Test-RamBaseSpeed 26 3600) $false
+        Is 'DDR5 4800' (Test-RamBaseSpeed 34 4800) $true
+        Is 'DDR5 6000' (Test-RamBaseSpeed 34 6000) $false
+        Is 'vitesse inconnue' (Test-RamBaseSpeed 26 0) $false
+        $apps = @(Get-NewPcApps)
+        if ($apps.Count -ne @($script:NewPcApps).Count -or $apps.Count -lt 8) { throw "liste des logiciels incomplète" }
+        Write-Host ("        déjà installés ici : {0}" -f ((@($apps | Where-Object { $_.Installed } | ForEach-Object { $_.Name })) -join ', '))
+        $sync.Errors.Clear(); Install-PickedApps @('Pas.DansLaListe', 'evil --override x')
+        if ($sync.Errors.Count) { throw "un logiciel hors liste a été tenté" }
+        $age = Get-WindowsInstallAge
+        if ($age -lt 0) { throw "âge de Windows illisible" }
+        Write-Host ("        Windows installé depuis {0} jour(s) sur ce PC" -f $age)
+    }
+    Smoke 'PC neuf : disque vide préparé (disque virtuel), disque pas vierge refusé' {
+        $vhd = 'C:\aerox\test-vide.vhd'; $vhd2 = 'C:\aerox\test-plein.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        function New-TestDisk([string]$Path) {
+            if (Test-Path -LiteralPath $Path) { try { Dismount-DiskImage -ImagePath $Path -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $Path -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$Path`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = (Get-DiskImage -ImagePath $Path -ErrorAction Stop).Number
+            if ($null -eq $n) { throw "disque virtuel pas attaché" }
+            $dk = Get-Disk -Number $n
+            if ($dk.IsOffline) { Set-Disk -Number $n -IsOffline $false }
+            if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            return [int]$n
+        }
+        try {
+            $n = New-TestDisk $vhd
+            $d = Get-Disk -Number $n
+            Write-Host ("        disque virtuel n° {0} : {1}, {2}, bus {3}" -f $n, $d.PartitionStyle, (Format-Size ([double]$d.Size)), $d.BusType)
+            if (-not (Test-DiskBlank $n)) { throw "disque neuf pas vu comme vierge" }
+            $e = @(Get-EmptyDisks | Where-Object { $_.Number -eq $n })
+            if ($e.Count -ne 1) { throw "disque vide pas proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n 'un-autre-disque' } catch { $refused = $true }
+            if (-not $refused -or (Get-DiskUsedPartitions $n) -ne 0) { throw "mauvais identifiant : le disque devait être refusé sans être touché" }
+            $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
+            $refused = $false; try { Initialize-EmptyDisk ([int]$sys.Number) "$($sys.UniqueId)" } catch { $refused = $true }
+            if (-not $refused) { throw "LE DISQUE DE WINDOWS A ÉTÉ ACCEPTÉ" }
+            Initialize-EmptyDisk $n $e[0].Id
+            $vol = @(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter } | Get-Volume)
+            if ($vol.Count -ne 1 -or "$($vol[0].FileSystem)" -ne 'NTFS' -or "$($vol[0].FileSystemLabel)" -ne 'Données') { throw "disque mal préparé : $($vol.Count) volume(s)" }
+            Write-Host ("        préparé : {0}: {1} {2}" -f $vol[0].DriveLetter, $vol[0].FileSystem, $vol[0].FileSystemLabel)
+            if (@(Get-EmptyDisks | Where-Object { $_.Number -eq $n }).Count) { throw "un disque préparé est encore proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n $e[0].Id } catch { $refused = $true }
+            if (-not $refused) { throw "un disque qui a une partition a été accepté" }
+            # Disque non initialisé mais pas vierge (comme un disque chiffré en entier) : jamais proposé, jamais touché
+            $n2 = New-TestDisk $vhd2
+            $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$n2", [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+            try { $junk = New-Object byte[] 4096; (New-Object Random 7).NextBytes($junk); $junk[510] = 0; $junk[511] = 0; $fs.Position = 8192; $fs.Write($junk, 0, $junk.Length); $fs.Flush() } finally { $fs.Dispose() }
+            $d2 = Get-Disk -Number $n2
+            Write-Host ("        disque « chiffré » n° {0} : {1}" -f $n2, $d2.PartitionStyle)
+            if (Test-DiskBlank $n2) { throw "disque avec des données vu comme vierge" }
+            if (@(Get-EmptyDisks | Where-Object { $_.Number -eq $n2 }).Count) { throw "disque pas vierge proposé" }
+            $refused = $false; try { Initialize-EmptyDisk $n2 "$($d2.UniqueId)" } catch { $refused = $true }
+            if (-not $refused -or "$((Get-Disk -Number $n2).PartitionStyle)" -ne 'RAW') { throw "DISQUE PAS VIERGE TOUCHÉ" }
+        } finally {
+            foreach ($f in $vhd, $vhd2) { try { Dismount-DiskImage -ImagePath $f -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'PC neuf : liste guidée sur ce PC' {
+        $sync.NewPc = $null; Get-NewPcPlan
+        if (-not $sync.NewPc -or @($sync.NewPc.Items).Count -lt 6) { throw "liste incomplète" }
+        foreach ($it in $sync.NewPc.Items) { if ($it.State -notin 'ok', 'todo', 'info' -or -not $it.Title) { throw "ligne mal formée : $($it.Id)" } }
+    }
+    Smoke 'Fenêtre : préparer ce PC' {
+        $sync.NewPc = @{ Age = 3; Todo = 3; Items = @(
+            @{ Id = 'activation'; State = 'ok'; Title = 'Windows est activé'; Detail = 'Ta licence est reconnue.'; Btn = ''; Arg = $null },
+            @{ Id = 'wupdate'; State = 'todo'; Title = '12 mise(s) à jour de Windows à installer'; Detail = "Un Windows tout juste installé a toujours du retard."; Btn = 'Installer'; Arg = $null },
+            @{ Id = 'drivers'; State = 'todo'; Title = "La carte graphique n'a pas son pilote"; Detail = 'Windows utilise son pilote de secours.'; Btn = 'Voir les pilotes'; Arg = $null },
+            @{ Id = 'disk'; State = 'todo'; Title = 'Un disque de 932 Go est vide et pas encore utilisable'; Detail = 'Samsung SSD 870 EVO 1TB'; Btn = 'Le préparer'; Arg = @{ Number = 1; Name = 'Samsung SSD 870 EVO 1TB'; Size = 1000GB; Id = 'x' } },
+            @{ Id = 'ram'; State = 'info'; Title = 'Mémoire à 2133 MT/s : la vitesse de base'; Detail = "Si l'étiquette de tes barrettes annonce plus, active XMP / EXPO."; Btn = ''; Arg = $null },
+            @{ Id = 'apps'; State = 'info'; Title = 'Logiciels utiles'; Detail = 'Pas encore installés : Discord, Steam, 7-Zip.'; Btn = 'Choisir'; Arg = @() },
+            @{ Id = 'bios'; State = 'info'; Title = 'BIOS de la carte mère'; Detail = 'Pas urgent.'; Btn = 'Voir la page'; Arg = $null }) }
+        Show-NewPcDialog
+        $sync.NewPc = $null
+    }
+    Smoke 'Fenêtre : logiciels utiles' {
+        $r = @(Show-NewPcAppsDialog @(@{ Id = 'Discord.Discord'; Name = 'Discord'; Cat = 'Discussion'; Installed = $false }, @{ Id = '7zip.7zip'; Name = '7-Zip'; Cat = 'Fichiers compressés (zip, rar)'; Installed = $true }, @{ Id = 'Valve.Steam'; Name = 'Steam'; Cat = 'Jeux'; Installed = $false }))
+        if ($r.Count) { throw "rien n'était coché, rien ne doit être installé" }
+    }
+    Smoke 'PC neuf : bandeau de l accueil' {
+        $keepH = $script:Settings.NewPcHide; $keepA = $script:WinAge
+        try {
+            $script:Settings.NewPcHide = $false; $script:WinAge = 4
+            if (-not (Test-NewPcBanner)) { throw "bandeau absent sur un Windows de 4 jours" }
+            Show-Page 'home'
+            $script:WinAge = 400; if (Test-NewPcBanner) { throw "bandeau sur un vieux Windows" }
+            $script:WinAge = 4; $script:Settings.NewPcHide = $true; if (Test-NewPcBanner) { throw "bandeau malgré « Ne plus afficher »" }
+        } finally { $script:Settings.NewPcHide = $keepH; $script:WinAge = $keepA; Show-Page 'home' }
+    }
+    # ---------------- 3.4.0 : écrans bleus expliqués
+    Smoke 'Écran bleu : règles (codes, contexte, série, mémoire)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        if ($script:BugChecks.Count -lt 55) { throw "table des codes trop courte : $($script:BugChecks.Count)" }
+        foreach ($k in $script:BugChecks.Keys) { if ($k -notmatch '^0x[0-9A-F]{8}$' -or @($script:BugChecks[$k]).Count -ne 3 -or $script:BugChecks[$k][2] -notin 'drv', 'hw', 'gpu', 'sys', 'ram', 'disk', 'cpu', 'usb', 'manual') { throw "code mal rangé : $k" } }
+        Is 'variante 0x1000007E' (ConvertTo-BugCheckKey '0x1000007E') '0x0000007E'
+        Is 'code NT' (ConvertTo-BugCheckKey '0xC000021A') '0xC000021A'
+        Is 'code illisible' (ConvertTo-BugCheckKey 'zz') ''
+        $c = ConvertFrom-BugCheckText 'The bugcheck was: 0x0000009f (0x0000000000000003, 0xffffe001, 0x0, 0x0). A dump was saved'
+        Is 'texte de Windows' "$($c.Code) $($c.P1)" '0x0000009F 0x3'
+        Is 'WHEA processeur' (Get-BugCheckInfo '0x00000124' '0x0').Kind 'cpu'
+        Is 'WHEA sans détail' (Get-BugCheckInfo '0x00000124' '').Kind 'hw'
+        Is 'bouton maintenu' (Get-BugCheckInfo '0x000001C8').Kind 'manual'
+        Is 'code inconnu' (Get-BugCheckInfo '0x12345678').Name 'Erreur système'
+        foreach ($kd in 'drv', 'hw', 'gpu', 'sys', 'ram', 'disk', 'cpu', 'usb') { if (@(Get-BugCheckSteps $kd).Count -lt 2) { throw "pas d'étapes pour $kd" } }
+        $now = Get-Date
+        $wer = @(@{ Time = $now.AddDays(-2); Code = '0x0000007E'; P1 = ''; Src = 'rapport' })
+        $kp = @(@{ Time = $now.AddDays(-2).AddMinutes(1); Code = '0x0000007E'; P1 = ''; Src = 'redémarrage' }, @{ Time = $now.AddDays(-5); Code = '0x00000124'; P1 = '0x0'; Src = 'redémarrage' })
+        $m = @(Merge-BsodEvents $wer $kp); Is 'même redémarrage compté une fois' $m.Count 2; Is 'tri par date' $m[0].Code '0x00000124'
+        Is 'rien' (@(Merge-BsodEvents $null $null).Count) 0
+        $h = ConvertFrom-DumpHead ("0x0000007E|0x1|0x2|0x3|0x4|{0}|{1}" -f $now.AddHours(-3).ToFileTime(), ([long]125 * 600000000))
+        Is 'durée depuis le démarrage' $h.UpMin 125
+        $h = ConvertFrom-DumpHead '0x0000007E|0x1|0x2|0x3|0x4|12345|99999999999999999999'
+        Is 'en-tête absurde ignoré' "$($h.CrashTime)|$($h.UpMin)" '|-1'
+        Is 'au démarrage' (Get-BsodContext $now 1 @() @()).Kind 'boot'
+        Is 'au réveil' (Get-BsodContext $now 300 @($now.AddMinutes(-2)) @($now.AddMinutes(-30))).Kind 'wake'
+        Is 'à la mise en veille' (Get-BsodContext $now 300 @($now.AddMinutes(-4)) @($now.AddMinutes(-1))).Kind 'sleep'
+        Is 'en pleine utilisation' (Get-BsodContext $now 300 @($now.AddHours(-3)) @()).Text 'en pleine utilisation (PC allumé depuis 5 h)'
+        Is 'contexte inconnu : rien d inventé' (Get-BsodContext $null -1 @() @()).Kind ''
+        $ws = $now.AddDays(-90)
+        Is 'début de série' (Get-BsodSeriesStart @($now.AddDays(-1), $now.AddDays(-3), $now.AddDays(-40)) $ws) $now.AddDays(-3)
+        Is 'série trop ancienne pour être datée' (Get-BsodSeriesStart @($now.AddDays(-80), $now.AddDays(-70)) $ws) ''
+        Is 'historique trop court' (Get-BsodSeriesStart @($now.AddDays(-2)) $now.AddDays(-5)) ''
+        Is 'rapports coupés' (Get-CrashDumpVerdict 0 $true) 'off'
+        Is 'pas de fichier d échange' (Get-CrashDumpVerdict 7 $false) 'nopagefile'
+        Is 'réglage normal' (Get-CrashDumpVerdict 7 $true) 'ok'
+        $d = @{ File = '110126-1.dmp'; Date = $now; CrashTime = $now.AddMinutes(-3); UpMin = 12.5; Code = '0x0000007E'; P1 = '0x1'; Culprit = @{ Name = 'nvlddmkm.sys'; Company = 'NVIDIA|Corp'; Desc = 'x'; Kind = 'gpu' }; Readable = $true; Stack = 'a.sys, b.sys' }
+        $r = ConvertFrom-BsodMemoryLine (ConvertTo-BsodMemoryLine $d)
+        Is 'mémoire relue' "$($r.File) $($r.UpMin) $($r.Culprit.Name) $($r.Culprit.Company) $($r.Readable) $($r.Memory) $($r.Date -eq $now)" '110126-1.dmp 12.5 nvlddmkm.sys NVIDIA Corp True True True'
+        Is 'ligne abîmée ignorée' ((ConvertFrom-BsodMemoryLine 'n importe quoi') -eq $null) True
+    }
+    Smoke 'Écran bleu : faux rapport lu, gardé par le nettoyage, retenu après effacement' {
+        $dir = Join-Path $env:SystemRoot 'Minidump'; $made = -not (Test-Path -LiteralPath $dir)
+        if ($made) { [void](New-Item -ItemType Directory -Path $dir -Force) }
+        $mem = Get-BsodMemoryPath; $bak = $null; if (Test-Path -LiteralPath $mem) { $bak = [IO.File]::ReadAllBytes($mem) }
+        $f = Join-Path $dir 'aerox-test-recent.dmp'; $old = Join-Path $dir 'aerox-test-ancien.dmp'
+        try {
+            $crash = (Get-Date).AddMinutes(-20)
+            $b = New-Object byte[] 0x4000
+            [Text.Encoding]::ASCII.GetBytes('PAGEDU64').CopyTo($b, 0)
+            [BitConverter]::GetBytes([uint32]0x1000007E).CopyTo($b, 0x38)
+            [BitConverter]::GetBytes([uint64]5).CopyTo($b, 0x40)
+            [BitConverter]::GetBytes([uint32]2).CopyTo($b, 0xF98)
+            [BitConverter]::GetBytes([long]$crash.ToFileTime()).CopyTo($b, 0xFA8)
+            [BitConverter]::GetBytes([long](90 * 600000000)).CopyTo($b, 0x1030)
+            [IO.File]::WriteAllBytes($f, $b); [IO.File]::WriteAllBytes($old, $b); (Get-Item -LiteralPath $old).LastWriteTime = (Get-Date).AddDays(-45)
+            $h = ConvertFrom-DumpHead ([AeroxDump]::Head($f))
+            if ($h.Code -ne '0x0000007E' -or $h.P1 -ne '0x5' -or $h.UpMin -ne 90 -or -not $h.CrashTime -or [math]::Abs(($h.CrashTime - $crash).TotalSeconds) -gt 2) { throw "en-tête mal lu : $($h.Code) $($h.P1) $($h.UpMin) $($h.CrashTime)" }
+            $dirs = @(Get-ErrorDirs)
+            if ($dirs -contains $f -or $dirs -contains $dir) { throw "le nettoyage effacerait un rapport d'écran bleu récent" }
+            if ($dirs -notcontains $old) { throw "le rapport de 45 jours devrait partir au nettoyage" }
+            $an = Get-BsodAnalysis (Get-Date).AddDays(-1)
+            $mine = @($an.Dumps | Where-Object { $_.File -eq 'aerox-test-recent.dmp' })
+            if ($mine.Count -ne 1 -or $mine[0].Code -ne '0x0000007E' -or $mine[0].UpMin -ne 90 -or $mine[0].Memory) { throw "rapport mal analysé" }
+            Remove-Item -LiteralPath $f -Force
+            $an = Get-BsodAnalysis (Get-Date).AddDays(-1)
+            $mine = @($an.Dumps | Where-Object { $_.File -eq 'aerox-test-recent.dmp' })
+            if ($mine.Count -ne 1 -or -not $mine[0].Memory -or $mine[0].Code -ne '0x0000007E') { throw "rapport effacé : la mémoire d'AEROX ne l'a pas retenu" }
+            Write-Host ("        contexte : {0}" -f (Get-BsodContext $mine[0].CrashTime $mine[0].UpMin @() @()).Text)
+        } finally {
+            foreach ($x in $f, $old) { if (Test-Path -LiteralPath $x) { Remove-Item -LiteralPath $x -Force -ErrorAction SilentlyContinue } }
+            if ($made) { Remove-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue }
+            if ($bak) { [IO.File]::WriteAllBytes($mem, $bak) } elseif (Test-Path -LiteralPath $mem) { Remove-Item -LiteralPath $mem -Force -ErrorAction SilentlyContinue }
+        }
+    }
+    Smoke 'Écran bleu : réglage des rapports (lu, coupé, remis)' {
+        $ds = Get-CrashDumpState
+        Write-Host ("        réglage de ce PC : mode {0}, fichier d'échange {1}, verdict {2}" -f $ds.Mode, $ds.PageFile, $ds.Verdict)
+        $keepUndo = $script:AeroxUndo; $script:AeroxUndo = $true
+        try {
+            Set-CrashDumpMode 0
+            if ((Get-CrashDumpState).Verdict -ne 'off') { throw "réglage coupé mais pas vu" }
+            Set-CrashDumpMode $ds.Mode
+            if ((Get-CrashDumpState).Mode -ne $ds.Mode) { throw "réglage pas remis" }
+            $bad = $false; try { Set-CrashDumpMode 9 } catch { $bad = $true }
+            if (-not $bad) { throw "valeur inconnue acceptée" }
+        } finally { try { Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name CrashDumpEnabled -Value $ds.Mode -Type DWord } catch {}; $script:AeroxUndo = $keepUndo }
+        if (-not (Test-SafeUndo "Set-CrashDumpMode 7")) { throw "annulation refusée" }
+    }
+    Smoke 'Écran bleu : rapport complet sur ce PC' {
+        $v = Get-BsodVerdict (Get-Date).AddDays(-90)
+        Write-Host ("        {0} écran(s) bleu(s), {1} arrêt(s) forcé(s)" -f $v.Count, $v.Manual)
+        foreach ($l in $v.Lines) { Write-Host "     $l" }
+        $ch = @(Get-ChangesBefore (Get-Date) 30)
+        Write-Host ("        installé ces 30 derniers jours : {0} élément(s)" -f $ch.Count)
+        foreach ($c in ($ch | Select-Object -First 6)) { Write-Host ("        {0:dd/MM} {1} : {2}" -f $c.When, $c.Kind, $c.Text) }
+        Get-BsodReport
+    }
+    # ---------------- 3.4.0 : pile de la carte mère
+    Smoke 'Pile de la carte mère : horloge qui recule au démarrage' {
+        $now = Get-Date
+        function Ev($Id, $Rec, $T, $Old = $null, $New = $null) { [pscustomobject]@{ Id = $Id; RecordId = $Rec; TimeCreated = $T; OldTime = $Old; NewTime = $New } }
+        $old = Get-Date '2020-01-01 00:00:10'
+        $ev = @(
+            (Ev 12 10 $now.AddDays(-20)), (Ev 13 11 $now.AddDays(-19)),
+            (Ev 12 12 $old), (Ev 1 13 $old.AddMinutes(2) $old.AddMinutes(2) $now.AddDays(-18)), (Ev 13 14 $now.AddDays(-17)),
+            (Ev 12 15 $now.AddDays(-16)), (Ev 13 16 $now.AddDays(-15)),
+            (Ev 12 17 $old), (Ev 13 18 $old.AddHours(1))
+        )
+        $r = @(Get-RtcResets ($ev | Sort-Object { Get-Random }) $now.AddDays(-180))
+        if ($r.Count -ne 2) { throw "2 remises à zéro attendues, obtenu $($r.Count)" }
+        if (-not $r[0].Fixed -or $r[0].WrongDate.Year -ne 2020 -or $r[1].Fixed) { throw "détail faux" }
+        # Démarrages normaux, heure d'été, double démarrage Linux (quelques heures), remise à l'heure manuelle : rien
+        $ok = @((Ev 12 1 $now.AddDays(-3)), (Ev 13 2 $now.AddDays(-2)), (Ev 12 3 $now.AddDays(-2).AddHours(-5)), (Ev 1 4 $now.AddDays(-1) $now.AddDays(-1) $now.AddDays(-30)), (Ev 12 5 $now))
+        if (@(Get-RtcResets $ok $now.AddDays(-180)).Count) { throw "fausse alerte" }
+        if (@(Get-RtcResets $ev $now.AddDays(-10)).Count) { throw "« C'est fait » ignoré" }
+        $keep = $script:Issues
+        try { $script:Issues = New-Object System.Collections.ArrayList; Test-RtcBattery; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
+        finally { $script:Issues = $keep }
+    }
     # ---------------- 3.3.0 : dépannages élargis
     Smoke '3.3 : règles (mémoire qui déborde, coupables, réveils)' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }

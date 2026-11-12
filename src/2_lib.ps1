@@ -612,7 +612,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
+    $allowed = 'Clear-MemoryTest', 'Set-CrashDumpMode', 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -3024,7 +3024,7 @@ function Get-WuErrorInfo([string]$Code) {
 $script:BugChecks = @{
     '0x0000000A' = @('IRQL_NOT_LESS_OR_EQUAL', "Un pilote (souvent réseau, audio ou graphique) a accédé à la mémoire au mauvais moment. Ça peut aussi venir de la RAM ou d'un overclocking instable.", 'drv')
     '0x000000D1' = @('DRIVER_IRQL_NOT_LESS_OR_EQUAL', "Un pilote de périphérique est fautif : le plus souvent la carte réseau / Wi-Fi ou la carte graphique.", 'drv')
-    '0x0000001A' = @('MEMORY_MANAGEMENT', "Problème de mémoire vive : barrette de RAM défectueuse, profil XMP/EXPO instable ou pilote fautif.", 'hw')
+    '0x0000001A' = @('MEMORY_MANAGEMENT', "Problème de mémoire vive : barrette de RAM défectueuse, profil XMP/EXPO instable ou pilote fautif.", 'ram')
     '0x0000003B' = @('SYSTEM_SERVICE_EXCEPTION', "Un pilote ou un fichier système a planté (souvent le pilote graphique ou un antivirus tiers).", 'drv')
     '0x00000050' = @('PAGE_FAULT_IN_NONPAGED_AREA', "Windows a voulu lire une zone mémoire invalide : RAM, pilote ou fichier système abîmé.", 'hw')
     '0x0000007E' = @('SYSTEM_THREAD_EXCEPTION_NOT_HANDLED', "Un pilote a planté, souvent juste après une mise à jour de pilote.", 'drv')
@@ -3036,6 +3036,52 @@ $script:BugChecks = @{
     '0x00000133' = @('DPC_WATCHDOG_VIOLATION', "Un pilote a bloqué le système trop longtemps, souvent celui du SSD ou un pilote ancien.", 'drv')
     '0x00000139' = @('KERNEL_SECURITY_CHECK_FAILURE', "Un pilote incompatible, ou des fichiers système / la RAM abîmés.", 'drv')
     '0x000000EF' = @('CRITICAL_PROCESS_DIED', "Un processus vital de Windows s'est arrêté : fichiers système abîmés ou disque défaillant.", 'sys')
+    '0x00000001' = @('APC_INDEX_MISMATCH', "Un pilote a mal terminé une opération : souvent un pilote d'imprimante, audio ou graphique, juste après une mise à jour.", 'drv')
+    '0x00000018' = @('REFERENCE_BY_POINTER', "Un pilote a mal géré un objet de Windows : pilote ancien ou incompatible.", 'drv')
+    '0x00000019' = @('BAD_POOL_HEADER', "La mémoire du système a été abîmée par un pilote, ou la RAM a un défaut.", 'drv')
+    '0x0000001E' = @('KMODE_EXCEPTION_NOT_HANDLED', "Un pilote a fait une opération interdite : le plus souvent un pilote ancien ou incompatible.", 'drv')
+    '0x00000024' = @('NTFS_FILE_SYSTEM', "Erreur dans la lecture du disque (système de fichiers) : disque ou SSD qui fatigue, ou fichiers abîmés par une coupure.", 'disk')
+    '0x0000003D' = @('INTERRUPT_EXCEPTION_NOT_HANDLED', "Un pilote a planté pendant qu'il répondait au matériel.", 'drv')
+    '0x00000044' = @('MULTIPLE_IRP_COMPLETE_REQUESTS', "Un pilote a terminé deux fois la même opération : pilote fautif.", 'drv')
+    '0x0000004E' = @('PFN_LIST_CORRUPT', "La liste des pages de mémoire est abîmée : barrette de RAM défectueuse, profil XMP/EXPO instable, ou pilote fautif.", 'ram')
+    '0x00000051' = @('REGISTRY_ERROR', "Windows n'a pas pu lire sa base de registre : disque défaillant ou fichiers système abîmés.", 'disk')
+    '0x00000074' = @('BAD_SYSTEM_CONFIG_INFO', "La configuration de démarrage de Windows est abîmée, souvent après une coupure ou une mise à jour ratée.", 'sys')
+    '0x00000077' = @('KERNEL_STACK_INPAGE_ERROR', "Windows n'a pas pu relire ses propres données sur le disque : disque ou SSD défaillant, câble SATA, ou RAM.", 'disk')
+    '0x0000007A' = @('KERNEL_DATA_INPAGE_ERROR', "Windows n'a pas pu relire ses propres données sur le disque : disque ou SSD défaillant, câble SATA, ou RAM.", 'disk')
+    '0x0000007B' = @('INACCESSIBLE_BOOT_DEVICE', "Windows ne trouve plus son disque au démarrage : mode SATA changé dans le BIOS (AHCI / RAID), pilote de stockage, ou disque défaillant.", 'disk')
+    '0x00000080' = @('NMI_HARDWARE_FAILURE', "Le matériel a signalé une panne (carte mère, RAM, carte fille).", 'hw')
+    '0x0000008E' = @('KERNEL_MODE_EXCEPTION_NOT_HANDLED', "Un pilote a fait une opération interdite : pilote ancien ou incompatible, parfois la RAM.", 'drv')
+    '0x0000009C' = @('MACHINE_CHECK_EXCEPTION', "Le processeur a signalé lui-même une erreur grave : overclocking instable, surchauffe ou alimentation.", 'cpu')
+    '0x000000A0' = @('INTERNAL_POWER_ERROR', "Erreur dans la gestion de l'alimentation de Windows : mise en veille prolongée, pilote graphique ou pilote de stockage.", 'drv')
+    '0x000000BE' = @('ATTEMPTED_WRITE_TO_READONLY_MEMORY', "Un pilote a écrit dans une zone de mémoire protégée : pilote fautif.", 'drv')
+    '0x000000C1' = @('SPECIAL_POOL_DETECTED_MEMORY_CORRUPTION', "Un pilote a écrit en dehors de sa zone de mémoire : pilote fautif.", 'drv')
+    '0x000000C2' = @('BAD_POOL_CALLER', "Un pilote a mal demandé ou rendu de la mémoire à Windows : pilote fautif.", 'drv')
+    '0x000000C4' = @('DRIVER_VERIFIER_DETECTED_VIOLATION', "Le vérificateur de pilotes de Windows est activé et a attrapé un pilote fautif.", 'drv')
+    '0x000000C5' = @('DRIVER_CORRUPTED_EXPOOL', "Un pilote a abîmé la mémoire du système : pilote fautif.", 'drv')
+    '0x000000CE' = @('DRIVER_UNLOADED_WITHOUT_CANCELLING_PENDING_OPERATIONS', "Un pilote s'est arrêté sans finir son travail : pilote fautif.", 'drv')
+    '0x000000D8' = @('DRIVER_USED_EXCESSIVE_PTES', "Un pilote a consommé trop de ressources du système : pilote fautif.", 'drv')
+    '0x000000E2' = @('MANUALLY_INITIATED_CRASH', "Arrêt déclenché volontairement au clavier.", 'manual')
+    '0x000000EA' = @('THREAD_STUCK_IN_DEVICE_DRIVER', "Le pilote de la carte graphique est resté bloqué : pilote graphique, surchauffe ou carte qui fatigue.", 'gpu')
+    '0x000000ED' = @('UNMOUNTABLE_BOOT_VOLUME', "Windows n'arrive pas à ouvrir son disque au démarrage : fichiers abîmés par une coupure, ou disque défaillant.", 'disk')
+    '0x000000F4' = @('CRITICAL_OBJECT_TERMINATION', "Un processus vital s'est arrêté, souvent parce que le disque de Windows a cessé de répondre.", 'disk')
+    '0x000000F7' = @('DRIVER_OVERRAN_STACK_BUFFER', "Un pilote a débordé de sa zone de mémoire : pilote fautif.", 'drv')
+    '0x000000FC' = @('ATTEMPTED_EXECUTE_OF_NOEXECUTE_MEMORY', "Un pilote a tenté d'exécuter une zone de mémoire interdite : pilote fautif.", 'drv')
+    '0x000000FE' = @('BUGCODE_USB_DRIVER', "Erreur dans un pilote USB : un appareil branché en USB ou le contrôleur USB de la carte mère.", 'usb')
+    '0x00000101' = @('CLOCK_WATCHDOG_TIMEOUT', "Un cœur du processeur ne répond plus : overclocking ou undervolting instable, BIOS ancien, ou processeur qui chauffe.", 'cpu')
+    '0x00000109' = @('CRITICAL_STRUCTURE_CORRUPTION', "Le cœur de Windows a été modifié en mémoire : RAM défectueuse ou pilote fautif.", 'hw')
+    '0x0000010D' = @('WDF_VIOLATION', "Un pilote de périphérique (souvent USB : souris, clavier, casque, manette) a enfreint les règles de Windows.", 'usb')
+    '0x0000010E' = @('VIDEO_MEMORY_MANAGEMENT_INTERNAL', "Erreur dans la gestion de la mémoire vidéo : pilote de la carte graphique.", 'gpu')
+    '0x00000113' = @('VIDEO_DXGKRNL_FATAL_ERROR', "Erreur grave dans l'affichage de Windows : pilote de la carte graphique.", 'gpu')
+    '0x00000119' = @('VIDEO_SCHEDULER_INTERNAL_ERROR', "Erreur grave dans l'affichage de Windows : pilote graphique, surchauffe ou overclocking de la carte graphique.", 'gpu')
+    '0x0000012B' = @('FAULTY_HARDWARE_CORRUPTED_PAGE', "Windows a trouvé une page de mémoire abîmée par le matériel : presque toujours une barrette de RAM défectueuse.", 'ram')
+    '0x00000144' = @('BUGCODE_USB3_DRIVER', "Erreur dans un pilote USB 3 : un appareil branché en USB ou le contrôleur USB de la carte mère.", 'usb')
+    '0x00000154' = @('UNEXPECTED_STORE_EXCEPTION', "Windows a perdu l'accès à son disque en plein fonctionnement : SSD ou disque défaillant, ou son pilote.", 'disk')
+    '0x00000162' = @('KERNEL_AUTO_BOOST_INVALID_LOCK_RELEASE', "Un pilote a mal géré un verrou du système : pilote fautif.", 'drv')
+    '0x00000189' = @('BAD_OBJECT_HEADER', "Un pilote a abîmé un objet de Windows en mémoire : pilote fautif, parfois la RAM.", 'drv')
+    '0x0000019C' = @('WIN32K_POWER_WATCHDOG_TIMEOUT', "L'écran n'a pas réussi à se rallumer à la sortie de veille : le plus souvent le pilote de la carte graphique.", 'gpu')
+    '0x000001C8' = @('MANUALLY_INITIATED_POWER_BUTTON_HOLD', "Le bouton d'allumage a été maintenu plusieurs secondes : Windows l'a noté comme un arrêt forcé.", 'manual')
+    '0x000001CA' = @('SYNTHETIC_WATCHDOG_TIMEOUT', "Le système est resté bloqué trop longtemps : pilote qui fige le PC, ou processeur instable.", 'cpu')
+    '0xC000021A' = @('WINLOGON_FATAL_ERROR', "Un processus vital de Windows (ouverture de session) a planté : fichiers système abîmés, souvent après une mise à jour ratée.", 'sys')
 }
 
 # ---------------------------------------------------------------- DIAGNOSTIC
@@ -3313,9 +3359,10 @@ function Get-BsodAnalysis([datetime]$Since) {
     $list = New-Object System.Collections.ArrayList
     foreach ($f in $files) {
         $a = ''; try { $a = [AeroxDump]::Analyze($f.FullName) } catch {}
-        $o = @{ Date = $f.LastWriteTime; Code = ''; Culprit = $null; Readable = $false; Stack = '' }
+        $o = @{ File = $f.Name; Date = $f.LastWriteTime; Code = ''; P1 = ''; CrashTime = $null; UpMin = -1; Culprit = $null; Readable = $false; Stack = ''; Memory = $false }
+        try { $hd = ConvertFrom-DumpHead ([AeroxDump]::Head($f.FullName)); $o.CrashTime = $hd.CrashTime; $o.UpMin = $hd.UpMin } catch {}
         if ($a) {
-            $q = $a.Split('|'); $o.Code = $q[0]
+            $q = $a.Split('|'); $o.Code = ConvertTo-BugCheckKey $q[0]; $o.P1 = $q[1]
             $mods = @(@($q[5] -split ',') + @($q[6] -split ',') | Where-Object { $_ } | Select-Object -Unique)
             $o.Readable = ($mods.Count -gt 0); $o.Stack = ($q[6] -replace ',', ', ')
             $infos = @($mods | ForEach-Object { Get-DriverFileInfo $_ $paths })
@@ -3325,7 +3372,11 @@ function Get-BsodAnalysis([datetime]$Since) {
         }
         [void]$list.Add($o)
     }
-    $res.Dumps = $list.ToArray()
+    # Rapports effacés depuis par un nettoyage : relus dans la mémoire d'AEROX
+    Save-BsodMemory $list.ToArray()
+    $onDisk = @{}; foreach ($o in $list) { $onDisk[$o.File] = $true }
+    foreach ($m in @(Read-BsodMemory)) { if (-not $onDisk.ContainsKey($m.File) -and $m.Date -ge $Since) { [void]$list.Add($m) } }
+    $res.Dumps = @($list.ToArray() | Sort-Object { $_.Date } -Descending)
     $g = @($res.Dumps | Where-Object { $_.Culprit } | Group-Object { $_.Culprit.Name } | Sort-Object Count -Descending)
     if ($g.Count) { $res.Top = ($g[0].Group | Select-Object -First 1).Culprit; $res.TopCount = $g[0].Count }
     try { $res.Whea = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $Since } -ErrorAction SilentlyContinue | Where-Object { $_.Level -le 2 }).Count } catch {}
@@ -3336,6 +3387,335 @@ function Get-BsodAnalysis([datetime]$Since) {
         if (($t -eq 26 -and $spd -gt 3200) -or ($t -eq 34 -and $spd -gt 6400)) { $res.Xmp = "$(if ($t -eq 26) { 'DDR4' } else { 'DDR5' }) à $spd MT/s" }
     } catch {}
     return $res
+}
+
+# ---------------------------------------------------------------- Écrans bleus : codes, contexte, ce qui a changé avant
+# Les variantes « 0x1000007E » de Windows sont le même arrêt que « 0x0000007E »
+function ConvertTo-BugCheckKey([string]$Code) {
+    $v = [long]0
+    try { $v = [Convert]::ToInt64(($Code -replace '^0x', ''), 16) } catch { return '' }
+    if (($v -band 4026531840) -eq 268435456) { $v = $v -band 268435455 }
+    return ('0x{0:X8}' -f $v)
+}
+function Get-BugCheckInfo([string]$Code, [string]$P1 = '') {
+    $k = ConvertTo-BugCheckKey $Code
+    $i = if ($k -and $script:BugChecks.ContainsKey($k)) { $script:BugChecks[$k] } else { @('Erreur système', "Un pilote ou un composant matériel a provoqué un arrêt brutal de Windows.", 'drv') }
+    $r = @{ Key = $k; Name = $i[0]; Text = $i[1]; Kind = $i[2] }
+    $p = [long]-1; try { if ($P1) { $p = [Convert]::ToInt64(($P1 -replace '^0x', ''), 16) } } catch {}
+    if ($k -eq '0x00000124' -and $p -eq 0) { $r.Text = "Le processeur a signalé lui-même une erreur grave (« machine check ») : overclocking ou undervolting instable, surchauffe, ou alimentation qui fatigue."; $r.Kind = 'cpu' }
+    elseif ($k -eq '0x00000124' -and $p -eq 4) { $r.Text = "Une carte branchée en PCI Express (carte graphique, SSD NVMe) a signalé une erreur grave : carte mal enfoncée, câble riser, ou composant qui fatigue." }
+    elseif ($k -eq '0x0000009F' -and $p -eq 3) { $r.Text = "Un périphérique n'a pas répondu à temps pendant une mise en veille ou un réveil : le plus souvent le pilote de la carte graphique, du Wi-Fi ou d'un appareil USB." }
+    return $r
+}
+function Get-BugCheckSteps([string]$Kind) {
+    switch ($Kind) {
+        'hw'   { return @("Si tu as overclocké le PC ou activé XMP / EXPO dans le BIOS, remets les réglages par défaut.", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Vérifie que le PC ne chauffe pas (poussière, ventilateurs).", "Mets à jour Windows et tes pilotes (onglet Mises à jour).") }
+        'gpu'  { return @("Mets à jour le pilote de la carte graphique avec l'outil officiel (onglet Mises à jour > Pilotes).", "Si tu as overclocké la carte graphique, remets-la par défaut.", "Vérifie que la carte graphique ne chauffe pas (poussière, ventilateurs).") }
+        'ram'  { return @("Si XMP / EXPO est activé dans le BIOS, désactive-le pour tester : c'est la cause la plus fréquente.", "Lance le test de mémoire de Windows : tape « mdsched » dans le menu Démarrer et redémarre.", "Si le test trouve des erreurs : teste les barrettes une par une pour trouver la mauvaise (la RAM est souvent garantie à vie).") }
+        'disk' { return @("Sauvegarde tout de suite tes fichiers importants.", "Lance « Vérifier le disque » (onglet Réparation) et regarde la santé du disque dans le diagnostic.", "Disque SATA : change le câble ou branche-le sur une autre prise de la carte mère.", "Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).") }
+        'cpu'  { return @("Si tu as overclocké ou undervolté (BIOS, Ryzen Master, Intel XTU), remets tout par défaut.", "Vérifie les températures du processeur (onglet Gaming) et dépoussière son ventilateur.", "Mets à jour le BIOS depuis la page du fabricant (onglet Mon PC).") }
+        'usb'  { return @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs, manettes) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.", "Si ça a commencé avec un nouvel appareil USB : essaie sans lui, ou sur une autre prise.") }
+        'sys'  { return @("Lance « Réparer les fichiers Windows » (bouton vert).", "Installe toutes les mises à jour Windows.", "Si ça continue : lance « Vérifier le disque » (onglet Réparation).") }
+        default { return @("Mets à jour le pilote de la carte graphique et du Wi-Fi / réseau (onglet Mises à jour > Pilotes).", "Installe toutes les mises à jour Windows.", "Si les écrans bleus continuent, désinstalle le dernier logiciel ou pilote installé avant qu'ils commencent.") }
+    }
+}
+# Texte de Windows « 0x0000009f (0x0000000000000003, 0x…) » → code et premier paramètre
+function ConvertFrom-BugCheckText([string]$T) {
+    if ($T -match '0x([0-9a-fA-F]{8})\s*\(\s*0x([0-9a-fA-F]+)') { $p = $matches[2].TrimStart('0'); return @{ Code = (ConvertTo-BugCheckKey $matches[1]); P1 = '0x' + $(if ($p) { $p.ToUpper() } else { '0' }) } }
+    if ($T -match '0x([0-9a-fA-F]{1,8})\b') { return @{ Code = (ConvertTo-BugCheckKey $matches[1]); P1 = '' } }
+    return $null
+}
+# Un écran bleu dont le rapport n'a pas pu s'écrire laisse quand même son code dans l'événement 41 du redémarrage :
+# ajouté seulement s'il n'y a pas déjà un rapport de Windows pour ce même redémarrage (à 15 minutes près)
+function Merge-BsodEvents($Wer, $Kp) {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($w in @($Wer)) { if ($w) { [void]$out.Add($w) } }
+    foreach ($k in @($Kp)) {
+        if (-not $k) { continue }
+        if (-not @($out | Where-Object { [math]::Abs(($_.Time - $k.Time).TotalMinutes) -le 15 }).Count) { [void]$out.Add($k) }
+    }
+    return @($out | Sort-Object { $_.Time })
+}
+function Get-BsodEvents([datetime]$Since) {
+    $wer = foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $Since })) {
+        $txt = (($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + ' ' + $e.Message
+        $c = ConvertFrom-BugCheckText $txt
+        @{ Time = $e.TimeCreated; Code = $(if ($c) { $c.Code } else { '' }); P1 = $(if ($c) { $c.P1 } else { '' }); Src = 'rapport' }
+    }
+    $kp = foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $Since })) {
+        $b = [long]0; try { $b = [long]"$($e.Properties[0].Value)" } catch {}
+        if ($b -le 0) { continue }
+        $p1 = ''; try { $p1 = '0x{0:X}' -f [uint64]"$($e.Properties[1].Value)" } catch {}
+        @{ Time = $e.TimeCreated; Code = ('0x{0:X8}' -f $b); P1 = $p1; Src = 'redémarrage' }
+    }
+    return @(Merge-BsodEvents $wer $kp)
+}
+# En-tête d'un rapport ([AeroxDump]::Head) → heure du plantage et minutes depuis le démarrage, ignorées si absurdes
+function ConvertFrom-DumpHead([string]$H) {
+    $r = @{ Code = ''; P1 = ''; CrashTime = $null; UpMin = -1 }
+    $q = @("$H".Split('|')); if ($q.Count -lt 7) { return $r }
+    $r.Code = ConvertTo-BugCheckKey $q[0]; $r.P1 = $q[1]
+    try { $t = [datetime]::FromFileTime([long]$q[5]); if ($t.Year -ge 2015 -and $t -le (Get-Date).AddDays(1)) { $r.CrashTime = $t } } catch {}
+    try { $m = [double]$q[6] / 600000000; if ($m -ge 0 -and $m -lt 525600) { $r.UpMin = [math]::Round($m, 1) } } catch {}
+    return $r
+}
+# Dans quelle situation l'écran bleu est arrivé (faits : durée depuis le démarrage, mise en veille ou réveil juste avant)
+function Get-BsodContext($CrashTime, [double]$UpMin, $Wakes, $Sleeps) {
+    if ($CrashTime) {
+        $w = @($Wakes | Where-Object { $_ -le $CrashTime -and ($CrashTime - $_).TotalMinutes -le 5 } | Sort-Object) | Select-Object -Last 1
+        $s = @($Sleeps | Where-Object { $_ -le $CrashTime -and ($CrashTime - $_).TotalMinutes -le 5 } | Sort-Object) | Select-Object -Last 1
+        if ($w -and (-not $s -or $w -ge $s)) { return @{ Kind = 'wake'; Text = 'à la sortie de veille' } }
+        if ($s) { return @{ Kind = 'sleep'; Text = 'pendant la mise en veille' } }
+    }
+    if ($UpMin -ge 0 -and $UpMin -lt 3) { return @{ Kind = 'boot'; Text = 'juste après le démarrage' } }
+    if ($UpMin -ge 3) {
+        $d = if ($UpMin -lt 90) { "{0:N0} min" -f $UpMin } elseif ($UpMin -lt 2880) { "{0:N0} h" -f ($UpMin / 60) } else { "{0:N0} jours" -f ($UpMin / 1440) }
+        return @{ Kind = 'use'; Text = "en pleine utilisation (PC allumé depuis $d)" }
+    }
+    return @{ Kind = ''; Text = '' }
+}
+# Premier écran bleu de la série en cours : celui qui suit au moins $Quiet jours sans aucun. Rien si l'historique ne
+# remonte pas assez loin pour l'affirmer.
+function Get-BsodSeriesStart($Times, [datetime]$WindowStart, [int]$Quiet = 14) {
+    $t = @($Times | Where-Object { $_ } | Sort-Object)
+    if (-not $t.Count) { return $null }
+    $start = $t[$t.Count - 1]
+    for ($i = $t.Count - 2; $i -ge 0; $i--) { if (($start - $t[$i]).TotalDays -gt $Quiet) { break }; $start = $t[$i] }
+    if (($start - $WindowStart).TotalDays -lt $Quiet) { return $null }
+    return $start
+}
+# Ce qui a été installé dans les $Days jours avant une date : mises à jour Windows, pilotes, logiciels
+function Get-ChangesBefore([datetime]$T, [int]$Days = 3) {
+    $from = $T.AddDays(-$Days); $out = New-Object System.Collections.ArrayList
+    foreach ($e in @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WindowsUpdateClient'; Id = 19; StartTime = $from; EndTime = $T } 200)) {
+        $title = ''; try { $title = "$($e.Properties[0].Value)".Trim() } catch {}
+        if (-not $title -or $title -match '(?i)KB2267602|Security Intelligence|veille de sécurité|Defender Antivirus|Malicious Software|logiciels malveillants') { continue }
+        [void]$out.Add(@{ When = $e.TimeCreated; Kind = 'maj'; Class = ''; Text = $title })
+    }
+    try {
+        $infs = @(Get-ChildItem -LiteralPath "$env:SystemRoot\INF" -Filter 'oem*.inf' -File -ErrorAction Stop | Where-Object { $_.CreationTime -ge $from -and $_.CreationTime -le $T })
+        if ($infs.Count) {
+            $drv = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.InfName })
+            foreach ($f in $infs) {
+                $d = @($drv | Where-Object { $_.InfName -eq $f.Name }) | Select-Object -First 1
+                if (-not $d) { continue }
+                $nm = if ($d.DeviceName) { "$($d.DeviceName)" } else { "$($d.Description)" }
+                [void]$out.Add(@{ When = $f.CreationTime; Kind = 'pilote'; Class = "$($d.DeviceClass)".ToUpperInvariant(); Text = ("{0} (version {1})" -f $nm, $d.DriverVersion) })
+            }
+        }
+    } catch {}
+    $seen = @{}
+    foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*') {
+        foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) {
+            if (-not $e.DisplayName -or $e.SystemComponent -eq 1 -or $e.ParentKeyName -or "$($e.InstallDate)" -notmatch '^(\d{4})(\d{2})(\d{2})$') { continue }
+            $date = $null; try { $date = Get-Date -Year $matches[1] -Month $matches[2] -Day $matches[3] -Hour 0 -Minute 0 -Second 0 } catch {}
+            $name = "$($e.DisplayName)".Trim()
+            if (-not $date -or $date -lt $from.Date -or $date -gt $T -or $seen.ContainsKey($name)) { continue }
+            $seen[$name] = $true
+            [void]$out.Add(@{ When = $date; Kind = 'logiciel'; Class = ''; Text = $name })
+        }
+    }
+    return @($out | Sort-Object { $_.When })
+}
+# Réglage « Écriture des informations de débogage » de Windows : sans lui (ou sans fichier d'échange), aucun rapport
+# n'est écrit et le pilote fautif ne peut pas être lu
+function Get-CrashDumpVerdict([int]$Mode, [bool]$PageFile) {
+    if ($Mode -eq 0) { return 'off' }
+    if (-not $PageFile) { return 'nopagefile' }
+    return 'ok'
+}
+function Get-CrashDumpState {
+    $mode = 7; try { $mode = [int](Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' -Name CrashDumpEnabled -ErrorAction Stop).CrashDumpEnabled } catch {}
+    $pf = $true
+    try {
+        $v = @((Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management' -Name PagingFiles -ErrorAction Stop).PagingFiles | Where-Object { "$_".Trim() })
+        $pf = ($v.Count -gt 0)
+    } catch {}
+    return @{ Mode = $mode; PageFile = $pf; Verdict = (Get-CrashDumpVerdict $mode $pf) }
+}
+# 0 = aucun rapport, 3 = petit rapport, 7 = automatique (réglage d'origine de Windows)
+function Set-CrashDumpMode([int]$Mode) {
+    if ($Mode -notin 0, 1, 2, 3, 7) { throw "réglage inconnu : $Mode" }
+    $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl'
+    $old = 7; try { $old = [int](Get-ItemProperty $key -Name CrashDumpEnabled -ErrorAction Stop).CrashDumpEnabled } catch {}
+    Set-ItemProperty -Path $key -Name CrashDumpEnabled -Value $Mode -Type DWord -ErrorAction Stop
+    Log ("   ✔ Rapports d'écran bleu : {0}" -f $(if ($Mode -eq 0) { 'désactivés' } else { 'activés (pris en compte au prochain redémarrage)' }))
+    if ($old -ne $Mode) { Add-Change -Title "Rapports d'écran bleu de Windows $(if ($Mode -eq 0) { 'désactivés' } else { 'réactivés' })" -Undo "Set-CrashDumpMode $old" }
+}
+# Mémoire des écrans bleus : ce qu'AEROX a lu dans chaque rapport est noté dans son dossier, pour rester disponible même
+# si un nettoyage (CCleaner, Nettoyage de disque) efface ensuite les fichiers de C:\Windows\Minidump
+function ConvertTo-BsodMemoryLine($D) {
+    $c = $D.Culprit
+    $f = @("$($D.File)", $D.Date.Ticks, $(if ($D.CrashTime) { $D.CrashTime.Ticks } else { 0 }), $D.UpMin, "$($D.Code)", "$($D.P1)",
+           $(if ($c) { "$($c.Name)" } else { '' }), $(if ($c) { "$($c.Company)" } else { '' }), $(if ($c) { "$($c.Desc)" } else { '' }), $(if ($c) { "$($c.Kind)" } else { '' }), $(if ($D.Readable) { 1 } else { 0 }), "$($D.Stack)")
+    return (@($f | ForEach-Object { "$_" -replace '[|\r\n]', ' ' }) -join '|')
+}
+function ConvertFrom-BsodMemoryLine([string]$L) {
+    $q = @($L.Split('|')); if ($q.Count -lt 12 -or -not $q[0]) { return $null }
+    try {
+        $o = @{ File = $q[0]; Date = (New-Object datetime ([long]$q[1])); CrashTime = $null; UpMin = [double]::Parse($q[3], [Globalization.CultureInfo]::InvariantCulture); Code = $q[4]; P1 = $q[5]; Culprit = $null; Readable = ($q[10] -eq '1'); Stack = $q[11]; Memory = $true }
+        if ([long]$q[2] -gt 0) { $o.CrashTime = New-Object datetime ([long]$q[2]) }
+        if ($q[6]) { $o.Culprit = @{ Name = $q[6]; Company = $q[7]; Desc = $q[8]; Kind = $q[9]; Ms = $false } }
+        return $o
+    } catch { return $null }
+}
+function Get-BsodMemoryPath { return (Join-Path $AppInfo.LogDir 'ecrans-bleus.txt') }
+function Read-BsodMemory {
+    $p = Get-BsodMemoryPath
+    if (-not (Test-Path -LiteralPath $p)) { return @() }
+    try { return @(Get-Content -LiteralPath $p -Encoding UTF8 -ErrorAction Stop | ForEach-Object { ConvertFrom-BsodMemoryLine $_ } | Where-Object { $_ }) } catch { return @() }
+}
+function Save-BsodMemory($Dumps) {
+    try {
+        $all = @{}
+        foreach ($o in @(Read-BsodMemory)) { if ($o.Date -ge (Get-Date).AddDays(-180)) { $all[$o.File] = $o } }
+        foreach ($d in @($Dumps)) { if ($d.File -and $d.Code -and -not $d.Memory) { $all[$d.File] = $d } }
+        $lines = @($all.Values | Sort-Object { $_.Date } | ForEach-Object { ConvertTo-BsodMemoryLine $_ })
+        [IO.File]::WriteAllLines((Get-BsodMemoryPath), [string[]]$lines, (New-Object Text.UTF8Encoding $true))
+    } catch {}
+}
+# Tout ce qu'on sait des écrans bleus depuis $Since, prêt à afficher : { Count; Manual; Lines; Detail; Code; Cause; Steps; FixL; Ui; NoDump; Last }
+function Find-BsodDump($Ev, $Dumps) {
+    $c = @($Dumps | Where-Object { (-not $Ev.Code -or -not $_.Code -or $_.Code -eq $Ev.Code) -and (([math]::Abs(($_.Date - $Ev.Time).TotalMinutes) -le 30) -or ($_.CrashTime -and $_.CrashTime -le $Ev.Time -and ($Ev.Time - $_.CrashTime).TotalHours -le 24)) })
+    return (@($c | Sort-Object { [math]::Abs(($_.Date - $Ev.Time).TotalMinutes) }) | Select-Object -First 1)
+}
+function Get-BsodVerdict([datetime]$Since) {
+    $res = @{ Count = 0; Manual = 0; Lines = (New-Object System.Collections.ArrayList); Detail = 'Code'; Code = ''; Cause = ''; Steps = @(); FixL = "Réparer les fichiers Windows"; Ui = ''; NoDump = ''; Last = $null }
+    $all = @(Get-BsodEvents $Since)
+    $manual = @($all | Where-Object { (Get-BugCheckInfo $_.Code).Kind -eq 'manual' })
+    $real = @($all | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' })
+    $res.Manual = $manual.Count; $res.Count = $real.Count
+    foreach ($m in $manual) { [void]$res.Lines.Add(("   • {0:dd/MM/yyyy HH:mm} : arrêt forcé à la main ({1}), ce n'est pas une panne de Windows" -f $m.Time, (Get-BugCheckInfo $m.Code).Name)) }
+    if (-not $real.Count) { return $res }
+    $res.Last = $real[$real.Count - 1].Time
+    $main = @($real | Where-Object { $_.Code } | Group-Object { $_.Code } | Sort-Object Count -Descending) | Select-Object -First 1
+    $p1 = ''; if ($main) { $p1 = "$(@($main.Group | Where-Object { $_.P1 } | Select-Object -First 1 | ForEach-Object { $_.P1 }))" }
+    $info = Get-BugCheckInfo $(if ($main) { $main.Name } else { '' }) $p1
+    if ($main) { $res.Code = "{0} ({1})" -f $info.Name, $main.Name }
+    # Les rapports de plantage : quel pilote était en cause à chaque écran bleu, et dans quelle situation
+    $an = Get-BsodAnalysis $Since
+    $wakes = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Power-Troubleshooter'; Id = 1; StartTime = $Since.AddDays(-1) } | ForEach-Object { $_.TimeCreated })
+    $sleeps = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 42; StartTime = $Since.AddDays(-1) } | ForEach-Object { $_.TimeCreated })
+    $ctxKinds = New-Object System.Collections.ArrayList; $used = @{}
+    foreach ($e in @($real | Sort-Object { $_.Time } -Descending)) {
+        $bi = Get-BugCheckInfo $e.Code $e.P1
+        $line = "   • Écran bleu du {0:dd/MM/yyyy HH:mm} : {1}{2}" -f $e.Time, $bi.Name, $(if ($e.Code) { " ($($e.Code))" } else { '' })
+        $d = Find-BsodDump $e @($an.Dumps | Where-Object { -not $used.ContainsKey($_.File) })
+        if ($d) {
+            $used[$d.File] = $true
+            $ctx = Get-BsodContext $d.CrashTime $d.UpMin $wakes $sleeps
+            if ($ctx.Kind) { [void]$ctxKinds.Add($ctx.Kind); $line += ", $($ctx.Text)" }
+            $line += $(if ($d.Culprit) { " → pilote en cause : $($d.Culprit.Name)" + $(if ($d.Culprit.Company) { " ($($d.Culprit.Company))" } else { '' }) } elseif ($d.Readable) { " → seulement Windows sur la pile ($($d.Stack))" } else { " → rapport illisible" })
+            if ($d.Memory) { $line += " [rapport effacé depuis, relu dans la mémoire d'AEROX]" }
+        } else { $line += $(if ($e.Src -eq 'redémarrage') { " → Windows n'a pas pu écrire de rapport, seul le code est connu" } else { " → rapport absent (effacé ou jamais écrit), seul le code est connu" }) }
+        [void]$res.Lines.Add($line)
+        [void]$res.Lines.Add("     $($bi.Text)")
+    }
+    $top = $an.Top; $detail = 'Code'; $fixL = "Réparer les fichiers Windows"; $fixA = 'Repair-System'; $ui = ''
+    $cause = $info.Text
+    $steps = @(Get-BugCheckSteps $info.Kind)
+        if ($top) {
+            $extra = (@($top.Desc, $top.Company) | Where-Object { $_ }) -join ', '
+            $who = "« $($top.Name) »" + $(if ($extra) { " ($extra)" } else { '' })
+            $detail = "Pilote en cause : $($top.Name)"
+            $cause = "Les rapports de plantage de Windows désignent $who dans $($an.TopCount) écran(s) bleu(s) sur $(@($an.Dumps).Count) analysé(s). "
+            switch ($top.Kind) {
+                'gpu' { $cause += "C'est le pilote de la carte graphique."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si ça continue : réinstalle-le proprement (option « installation propre / réinitialiser » de l'installateur NVIDIA ou AMD).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.") }
+                'network' { $cause += "C'est un pilote réseau (carte réseau ou Wi-Fi)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote réseau / Wi-Fi depuis le site du fabricant de ta carte mère ou de ton PC (pas seulement Windows Update).", "Si c'est une carte Killer ou Realtek : désinstalle son logiciel d'« optimisation » réseau s'il y en a un.") }
+                'anticheat' { $cause += "C'est l'anti-triche d'un jeu."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour le jeu qui l'utilise (ou réinstalle-le) : l'anti-triche se met à jour avec lui.", "Si tu n'y joues plus, désinstalle le jeu : son anti-triche part avec.") }
+                'antivirus' { $cause += "C'est un antivirus en plus de celui de Windows."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Désinstalle cet antivirus : Windows Defender protège déjà très bien le PC, et deux antivirus se gênent.", "Si tu veux le garder, mets-le à jour depuis son propre menu.") }
+                'storage' { $cause += "C'est un pilote du disque (stockage)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe les pilotes « chipset » et « stockage » du site du fabricant de ta carte mère.", "Mets à jour le firmware de ton SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Sauvegarde tes fichiers importants en attendant.") }
+                'usb' { $cause += "C'est un pilote USB (un appareil branché en USB)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.") }
+                'audio' { $cause += "C'est un pilote audio."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
+                        $steps = @("Installe le dernier pilote audio du site du fabricant de ta carte mère ou de ton PC.", "Désinstalle les logiciels d'« effets sonores » en plus (Nahimic, Sonic Studio…) si tu ne t'en sers pas.") }
+                default { $cause += "Il a été installé par $(if ($top.Company) { $top.Company } else { 'un logiciel' })."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
+                        $steps = @("Mets à jour ou désinstalle le logiciel de $(if ($top.Company) { $top.Company } else { 'ce pilote' }).", "Si les écrans bleus ont commencé juste après l'avoir installé, désinstalle-le.") }
+            }
+        } elseif (@($an.Dumps | Where-Object { $_.Readable }).Count) {
+            $cause = "Les rapports de plantage ne montrent que Windows lui-même, aucun pilote en particulier : c'est le signe classique d'un souci de mémoire vive (RAM), d'un réglage trop poussé (XMP/EXPO, overclocking) ou de fichiers de Windows abîmés."
+            $steps = @("Lance « Réparer les fichiers Windows » (bouton vert).", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Si XMP / EXPO est activé dans le BIOS, essaie sans pendant quelques jours.")
+        }
+        # Indices matériels en plus (faits relevés par Windows, pas des suppositions)
+        if ($an.Whea -gt 0) { $cause += " Windows a aussi noté $($an.Whea) erreur(s) matérielle(s) (WHEA) : le processeur, la RAM ou la carte mère signalent eux-mêmes un problème."; $steps = @($steps) + "Erreurs matérielles : enlève tout overclocking, mets à jour le BIOS et vérifie les températures." }
+        if ($an.Xmp -and ($an.Whea -gt 0 -or $info.Kind -in 'hw', 'ram', 'cpu' -or -not $top)) { $cause += " La mémoire tourne en profil XMP/EXPO ($($an.Xmp)) : souvent stable, mais c'est un overclocking, à désactiver pour tester." }
+        # Dans quelle situation ils arrivent (seulement quand au moins 2 rapports le disent pareil)
+        $ck = @($ctxKinds | Group-Object | Sort-Object Count -Descending) | Select-Object -First 1
+        if ($ck -and $ck.Count -ge 2 -and $ck.Count -ge [math]::Ceiling($ctxKinds.Count * 0.6)) {
+            switch ($ck.Name) {
+                'boot'  { $cause += " $($ck.Count) écrans bleus sont arrivés dans les 3 minutes après le démarrage : c'est un pilote chargé au démarrage, ou le matériel (RAM, disque)." }
+                'wake'  { $cause += " $($ck.Count) écrans bleus sont arrivés à la sortie de veille : un pilote gère mal le réveil (carte graphique, Wi-Fi, USB)."; $steps = @($steps) + "Écrans bleus au réveil : mets à jour le pilote graphique et celui du Wi-Fi, et désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons d'alimentation)." }
+                'sleep' { $cause += " $($ck.Count) écrans bleus sont arrivés pendant la mise en veille : un pilote gère mal la veille (carte graphique, Wi-Fi, USB)."; $steps = @($steps) + "Écrans bleus à la mise en veille : mets à jour le pilote graphique et celui du Wi-Fi, et désactive le « démarrage rapide » (Options d'alimentation > Choisir l'action des boutons d'alimentation)." }
+            }
+        }
+        # Ce qui a été installé juste avant le premier écran bleu de la série (historique de 90 jours)
+        try {
+            $winStart = (Get-Date).AddDays(-90)
+            try { $old = @(Get-WinEvent -LogName System -Oldest -MaxEvents 1 -ErrorAction Stop); if ($old.Count -and $old[0].TimeCreated -gt $winStart) { $winStart = $old[0].TimeCreated } } catch {}
+            $hist = @(Get-BsodEvents (Get-Date).AddDays(-90) | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' } | ForEach-Object { $_.Time })
+            $start = Get-BsodSeriesStart $hist $winStart
+            if ($start) {
+                $chg = @(Get-ChangesBefore $start 3)
+                if ($chg.Count) {
+                    [void]$res.Lines.Add(("   Installé dans les 3 jours avant le premier écran bleu de la série (le {0:dd/MM/yyyy}) :" -f $start))
+                    foreach ($c in $chg) { [void]$res.Lines.Add(("   • {0:dd/MM} : {1} : {2}" -f $c.When, $(switch ($c.Kind) { 'maj' { 'mise à jour de Windows' } 'pilote' { 'pilote' } default { 'logiciel' } }), $c.Text)) }
+                    $short = @($chg | Select-Object -First 3 | ForEach-Object { "$(switch ($_.Kind) { 'maj' { 'mise à jour' } 'pilote' { 'pilote' } default { 'logiciel' } }) « $($_.Text) » le $('{0:dd/MM}' -f $_.When)" }) -join ' ; '
+                    $cause += " La série a commencé le $('{0:dd/MM/yyyy}' -f $start), après au moins 14 jours sans écran bleu. Installé dans les 3 jours d'avant : $short$(if ($chg.Count -gt 3) { " (et $($chg.Count - 3) autre(s), voir le journal)" })."
+                    $gpuDrv = @($chg | Where-Object { $_.Kind -eq 'pilote' -and $_.Class -eq 'DISPLAY' }).Count -gt 0
+                    if ($gpuDrv -and ($info.Kind -eq 'gpu' -or ($top -and $top.Kind -eq 'gpu'))) {
+                        $cause += " Le pilote graphique a été changé juste avant : c'est le premier suspect."
+                        $steps = @("Reviens au pilote graphique d'avant : clic droit sur Démarrer > Gestionnaire de périphériques > Cartes graphiques > double-clic sur ta carte > onglet Pilote > « Restaurer le pilote » (ou réinstalle la version précédente depuis le site NVIDIA / AMD / Intel).") + @($steps)
+                    } else { $steps = @($steps) + "Les écrans bleus ont commencé juste après ces installations : désinstalle la plus suspecte (pour une mise à jour de Windows : Paramètres > Windows Update > Historique des mises à jour > Désinstaller des mises à jour)." }
+                }
+            }
+        } catch {}
+        # Aucun rapport lisible : pourquoi, et comment en avoir un la prochaine fois
+        if (-not @($an.Dumps).Count) {
+            $ds = Get-CrashDumpState; $res.NoDump = $ds.Verdict
+            switch ($ds.Verdict) {
+                'off' { [void]$res.Lines.Add("   • Windows est réglé pour ne garder aucun rapport d'écran bleu : le pilote fautif ne peut pas être lu."); $cause += " Windows est réglé pour ne garder aucun rapport : seul le code est connu, pas le pilote fautif." }
+                'nopagefile' { [void]$res.Lines.Add("   • Le fichier d'échange de Windows est désactivé : Windows ne peut pas écrire de rapport d'écran bleu."); $cause += " Le fichier d'échange de Windows est désactivé : aucun rapport ne peut s'écrire, seul le code est connu."; $steps = @($steps) + "Réactive le fichier d'échange : Paramètres > Système > Informations système > Paramètres avancés du système > Performances > Avancé > Mémoire virtuelle > coche « Gestion automatique »." }
+                default { [void]$res.Lines.Add("   • Aucun rapport d'écran bleu dans C:\Windows\Minidump (effacé par un nettoyage, ou pas écrit) : le coupable ne peut pas être lu, seulement le code."); $cause += " Les rapports de plantage ne sont plus là (effacés par un nettoyage, ou jamais écrits) : seul le code est connu. AEROX garde maintenant ceux des 30 derniers jours : au prochain écran bleu, relance le diagnostic, le pilote fautif sera nommé." }
+            }
+        }
+        $bb = Get-BlackBoxForCrash $res.Last
+        if ($bb) { $cause += " " + $bb.Text; [void]$res.Lines.Add("   • " + $bb.Text) }
+    $res.Detail = $detail; $res.Cause = $cause; $res.Steps = @($steps); $res.FixL = $fixL; $res.Ui = $ui
+    return $res
+}
+# Carte « Écran bleu » : le rapport complet des 90 derniers jours, en clair
+function Get-BsodReport {
+    Step "Écrans bleus : ce que Windows a noté, expliqué"
+    $v = Get-BsodVerdict (Get-Date).AddDays(-90)
+    foreach ($l in $v.Lines) { Log $l }
+    if (-not $v.Count) {
+        Log "✅ Aucun écran bleu noté par Windows ces 90 derniers jours."
+        Log "   Si le PC s'éteint ou redémarre d'un coup SANS écran bleu, ce n'est pas un plantage de Windows : c'est le courant, l'alimentation ou une surchauffe (lance le diagnostic, ligne « extinctions brutales »)."
+        $ds = Get-CrashDumpState
+        if ($ds.Verdict -eq 'off') {
+            Add-TaskError -Title "Windows ne garde aucun rapport d'écran bleu" -Cause "Le réglage « Écriture des informations de débogage » est sur Aucun : si un écran bleu arrive, le pilote fautif ne pourra pas être lu." -Effect "Un écran bleu resterait sans explication." `
+                -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAnnulable dans l'historique."
+        } elseif ($ds.Verdict -eq 'nopagefile') { Log "   • Le fichier d'échange de Windows est désactivé : si un écran bleu arrive, aucun rapport ne pourra s'écrire." }
+        else { Log "   ✔ Windows est bien réglé pour garder un rapport au prochain écran bleu" }
+        return
+    }
+    Log ("   Verdict : {0}" -f $v.Cause)
+    $n = 0; foreach ($st in @($v.Steps)) { $n++; Log ("   {0}. {1}" -f $n, $st) }
+    $title = "$($v.Count) écran(s) bleu(s) en 90 jours" + $(if ($v.Detail -and $v.Detail -ne 'Code') { " · $($v.Detail)" } else { '' })
+    if ($v.Ui) { Add-TaskError -Title $title -Code $v.Code -Cause $v.Cause -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -Steps $v.Steps }
+    else {
+        Add-TaskError -Title $title -Code $v.Code -Cause $v.Cause -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -Steps $v.Steps `
+            -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nContinuer ?"
+    }
+    if ($v.NoDump -eq 'off') {
+        Add-TaskError -Title "Windows ne garde aucun rapport d'écran bleu" -Cause "Le réglage « Écriture des informations de débogage » est sur Aucun : impossible de lire quel pilote est fautif." -Effect "Au prochain écran bleu, seul le code sera connu." `
+            -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAnnulable dans l'historique."
+    }
 }
 
 # Programmes qui font partie de Windows : ils ne se « mettent pas à jour » comme un logiciel
@@ -3406,6 +3786,52 @@ function Test-HardwareErrors {
         -Effect "Plantages, redémarrages soudains, jeux qui se ferment sans message." `
         -Steps @("Si tu as overclocké ou undervolté (BIOS, Ryzen Master, Intel XTU, MSI Afterburner) : remets tout par défaut.", "Dans le BIOS : désactive XMP / EXPO pour tester ; si les erreurs s'arrêtent, c'est la RAM (ou son profil trop rapide).", "Vérifie les températures (onglet Gaming) et dépoussière le PC.", "Lance le test de mémoire de Windows (tape « mdsched » dans le menu Démarrer).", "Mets à jour le BIOS (onglet Mon PC).")
 }
+# Pile de la carte mère (CR2032) usée : privé de courant, le PC perd l'heure. Preuve sans ouvrir le PC : au démarrage
+# (Kernel-General 12), l'horloge indique une date plus ancienne d'au moins un jour que le dernier événement noté avant
+# (le temps ne recule pas tout seul). Les journaux sont lus dans l'ordre d'écriture (RecordId), pas par date : après
+# une remise à zéro, les dates des événements sont justement fausses. Une seule fois peut venir d'un réglage du BIOS :
+# le problème n'est signalé qu'à partir de 2 fois.
+function ConvertFrom-EventUtc([string]$S) {
+    if (-not $S) { return $null }
+    $S = $S -replace '(\.\d{7})\d+', '$1'
+    try { return [datetime]::Parse($S, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToLocalTime() } catch { return $null }
+}
+function Get-RtcResets($Events, [datetime]$Since, [scriptblock]$GetTimes) {
+    $list = @($Events | Sort-Object { [long]$_.RecordId })
+    $res = New-Object System.Collections.ArrayList
+    for ($i = 1; $i -lt $list.Count; $i++) {
+        $b = $list[$i]
+        if ([int]$b.Id -ne 12) { continue }
+        $prev = $list[$i - 1]
+        if (($prev.TimeCreated - $b.TimeCreated).TotalHours -lt 24) { continue }
+        if ($prev.TimeCreated -lt $Since) { continue }
+        # Remise à l'heure par Windows dans la même session (avance d'au moins un jour) : juste pour le détail
+        $fixed = $null
+        for ($j = $i + 1; $j -lt $list.Count -and $j -le $i + 20 -and [int]$list[$j].Id -ne 12; $j++) {
+            if ([int]$list[$j].Id -ne 1) { continue }
+            $t = if ($GetTimes) { & $GetTimes $list[$j] } else { @($list[$j].OldTime, $list[$j].NewTime) }
+            if ($t -and $t[0] -and $t[1] -and ($t[1] - $t[0]).TotalHours -ge 24) { $fixed = $t[1]; break }
+        }
+        [void]$res.Add([pscustomobject]@{ Before = $prev.TimeCreated; WrongDate = $b.TimeCreated; Fixed = $fixed })
+    }
+    return $res.ToArray()
+}
+function Test-RtcBattery {
+    $ev = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 1, 12, 13 } 3000)
+    if ($ev.Count -lt 2) { return }
+    $get = { param($e) $f = Get-EventFields $e.Raw; @((ConvertFrom-EventUtc $f['OldTime']), (ConvertFrom-EventUtc $f['NewTime'])) }
+    $rows = foreach ($e in $ev) { [pscustomobject]@{ Id = $e.Id; RecordId = [long]$e.RecordId; TimeCreated = $e.TimeCreated; Raw = $e } }
+    $r = @(Get-RtcResets $rows (Get-StabilitySince 'rtc' (Get-Date).AddDays(-180)) $get)
+    if (-not $r.Count) { return }
+    $last = $r[-1]
+    $det = "Au démarrage du {0:dd/MM/yyyy}, l'horloge indiquait le {1:dd/MM/yyyy}" -f $last.Before, $last.WrongDate
+    if ($r.Count -lt 2) { Log ("   • Horloge repartie en arrière une fois au démarrage ({0}) : un réglage du BIOS peut l'expliquer, pas d'alerte pour une seule fois." -f $det); return }
+    $cause = "Quand le PC est privé de courant (multiprise éteinte, prise débranchée, coupure), c'est une petite pile ronde sur la carte mère (CR2032) qui garde l'heure et les réglages du BIOS. Ici, $($r.Count) fois depuis le $('{0:dd/MM/yyyy}' -f $r[0].Before), l'horloge du PC indiquait au démarrage une date plus ancienne que celle de son dernier arrêt. Le temps ne recule pas tout seul : c'est le signe d'une pile vide."
+    if (@($script:Issues | Where-Object { $_.Id -eq 'autorepair' }).Count) { $cause += " Ça peut aussi expliquer la réparation automatique de Windows : réglages du BIOS revenus par défaut à chaque coupure." }
+    Add-Issue -Id 'rtc' -Sev 'warn' -Title "La pile de la carte mère est sans doute vide" -Detail $det -Cause $cause `
+        -Effect "Date et heure fausses à chaque démarrage (sites en erreur de sécurité, mises à jour et antivirus qui se trompent), réglages du BIOS qui reviennent par défaut (XMP / EXPO, ordre de démarrage)." `
+        -Steps @("Achète une pile CR2032 : 2 à 5 € en supermarché.", "PC éteint et débranché du mur : touche le boîtier métallique pour te décharger, puis repère la pile ronde sur la carte mère (souvent près de la carte graphique).", "Appuie sur la petite languette pour la libérer, et mets la neuve le « + » vers le haut.", "Rallume : si le BIOS s'ouvre, remets la date et l'heure, et réactive XMP / EXPO si tu l'utilisais.", "PC portable : la pile est à l'intérieur, parfois sous un connecteur. Si tu n'es pas à l'aise, un réparateur la change en quelques minutes.", "Une fois la pile changée, clique sur « C'est fait » : seuls les nouveaux cas compteront.")
+}
 # Le contrôleur de disque a dû être réinitialisé (événement 129) : le PC se fige 30 secondes à 1 minute, puis repart
 function Test-StorageResets {
     $since = Get-StabilitySince 'diskreset' (Get-Date).AddDays(-30)
@@ -3418,67 +3844,24 @@ function Test-StorageResets {
 }
 function Test-Stability {
     $since = Get-StabilitySince 'bsod' (Get-Date).AddDays(-30)
-    $bsod = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $since } -ErrorAction SilentlyContinue)
-    if ($bsod.Count -gt 0) {
-        $codes = foreach ($e in $bsod) {
-            $txt = (($e.Properties | ForEach-Object { "$($_.Value)" }) -join ' ') + ' ' + $e.Message
-            if ($txt -match '0x([0-9a-fA-F]{1,8})') { '0x' + $matches[1].PadLeft(8, '0').ToUpper() }
-        }
-        $main = $codes | Group-Object | Sort-Object Count -Descending | Select-Object -First 1
-        $info = if ($main -and $script:BugChecks.ContainsKey($main.Name)) { $script:BugChecks[$main.Name] } else { @('Erreur système', "Un pilote ou un composant matériel a provoqué un arrêt brutal de Windows.", 'drv') }
-        $codeTxt = if ($main) { "{0} ({1})" -f $info[0], $main.Name } else { '' }
-        # Les rapports de plantage : quel pilote était en cause à chaque écran bleu
-        $an = Get-BsodAnalysis $since
-        foreach ($d in $an.Dumps) {
-            $nm = if ($script:BugChecks.ContainsKey($d.Code)) { $script:BugChecks[$d.Code][0] } else { 'code' }
-            Log ("   • Écran bleu du {0} : {1} ({2}){3}" -f $d.Date.ToString('dd/MM/yyyy HH:mm'), $nm, $d.Code, $(if ($d.Culprit) { " → pilote en cause : $($d.Culprit.Name)" + $(if ($d.Culprit.Company) { " ($($d.Culprit.Company))" } else { '' }) } elseif ($d.Readable) { " → seulement Windows sur la pile ($($d.Stack))" } else { " → rapport illisible" }))
-        }
-        if (-not $an.Dumps.Count) { Log "   • Aucun rapport d'écran bleu gardé par Windows (C:\Windows\Minidump vide) : le coupable ne peut pas être lu, seulement le code." }
-        $top = $an.Top; $detail = 'Code'; $fixL = "Réparer les fichiers Windows"; $fixA = 'Repair-System'; $ui = ''
-        $cause = $info[1]
-        $steps = switch ($info[2]) {
-            'hw'  { @("Si tu as overclocké le PC ou activé XMP / EXPO dans le BIOS, remets les réglages par défaut.", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Vérifie que le PC ne chauffe pas (poussière, ventilateurs).", "Mets à jour Windows et tes pilotes (onglet Mises à jour).") }
-            'gpu' { @("Mets à jour le pilote de la carte graphique avec l'outil officiel (onglet Mises à jour > Pilotes).", "Si tu as overclocké la carte graphique, remets-la par défaut.", "Vérifie que la carte graphique ne chauffe pas (poussière, ventilateurs).") }
-            default { @("Mets à jour le pilote de la carte graphique et du Wi-Fi / réseau (onglet Mises à jour > Pilotes).", "Installe toutes les mises à jour Windows.", "Si les écrans bleus continuent, désinstalle le dernier logiciel ou pilote installé avant qu'ils commencent.") }
-        }
-        if ($top) {
-            $extra = (@($top.Desc, $top.Company) | Where-Object { $_ }) -join ', '
-            $who = "« $($top.Name) »" + $(if ($extra) { " ($extra)" } else { '' })
-            $detail = "Pilote en cause : $($top.Name)"
-            $cause = "Les rapports de plantage de Windows désignent $who dans $($an.TopCount) écran(s) bleu(s) sur $(@($an.Dumps).Count) analysé(s). "
-            switch ($top.Kind) {
-                'gpu' { $cause += "C'est le pilote de la carte graphique."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote de ta carte graphique (bouton vert, ou NVIDIA App / AMD Adrenalin).", "Si ça continue : réinstalle-le proprement (option « installation propre / réinitialiser » de l'installateur NVIDIA ou AMD).", "Si tu as overclocké la carte graphique (MSI Afterburner…), remets-la par défaut.") }
-                'network' { $cause += "C'est un pilote réseau (carte réseau ou Wi-Fi)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote réseau / Wi-Fi depuis le site du fabricant de ta carte mère ou de ton PC (pas seulement Windows Update).", "Si c'est une carte Killer ou Realtek : désinstalle son logiciel d'« optimisation » réseau s'il y en a un.") }
-                'anticheat' { $cause += "C'est l'anti-triche d'un jeu."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Mets à jour le jeu qui l'utilise (ou réinstalle-le) : l'anti-triche se met à jour avec lui.", "Si tu n'y joues plus, désinstalle le jeu : son anti-triche part avec.") }
-                'antivirus' { $cause += "C'est un antivirus en plus de celui de Windows."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Désinstalle cet antivirus : Windows Defender protège déjà très bien le PC, et deux antivirus se gênent.", "Si tu veux le garder, mets-le à jour depuis son propre menu.") }
-                'storage' { $cause += "C'est un pilote du disque (stockage)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe les pilotes « chipset » et « stockage » du site du fabricant de ta carte mère.", "Mets à jour le firmware de ton SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…).", "Sauvegarde tes fichiers importants en attendant.") }
-                'usb' { $cause += "C'est un pilote USB (un appareil branché en USB)."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Débranche les appareils USB dont tu n'as pas besoin (hubs, adaptateurs) et regarde si ça continue.", "Installe le pilote « chipset » du site du fabricant de ta carte mère.") }
-                'audio' { $cause += "C'est un pilote audio."; $fixL = "Vérifier les pilotes"; $fixA = ''; $ui = 'drivers'
-                        $steps = @("Installe le dernier pilote audio du site du fabricant de ta carte mère ou de ton PC.", "Désinstalle les logiciels d'« effets sonores » en plus (Nahimic, Sonic Studio…) si tu ne t'en sers pas.") }
-                default { $cause += "Il a été installé par $(if ($top.Company) { $top.Company } else { 'un logiciel' })."; $fixL = "Voir les logiciels"; $fixA = ''; $ui = 'uninstall'
-                        $steps = @("Mets à jour ou désinstalle le logiciel de $(if ($top.Company) { $top.Company } else { 'ce pilote' }).", "Si les écrans bleus ont commencé juste après l'avoir installé, désinstalle-le.") }
-            }
-        } elseif (@($an.Dumps | Where-Object { $_.Readable }).Count) {
-            $cause = "Les rapports de plantage ne montrent que Windows lui-même, aucun pilote en particulier : c'est le signe classique d'un souci de mémoire vive (RAM), d'un réglage trop poussé (XMP/EXPO, overclocking) ou de fichiers de Windows abîmés."
-            $steps = @("Lance « Réparer les fichiers Windows » (bouton vert).", "Teste la mémoire : tape « Diagnostic de mémoire Windows » dans Démarrer et redémarre.", "Si XMP / EXPO est activé dans le BIOS, essaie sans pendant quelques jours.")
-        }
-        # Indices matériels en plus (faits relevés par Windows, pas des suppositions)
-        if ($an.Whea -gt 0) { $cause += " Windows a aussi noté $($an.Whea) erreur(s) matérielle(s) (WHEA) : le processeur, la RAM ou la carte mère signalent eux-mêmes un problème."; $steps = @($steps) + "Erreurs matérielles : enlève tout overclocking, mets à jour le BIOS et vérifie les températures." }
-        if ($an.Xmp -and ($an.Whea -gt 0 -or $info[2] -eq 'hw' -or -not $top)) { $cause += " La mémoire tourne en profil XMP/EXPO ($($an.Xmp)) : souvent stable, mais c'est un overclocking, à désactiver pour tester." }
-        if ($ui) {
-            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
-                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -FixLabel $fixL -UiFix $ui -Steps $steps
+    $v = Get-BsodVerdict $since
+    foreach ($l in $v.Lines) { Log $l }
+    if ($v.Count -gt 0) {
+        if ($v.Ui) {
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($v.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $v.Detail -Code $v.Code -Cause $v.Cause `
+                -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." -FixLabel $v.FixL -UiFix $v.Ui -Steps $v.Steps
         } else {
-            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($bsod.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $detail -Code $codeTxt -Cause $cause `
+            Add-Issue -Id 'bsod' -Sev 'crit' -Title "$($v.Count) écran(s) bleu(s) ces 30 derniers jours" -Detail $v.Detail -Code $v.Code -Cause $v.Cause `
                 -Effect "Le PC peut planter n'importe quand, avec un risque de perdre ce qui n'est pas enregistré." `
                 -FixLabel "Réparer les fichiers Windows" -FixAction 'Repair-System' -Confirm "La réparation des fichiers Windows prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nElle corrige les fichiers système abîmés ; pour les pilotes, suis aussi les étapes « Voir comment faire »." `
-                -Steps $steps
+                -Steps $v.Steps
+        }
+        if ($v.NoDump -eq 'off') {
+            Add-Issue -Id 'nodump' -Sev 'warn' -Title "Windows ne garde aucun rapport d'écran bleu" -Detail "Réglage « Écriture des informations de débogage » sur Aucun" `
+                -Cause "Windows est réglé pour ne rien noter quand il plante : impossible de lire quel pilote est fautif. Ce réglage est parfois coupé par un logiciel d'« optimisation »." `
+                -Effect "Au prochain écran bleu, seul le code sera connu, pas le coupable." -FixLabel "Réactiver les rapports" -FixAction 'Set-CrashDumpMode 7' `
+                -Confirm "Remettre le réglage d'origine de Windows (rapport automatique) ?`n`nAu prochain écran bleu, AEROX pourra lire le pilote fautif. Annulable dans l'historique." `
+                -Steps @("Clique sur « Réactiver les rapports ».", "Au prochain écran bleu, relance le diagnostic : le pilote fautif sera nommé.")
         }
     } else { Add-Ok "Aucun écran bleu ces 30 derniers jours" }
 
@@ -3497,6 +3880,9 @@ function Test-Stability {
         $cutDays = @($kp | Group-Object { $_.TimeCreated.ToString('yyyy-MM-dd') }).Count
         if ($cut -ge 3 -and $cutDays -ge 3 -and -not $btn) { $cause += " Ça arrive presque à chaque utilisation ($cutDays jours différents) : le PC est très probablement coupé au courant (multiprise, prise débranchée) sans avoir été éteint avant. C'est ce qui abîme les fichiers de démarrage de Windows."; $steps += "Avant de débrancher le PC ou d'éteindre la multiprise : Démarrer > Arrêter, puis attends que tout soit éteint." }
         if ($cut) { $cause += " Une coupure nette sans bouton, c'est le courant (multiprise, coupure), l'alimentation du PC qui flanche sous la charge, ou une surchauffe."; $steps += "Si ça arrive surtout en jeu : poussière, ventilateurs, et l'alimentation du PC (bloc d'alim) peut être trop faible ou fatiguée."; $steps += "Branche le PC directement au mur (sans multiprise douteuse) pour éliminer le courant." }
+        # Boîte noire : ce que faisait le PC juste avant la dernière coupure (si AEROX tournait à ce moment-là)
+        $bb = Get-BlackBoxForCrash (@($kp | Sort-Object TimeCreated)[-1].TimeCreated)
+        if ($bb) { $cause += " " + $bb.Text; Log ("   • " + $bb.Text) }
         Add-Issue -Id 'power41' -Sev 'warn' -Title "Le PC s'est éteint brutalement $($kp.Count) fois" -Detail "Ces 30 derniers jours" -Cause $cause `
             -Effect "Risque de fichiers abîmés et de perte de travail." -Steps $steps
     }
@@ -3504,6 +3890,7 @@ function Test-Stability {
     try { Test-StartupRepair } catch { Log "   • Réparation automatique de Windows : journal illisible" }
     try { Test-HardwareErrors } catch {}
     try { Test-StorageResets } catch {}
+    try { Test-RtcBattery } catch {}
 
     # Le pilote graphique qui « cesse de répondre et récupère » : écran noir quelques secondes qui revient tout seul,
     # jeu qui se fige ou se ferme. Toutes les traces que Windows en garde sont réunies (événement 4101, erreurs du pilote,
@@ -5519,7 +5906,9 @@ function Get-TempOnlyDirs {
     return $d
 }
 function Get-ErrorDirs {
-    $d = @("$env:SystemRoot\Minidump", "$env:SystemRoot\LiveKernelReports", "$env:SystemRoot\MEMORY.DMP",
+    # Les rapports d'écrans bleus des 30 derniers jours sont gardés : ce sont eux qui nomment le pilote fautif
+    $d = @(Get-ChildItem -LiteralPath "$env:SystemRoot\Minidump" -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } | ForEach-Object { $_.FullName })
+    $d += @("$env:SystemRoot\LiveKernelReports", "$env:SystemRoot\MEMORY.DMP",
            "$env:ProgramData\Microsoft\Windows\WER\ReportArchive", "$env:ProgramData\Microsoft\Windows\WER\ReportQueue")
     foreach ($p in Get-UserProfiles) { $d += (Join-Path $p 'AppData\Local\CrashDumps') }
     return $d
@@ -5528,7 +5917,7 @@ $script:DoPath = "$env:SystemRoot\ServiceProfiles\NetworkService\AppData\Local\M
 $script:WinOldPaths = @("$env:SystemDrive\Windows.old", "$env:SystemDrive\`$Windows.~BT", "$env:SystemDrive\`$Windows.~WS")
 $script:CleanMgrSafe = @('Active Setup Temp Folders', 'BranchCache', 'D3D Shader Cache', 'Delivery Optimization Files', 'Device Driver Packages', 'Diagnostic Data Viewer database files',
     'Downloaded Program Files', 'Feedback Hub Archive log files', 'Internet Cache Files', 'Old ChkDsk Files', 'RetailDemo Offline Content', 'Setup Log Files',
-    'System error memory dump files', 'System error minidump files', 'Temporary Files', 'Temporary Setup Files', 'Thumbnail Cache', 'Update Cleanup',
+    'System error memory dump files', 'Temporary Files', 'Temporary Setup Files', 'Thumbnail Cache', 'Update Cleanup',
     'Upgrade Discarded Files', 'Windows Defender', 'Windows Error Reporting Files', 'Windows Upgrade Log Files')
 
 function Get-CleanupAnalysis {
@@ -5553,7 +5942,7 @@ function Get-CleanupAnalysis {
     & $add @{ Id = 'wupdate'; Name = 'Fichiers de mises à jour Windows'; Default = $true; Size = (Get-PathsSize @("$env:SystemRoot\SoftwareDistribution\Download", $script:DoPath))
               Desc = "Mises à jour déjà installées et cache d'optimisation de distribution. Windows les retélécharge si besoin." }
     & $add @{ Id = 'errors'; Name = "Rapports d'erreurs et de plantages"; Default = $true; Size = (Get-PathsSize (Get-ErrorDirs))
-              Desc = "Fichiers créés quand un logiciel ou Windows plante (écrans bleus compris). Inutiles une fois le problème réglé." }
+              Desc = "Fichiers créés quand un logiciel ou Windows plante. Les rapports d'écrans bleus de moins de 30 jours sont gardés : ils servent à trouver le pilote fautif." }
     & $add @{ Id = 'windows'; Name = 'Nettoyage de disque Windows'; Default = $true; Size = -1
               Desc = "L'outil officiel de Windows : journaux d'installation, anciens pilotes, fichiers de mise à niveau, cache Defender, etc. Peut prendre plusieurs minutes." }
     & $add @{ Id = 'components'; Name = 'Anciens composants Windows'; Default = $true; Size = -1
@@ -6644,6 +7033,917 @@ function Reset-WindowsUpdate {
     } else { Log "✅ Windows Update remis à zéro." }
 }
 
+# ---------------------------------------------------------------- Vitesse des disques
+# Type du disque derrière une lettre : nvme | ssd | hdd | '' (USB, virtuel, RAID : pas de valeur attendue fiable)
+function Get-DiskKindName([string]$MediaType, [string]$BusType) {
+    if ("$BusType" -match '(?i)^(USB|SD|MMC|File Backed Virtual|Virtual|iSCSI|RAID|Storage Spaces|Spaces)$') { return '' }
+    if ("$BusType" -match '(?i)^NVMe$') { return 'nvme' }
+    if ("$MediaType" -match '(?i)^SSD$') { return 'ssd' }
+    if ("$MediaType" -match '(?i)^HDD$') { return 'hdd' }
+    return ''
+}
+# Verdict d'une mesure, avec des seuils volontairement bas : « lent » veut dire nettement sous ce que fait un disque
+# de ce type en bon état, pas « moins bien que le meilleur du marché ».
+function Get-DiskSpeedVerdict([string]$Kind, [double]$Read, [double]$Write, [double]$Rand) {
+    $lim = switch ($Kind) {
+        'nvme' { @{ R = 500; W = 250; Q = 10; Name = 'SSD NVMe'; Typ = "1 500 à 7 000 Mo/s en lecture" } }
+        'ssd'  { @{ R = 250; W = 150; Q = 10; Name = 'SSD SATA'; Typ = "450 à 550 Mo/s en lecture" } }
+        'hdd'  { @{ R = 50;  W = 40;  Q = 0;  Name = 'disque dur'; Typ = "80 à 200 Mo/s en lecture" } }
+        default { $null }
+    }
+    if (-not $lim) { return @{ Level = 'info'; Name = ''; Typ = ''; Slow = @() } }
+    $slow = @()
+    if ($Read -lt $lim.R) { $slow += "lecture à $([math]::Round($Read)) Mo/s" }
+    if ($Write -lt $lim.W) { $slow += "écriture à $([math]::Round($Write)) Mo/s" }
+    if ($lim.Q -gt 0 -and $Rand -lt $lim.Q) { $slow += ("petits fichiers à {0:N1} Mo/s" -f $Rand) }
+    return @{ Level = $(if ($slow.Count) { 'warn' } else { 'ok' }); Name = $lim.Name; Typ = $lim.Typ; Slow = $slow }
+}
+function ConvertFrom-BenchResult([string]$S) {
+    if (-not $S -or $S -like 'ERR:*') { return $null }
+    $q = @($S.Split('|')); if ($q.Count -lt 3) { return $null }
+    $ci = [Globalization.CultureInfo]::InvariantCulture
+    try { return @{ Write = [double]::Parse($q[0], $ci); Read = [double]::Parse($q[1], $ci); Rand = [double]::Parse($q[2], $ci) } } catch { return $null }
+}
+function Test-DiskSpeed {
+    Step "Vitesse des disques : écriture, lecture, petits fichiers"
+    $vols = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -eq 'Fixed' -and "$($_.FileSystem)" -match '^(NTFS|ReFS|exFAT|FAT32)$' } | Sort-Object DriveLetter | Select-Object -First 4)
+    if (-not $vols.Count) { Log "   • Aucun disque interne à mesurer."; return }
+    $pds = @(); try { $pds = @(Get-PhysicalDisk -ErrorAction Stop) } catch {}
+    $results = New-Object System.Collections.ArrayList
+    $i = 0
+    foreach ($v in $vols) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande."; break }
+        $i++; $l = "$($v.DriveLetter)".ToUpper()
+        $kind = ''; $name = ''
+        try { $dn = (Get-Partition -DriveLetter $l -ErrorAction Stop).DiskNumber; $pd = $pds | Where-Object { "$($_.DeviceId)" -eq "$dn" } | Select-Object -First 1; if ($pd) { $kind = Get-DiskKindName "$($pd.MediaType)" "$($pd.BusType)"; $name = "$($pd.FriendlyName)".Trim() } } catch {}
+        $free = [double]$v.SizeRemaining
+        $size = if ($free -ge 8GB) { 1024 } elseif ($free -ge 2GB) { 256 } else { 0 }
+        if (-not $size) { Log ("   • {0}: pas assez de place libre pour mesurer ({1} libres, il faut 2 Go)." -f $l, (Format-Size $free)); continue }
+        Log ("   {0}: {1}{2} : mesure avec un fichier de {3} (supprimé à la fin)…" -f $l, $(if ($name) { "$name " } else { '' }), $(switch ($kind) { 'nvme' { '(SSD NVMe)' } 'ssd' { '(SSD SATA)' } 'hdd' { '(disque dur)' } default { '' } }), (Format-Size ([double]$size * 1MB)))
+        $file = "${l}:\aerox-test-vitesse.tmp"
+        [AeroxDiskBench]::Cancel = $false
+        $best = $null; $err = ''
+        # Une mesure lente est refaite une fois (un autre programme écrivait peut-être) : on garde la meilleure
+        foreach ($try in 1, 2) {
+            $raw = [AeroxDiskBench]::Run($file, $size, 5)
+            $m = ConvertFrom-BenchResult $raw
+            if (-not $m) { $err = "$raw"; break }
+            if (-not $best) { $best = $m } else { foreach ($k in 'Write', 'Read', 'Rand') { if ($m[$k] -gt $best[$k]) { $best[$k] = $m[$k] } } }
+            if ((Get-DiskSpeedVerdict $kind $best.Read $best.Write $best.Rand).Level -ne 'warn' -or $sync.Cancel) { break }
+            if ($try -eq 1) { Log "     Résultat bas : deuxième mesure pour confirmer…" }
+        }
+        try { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue } } catch {}
+        $sync.Progress = [int](100 * $i / $vols.Count)
+        if (-not $best) {
+            if ($err -ne 'ERR:cancel') { Log ("     • Mesure impossible sur {0}: ({1})." -f $l, $(if ($err) { $err } else { 'pas de réponse' })) }
+            continue
+        }
+        $vd = Get-DiskSpeedVerdict $kind $best.Read $best.Write $best.Rand
+        Log ("     Lecture {0:N0} Mo/s · Écriture {1:N0} Mo/s · Petits fichiers (4 Ko) {2:N1} Mo/s" -f $best.Read, $best.Write, $best.Rand)
+        [void]$results.Add(@{ Letter = $l; Kind = $kind; Name = $name; Read = $best.Read; Write = $best.Write; Rand = $best.Rand; Level = $vd.Level })
+        switch ($vd.Level) {
+            'ok'   { Log ("     ✔ Normal pour un {0} (en bon état : {1})." -f $vd.Name, $vd.Typ) }
+            'info' { Log "     • Disque d'un type particulier (USB, virtuel, RAID) : pas de valeur de référence fiable, les chiffres sont donnés pour information." }
+            default {
+                $pct = if ([double]$v.Size -gt 0) { [math]::Round(100 * (1 - $free / [double]$v.Size)) } else { 0 }
+                $cause = "Mesuré deux fois : $($vd.Slow -join ', '). Un $($vd.Name) en bon état fait $($vd.Typ)."
+                if ($kind -ne 'hdd' -and $pct -ge 90) { $cause += " Le disque est rempli à $pct % : un SSD presque plein devient très lent." }
+                Add-TaskError -Title ("Le disque {0}: est anormalement lent" -f $l) -Cause $cause -Effect "Windows, les jeux et les logiciels mettent longtemps à s'ouvrir et à charger." `
+                    -Steps @($(if ($kind -ne 'hdd' -and $pct -ge 85) { "Libère de la place : garde au moins 15 % du SSD libre (accueil > Libérer de la place)." } else { "Ferme les téléchargements et les installations en cours, puis refais la mesure." }),
+                             "Lance le diagnostic : il vérifie la santé du disque, sa température et, pour un NVMe, s'il est branché sur un emplacement bridé.",
+                             $(if ($kind -eq 'hdd') { "Un disque dur qui ralentit est souvent en fin de vie : sauvegarde tes fichiers (carte « Sauvegarder mes fichiers »)." } else { "Mets à jour le firmware du SSD avec l'outil de sa marque (Samsung Magician, Crucial Storage Executive, WD Dashboard…)." }))
+            }
+        }
+    }
+    $sync.DiskSpeed = $results.ToArray()
+}
+# ---------------------------------------------------------------- Sauvegarder mes fichiers
+$script:BackupFolders = @(@{ Key = 'Desktop'; Name = 'Bureau' }, @{ Key = 'Personal'; Name = 'Documents' }, @{ Key = 'My Pictures'; Name = 'Images' }, @{ Key = 'My Video'; Name = 'Vidéos' }, @{ Key = 'My Music'; Name = 'Musique' }, @{ Key = 'Downloads'; Name = 'Téléchargements' })
+# Fichiers « en ligne seulement » (OneDrive) : ils ne sont pas sur le disque, les copier forcerait à tout télécharger
+function Test-CloudOnly($Attributes) { return ((([int]$Attributes) -band 0x1000) -ne 0 -or (([int]$Attributes) -band 0x400000) -ne 0) }
+function Measure-BackupFolder([string]$Path) {
+    $r = @{ Files = 0; Bytes = [double]0; Cloud = 0; Max = [double]0 }
+    try {
+        $di = New-Object IO.DirectoryInfo $Path
+        $stack = New-Object System.Collections.Stack; $stack.Push($di)
+        while ($stack.Count) {
+            if ($sync.Cancel) { break }
+            $d = $stack.Pop()
+            try {
+                foreach ($f in $d.GetFiles()) { if (Test-CloudOnly $f.Attributes) { $r.Cloud++ } else { $r.Files++; $r.Bytes += $f.Length; if ($f.Length -gt $r.Max) { $r.Max = [double]$f.Length } } }
+                foreach ($s in $d.GetDirectories()) { if (-not ($s.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $stack.Push($s) } }
+            } catch {}
+        }
+    } catch {}
+    return $r
+}
+# Une sauvegarde sur le même disque que Windows ne protège de rien (panne du disque, réinstallation) : refusée
+function Test-BackupTarget([string]$DriveType, [string]$FileSystem, $DiskNumber, $SystemDiskNumber, [bool]$ReadOnly) {
+    if ($DriveType -notin 'Fixed', 'Removable') { return $false }
+    if (-not $FileSystem -or $FileSystem -match '(?i)^(RAW|Unknown|CDFS|UDF)$' -or $ReadOnly) { return $false }
+    if ($null -eq $DiskNumber -or $null -eq $SystemDiskNumber) { return $false }
+    return ([int]$DiskNumber -ne [int]$SystemDiskNumber)
+}
+function Get-BackupTargets {
+    $out = New-Object System.Collections.ArrayList
+    $sysDisk = $null; try { $sysDisk = (Get-Partition -DriveLetter $env:SystemDrive[0] -ErrorAction Stop).DiskNumber } catch {}
+    foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter } | Sort-Object DriveLetter)) {
+        $l = "$($v.DriveLetter)".ToUpper(); $dn = $null; $ro = $false; $bus = ''
+        try { $pt = Get-Partition -DriveLetter $l -ErrorAction Stop; $dn = $pt.DiskNumber; $ro = [bool]$pt.IsReadOnly; $dk = Get-Disk -Number $dn -ErrorAction Stop; $bus = "$($dk.BusType)"; if ($dk.IsReadOnly) { $ro = $true } } catch {}
+        if (-not (Test-BackupTarget "$($v.DriveType)" "$($v.FileSystem)" $dn $sysDisk $ro)) { continue }
+        [void]$out.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Free = [double]$v.SizeRemaining; Size = [double]$v.Size; Fs = "$($v.FileSystem)"; External = ($bus -match '(?i)^(USB|SD|MMC)$') })
+    }
+    return $out.ToArray()
+}
+function Get-BackupPlan {
+    Step "Sauvegarde : tes dossiers et où les copier"
+    $sync.BackupPlan = $null
+    $folders = New-Object System.Collections.ArrayList
+    foreach ($f in $script:BackupFolders) {
+        if ($sync.Cancel) { return }
+        $p = Get-SessionFolder $f.Key
+        if (-not $p -or -not (Test-Path -LiteralPath $p)) { continue }
+        if (@($folders | Where-Object { $_.Path -eq $p }).Count) { continue }
+        $m = Measure-BackupFolder $p
+        Log ("   • {0} : {1} fichier(s), {2}{3}" -f $f.Name, $m.Files, (Format-Size $m.Bytes), $(if ($m.Cloud) { " (+ $($m.Cloud) en ligne seulement, déjà dans OneDrive)" } else { '' }))
+        [void]$folders.Add(@{ Name = $f.Name; Path = $p; Files = $m.Files; Bytes = $m.Bytes; Cloud = $m.Cloud; Max = $m.Max })
+    }
+    $targets = @(Get-BackupTargets)
+    foreach ($t in $targets) { Log ("   → Disque possible : {0}: {1} ({2} libres{3})" -f $t.Letter, $t.Label, (Format-Size $t.Free), $(if ($t.External) { ', externe' } else { '' })) }
+    if (-not $targets.Count) { Log "   • Aucun autre disque que celui de Windows n'est branché : branche un disque dur externe ou une clé USB." }
+    $sync.BackupPlan = @{ Folders = $folders.ToArray(); Targets = $targets; Pc = $env:COMPUTERNAME }
+}
+# Code de sortie de robocopy : un champ de bits. 8 = des fichiers n'ont pas pu être copiés, 16 = erreur grave.
+function Get-RobocopyVerdict([int]$Code) {
+    if ($Code -lt 0 -or ($Code -band 16)) { return 'fatal' }
+    if ($Code -band 8) { return 'partial' }
+    return 'ok'
+}
+function Invoke-Robocopy([string]$Source, [string]$Dest) {
+    $exe = Join-Path $env:SystemRoot 'System32\robocopy.exe'
+    # /E sous-dossiers · /XJ pas de jonctions (boucles) · /XA:O pas les fichiers « en ligne seulement » · /R:1 /W:1 un seul
+    # nouvel essai · /MT copie en parallèle · jamais /MIR ni /PURGE : rien n'est supprimé, ni à la source ni à la destination
+    $a = '"{0}" "{1}" /E /COPY:DAT /DCOPY:T /XJ /XA:O /R:1 /W:1 /MT:8 /NP /NFL /NDL /NJH /NJS' -f $Source.TrimEnd('\'), $Dest.TrimEnd('\')
+    $p = Start-Process -FilePath $exe -ArgumentList $a -WindowStyle Hidden -PassThru -ErrorAction Stop
+    while (-not $p.HasExited) {
+        if ($sync.Cancel) { try { $p.Kill() } catch {}; return -1 }
+        Start-Sleep -Milliseconds 400
+    }
+    return [int]$p.ExitCode
+}
+function Start-UserBackup([string[]]$Paths, [string]$Letter) {
+    Step "Sauvegarde de tes fichiers"
+    if ($Letter -notmatch '^[A-Za-z]$') { throw "disque de destination invalide" }
+    $Letter = $Letter.ToUpper()
+    $t = @(Get-BackupTargets | Where-Object { $_.Letter -eq $Letter })[0]
+    if (-not $t) { throw "Le disque ${Letter}: n'est plus branché, ou c'est le disque de Windows : rien n'a été copié." }
+    $known = @($script:BackupFolders | ForEach-Object { Get-SessionFolder $_.Key } | Where-Object { $_ })
+    $todo = @($Paths | Where-Object { $_ -and ($known -contains $_) -and (Test-Path -LiteralPath $_) } | Select-Object -Unique)
+    if (-not $todo.Count) { Log "   • Aucun dossier choisi."; return }
+    # Place et taille des fichiers revérifiées juste avant de copier
+    $meas = @{}; $total = [double]0; $max = [double]0
+    foreach ($p in $todo) { $m = Measure-BackupFolder $p; $meas[$p] = $m; $total += $m.Bytes; if ($m.Max -gt $max) { $max = $m.Max } }
+    if ($sync.Cancel) { return }
+    if ($total + 500MB -gt $t.Free) {
+        Add-TaskError -Title "Pas assez de place sur ${Letter}: pour la sauvegarde" -Cause ("Il faut {0}, le disque a {1} de libre." -f (Format-Size $total), (Format-Size $t.Free)) -Effect "Rien n'a été copié." -Steps @("Décoche un dossier (Téléchargements et Vidéos sont souvent les plus gros).", "Ou libère de la place sur ${Letter}:, ou prends un disque plus grand.")
+        return
+    }
+    if ($t.Fs -eq 'FAT32' -and $max -ge 4GB) {
+        Add-TaskError -Title "Le disque ${Letter}: ne peut pas recevoir tes gros fichiers" -Cause ("Il est au format FAT32, limité à 4 Go par fichier, et ton plus gros fichier fait {0}." -f (Format-Size $max)) -Effect "Rien n'a été copié." -Steps @("Prends un disque au format exFAT ou NTFS.", "Ou formate celui-ci en exFAT (clic droit sur le disque > Formater) : attention, ça efface ce qu'il contient.")
+        return
+    }
+    $root = "${Letter}:\Sauvegarde AEROX\{0} {1:yyyy-MM-dd HH\hmm}" -f ($env:COMPUTERNAME -replace '[^\w\-]', ''), (Get-Date)
+    [void](New-Item -ItemType Directory -Path $root -Force -ErrorAction Stop)
+    Log ("   Vers : {0}" -f $root)
+    Log ("   {0} à copier. Rien n'est supprimé ni déplacé : tes fichiers restent à leur place." -f (Format-Size $total))
+    $i = 0; $okAll = $true; $doneBytes = [double]0; $doneFiles = 0
+    foreach ($p in $todo) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande : la sauvegarde est incomplète."; $okAll = $false; break }
+        $i++; $name = @($script:BackupFolders | Where-Object { (Get-SessionFolder $_.Key) -eq $p })[0].Name
+        $dest = Join-Path $root $name
+        Log ("   {0} ({1} sur {2}) : {3} fichier(s), {4}…" -f $name, $i, $todo.Count, $meas[$p].Files, (Format-Size $meas[$p].Bytes))
+        $code = Invoke-Robocopy $p $dest
+        if ($code -eq -1 -and $sync.Cancel) { Log "   • Arrêté à ta demande : la sauvegarde est incomplète."; $okAll = $false; break }
+        # Vérification : même nombre de fichiers et même taille totale à l'arrivée
+        $got = Measure-BackupFolder $dest
+        $missing = [int]$meas[$p].Files - [int]$got.Files
+        $state = Get-RobocopyVerdict $code
+        if ($state -eq 'ok' -and $missing -le 0 -and $got.Bytes -ge $meas[$p].Bytes) { Log ("     ✔ {0} copié et vérifié : {1} fichier(s), {2}" -f $name, $got.Files, (Format-Size $got.Bytes)); $doneBytes += $got.Bytes; $doneFiles += $got.Files }
+        else {
+            $okAll = $false; $doneBytes += $got.Bytes; $doneFiles += $got.Files
+            Add-TaskError -Title ("{0} : {1} fichier(s) n'ont pas pu être copiés" -f $name, [math]::Max(1, $missing)) -Cause "Fichiers ouverts dans un logiciel, noms trop longs pour le disque, ou erreur de lecture / d'écriture pendant la copie." -Effect "La sauvegarde de ce dossier est incomplète. Le reste est bien copié." `
+                -Steps @("Ferme les logiciels qui utilisent ces fichiers et relance la sauvegarde.", "Si ça recommence : lance « Clé USB ou disque externe illisible » pour vérifier le disque de destination.")
+        }
+        $sync.Progress = [int](100 * $i / $todo.Count)
+    }
+    $sync.BackupDone = @{ Root = $root; Ok = $okAll; Files = $doneFiles; Bytes = $doneBytes }
+    if ($okAll) {
+        Log ("✅ Sauvegarde terminée et vérifiée : {0} fichier(s), {1}, dans {2}" -f $doneFiles, (Format-Size $doneBytes), $root)
+        Log "   Ce qui n'est PAS dedans : tes logiciels et tes jeux (à réinstaller), les mots de passe du navigateur (connecte-toi à ton compte Google / Microsoft / Firefox pour les retrouver), et les fichiers rangés ailleurs que dans ces dossiers."
+        Add-Change -Kind 'info' -Title "Sauvegarde de tes fichiers" -Detail ("{0}, {1}" -f $root, (Format-Size $doneBytes))
+    }
+}
+# ---------------------------------------------------------------- Boîte noire
+# Pendant qu'AEROX est ouvert (ou près de l'horloge), un relevé toutes les 10 secondes est ajouté à un petit fichier :
+# charge, mémoire, températures quand les capteurs tournent. Après un arrêt brutal, on relit la dernière minute.
+# Ligne : « date ISO|S|charge|temp. processeur|charge carte graphique|temp. carte graphique|mémoire %|jeu », ou « date ISO|X »
+# quand AEROX est fermé normalement.
+function Get-BlackBoxPath { return (Join-Path $AppInfo.LogDir 'boite-noire.txt') }
+function ConvertFrom-BlackBoxLine([string]$L) {
+    $q = @("$L".Split('|')); if ($q.Count -lt 2) { return $null }
+    $t = $null; try { $t = [datetime]::Parse($q[0], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch { return $null }
+    if ($q[1] -eq 'X') { return @{ Time = $t; Stop = $true } }
+    if ($q[1] -ne 'S' -or $q.Count -lt 7) { return $null }
+    $n = { param($s) $v = 0.0; if ("$s" -ne '' -and [double]::TryParse("$s", [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$v) -and $v -ge 0) { $v } else { $null } }
+    return @{ Time = $t; Stop = $false; Cpu = (& $n $q[2]); CpuT = (& $n $q[3]); Gpu = (& $n $q[4]); GpuT = (& $n $q[5]); Ram = (& $n $q[6]); Game = $(if ($q.Count -gt 7) { $q[7] } else { '' }) }
+}
+function Read-BlackBox {
+    $p = Get-BlackBoxPath
+    if (-not (Test-Path -LiteralPath $p)) { return @() }
+    try { return @(Get-Content -LiteralPath $p -Encoding UTF8 -ErrorAction Stop | ForEach-Object { ConvertFrom-BlackBoxLine $_ } | Where-Object { $_ }) } catch { return @() }
+}
+# Les relevés juste avant un arrêt brutal. $Boot = heure du redémarrage, $LastAlive = dernière chose notée par Windows
+# avant ce redémarrage. Rien si AEROX avait été fermé, ou s'il s'était arrêté bien avant que le PC ne s'arrête.
+function Get-BlackBoxBefore($Rows, [datetime]$Boot, [datetime]$LastAlive, [int]$Seconds = 120) {
+    $before = @($Rows | Where-Object { $_ -and $_.Time -lt $Boot } | Sort-Object { $_.Time })
+    if (-not $before.Count) { return @() }
+    $last = $before[$before.Count - 1]
+    if ($last.Stop) { return @() }
+    if ($last.Time -lt $LastAlive.AddSeconds(-90)) { return @() }
+    return @($before | Where-Object { -not $_.Stop -and ($last.Time - $_.Time).TotalSeconds -le $Seconds })
+}
+function Get-BlackBoxSummary($Rows, [bool]$Ryzen95 = $false) {
+    $rows = @($Rows | Where-Object { $_ -and -not $_.Stop })
+    if ($rows.Count -lt 2) { return $null }
+    $max = { param($k) $v = @($rows | ForEach-Object { $_[$k] } | Where-Object { $null -ne $_ }); if ($v.Count) { [math]::Round(($v | Measure-Object -Maximum).Maximum) } else { $null } }
+    $r = @{ Count = $rows.Count; At = $rows[$rows.Count - 1].Time; Cpu = (& $max 'Cpu'); CpuT = (& $max 'CpuT'); Gpu = (& $max 'Gpu'); GpuT = (& $max 'GpuT'); Ram = (& $max 'Ram'); Game = "$(@($rows | ForEach-Object { $_.Game } | Where-Object { $_ }) | Select-Object -Last 1)" }
+    $parts = @()
+    if ($null -ne $r.CpuT) { $parts += "processeur jusqu'à $($r.CpuT) °C" }
+    if ($null -ne $r.GpuT) { $parts += "carte graphique jusqu'à $($r.GpuT) °C" }
+    if ($null -ne $r.Cpu) { $parts += "processeur chargé à $($r.Cpu) %" }
+    if ($null -ne $r.Ram) { $parts += "mémoire remplie à $($r.Ram) %" }
+    if ($r.Game) { $parts += "jeu en cours : $($r.Game)" }
+    $r.HasTemp = ($null -ne $r.CpuT -or $null -ne $r.GpuT)
+    $r.Hot = (($null -ne $r.CpuT -and $r.CpuT -ge $(if ($Ryzen95) { 98 } else { 95 })) -or ($null -ne $r.GpuT -and $r.GpuT -ge 90))
+    $r.Text = "Boîte noire d'AEROX, dernière minute avant l'arrêt (le $('{0:dd/MM à HH:mm}' -f $r.At)) : " + ($parts -join ', ') + '.'
+    if ($r.Hot) { $r.Text += " Ça chauffait trop juste avant : la surchauffe est la cause la plus probable." }
+    elseif ($r.HasTemp) { $r.Text += " Les températures étaient normales : ce n'est pas une surchauffe, regarde plutôt le courant et l'alimentation du PC." }
+    if ($null -ne $r.Ram -and $r.Ram -ge 97) { $r.Text += " La mémoire était pleine." }
+    return $r
+}
+# Pour un arrêt brutal que Windows a noté à $EventTime (au redémarrage) : le résumé de la boîte noire, ou rien
+function Get-BlackBoxForCrash([datetime]$EventTime) {
+    try {
+        $rows = @(Read-BlackBox); if (-not $rows.Count) { return $null }
+        $boot = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-General'; Id = 12; StartTime = $EventTime.AddMinutes(-15); EndTime = $EventTime.AddMinutes(1) } | Sort-Object TimeCreated) | Select-Object -Last 1
+        if (-not $boot) { return $null }
+        $prev = @(Get-WinEvent -LogName System -FilterXPath ("*[System[EventRecordID < {0}]]" -f [long]$boot.RecordId) -MaxEvents 1 -ErrorAction Stop) | Select-Object -First 1
+        if (-not $prev) { return $null }
+        $cpu = "$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)"
+        return (Get-BlackBoxSummary (Get-BlackBoxBefore $rows $boot.TimeCreated $prev.TimeCreated) (Test-RyzenTarget95 $cpu))
+    } catch { return $null }
+}
+# ---------------------------------------------------------------- Récupérer des fichiers effacés
+# AEROX ne récupère rien lui-même : il pilote « Windows File Recovery », l'outil officiel de Microsoft (winfr), qui lit
+# le disque sans rien écrire dessus et range ce qu'il retrouve sur un AUTRE disque.
+$script:RecoverKinds = [ordered]@{
+    photos = @{ Name = 'Photos et images'; Ext = @('jpg', 'jpeg', 'png', 'heic', 'gif', 'bmp', 'cr2', 'nef', 'arw', 'dng') }
+    videos = @{ Name = 'Vidéos'; Ext = @('mp4', 'mov', 'avi', 'mkv', 'wmv', 'm4v') }
+    docs   = @{ Name = 'Documents'; Ext = @('pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'txt', 'rtf') }
+    music  = @{ Name = 'Musique'; Ext = @('mp3', 'wav', 'flac', 'm4a', 'aac', 'ogg') }
+    all    = @{ Name = 'Tout ce qui est retrouvable'; Ext = @() }
+}
+function Test-WinfrRuns([string]$Path) {
+    try { $o = (& $Path '/?' 2>&1 | Out-String) -replace "`0", ''; return ($o -match '(?i)winfr|File Recovery') } catch { return $false }
+}
+function Get-Winfr {
+    # D'abord la copie officielle dans Program Files (protégée), signée par Microsoft ; le raccourci du dossier perso ensuite
+    $cands = New-Object System.Collections.ArrayList
+    foreach ($p in @(Get-ChildItem "$env:ProgramFiles\WindowsApps\Microsoft.WindowsFileRecovery_*__8wekyb3d8bbwe\winfr.exe" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)) { if (Test-ToolSignature $p.FullName 'Microsoft Corporation') { [void]$cands.Add($p.FullName) } }
+    if ($cands.Count) {
+        $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\winfr.exe'
+        if ((Test-Path -LiteralPath $alias) -and ((Get-Item -LiteralPath $alias -Force -ErrorAction SilentlyContinue).Attributes -band [IO.FileAttributes]::ReparsePoint)) { [void]$cands.Add($alias) }
+    }
+    foreach ($c in $cands) { if (Test-WinfrRuns $c) { return $c } }
+    return $null
+}
+function Install-Winfr {
+    $wg = Get-Winget
+    if (-not $wg) { Add-WingetError "L'installation de l'outil de récupération de Microsoft est"; return $false }
+    Log "   Installation de « Windows File Recovery » (outil officiel de Microsoft, depuis le Microsoft Store)…"
+    # 5 minutes au plus : le Store peut ne jamais répondre (désactivé, pas de compte)
+    $null = Invoke-NativeTimed $wg ((@('install', '--id', '9N26S50LN705', '--source', 'msstore', '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements') + (Get-WingetExtraArgs $wg)) -join ' ') 300
+    return [bool](Get-Winfr)
+}
+# Arguments de winfr : toujours /a (pas de question), jamais le même lecteur des deux côtés
+function Get-WinfrArgs([string]$Source, [string]$Dest, [string]$Mode, [string]$Kind) {
+    if ($Source -notmatch '^[A-Za-z]$' -or $Dest -notmatch '^[A-Za-z]$' -or $Source -ieq $Dest) { throw "lecteurs invalides" }
+    if ($Mode -notin 'regular', 'extensive') { throw "mode inconnu" }
+    if (-not $script:RecoverKinds.Contains($Kind)) { throw "type de fichiers inconnu" }
+    $a = New-Object System.Collections.ArrayList
+    [void]$a.Add("$($Source.ToUpper()):"); [void]$a.Add("$($Dest.ToUpper()):"); [void]$a.Add("/$Mode"); [void]$a.Add('/a')
+    foreach ($e in $script:RecoverKinds[$Kind].Ext) { [void]$a.Add('/n'); [void]$a.Add("*.$e") }
+    return $a.ToArray()
+}
+# Le mode rapide de l'outil ne marche que sur un disque NTFS lisible ; tout le reste demande le mode approfondi
+function Get-RecoveryMode([string]$FileSystem, [bool]$Recent) { if ($FileSystem -eq 'NTFS' -and $Recent) { return 'regular' } else { return 'extensive' } }
+function Get-RecoveryPlan {
+    Step "Récupération : les disques branchés"
+    $sync.RecoverPlan = $null
+    $src = New-Object System.Collections.ArrayList; $dst = New-Object System.Collections.ArrayList
+    foreach ($v in @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -in 'Fixed', 'Removable' } | Sort-Object DriveLetter)) {
+        $l = "$($v.DriveLetter)".ToUpper(); $fs = "$($v.FileSystem)"; $ok = ($fs -and $fs -notmatch '(?i)^(RAW|Unknown)$')
+        $size = [double]$v.Size; $ro = $false; $ext = $false; $pn = ''
+        try { $pt = Get-Partition -DriveLetter $l -ErrorAction Stop; if (-not $size) { $size = [double]$pt.Size }; $dk = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop; $ro = [bool]($pt.IsReadOnly -or $dk.IsReadOnly); $ext = ("$($dk.BusType)" -match '(?i)^(USB|SD|MMC)$'); $pn = "$($dk.FriendlyName)".Trim() } catch {}
+        [void]$src.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Fs = $(if ($ok) { $fs } else { '' }); Size = $size; External = $ext; Name = $pn })
+        if ($ok -and -not $ro) { [void]$dst.Add(@{ Letter = $l; Label = "$($v.FileSystemLabel)"; Free = [double]$v.SizeRemaining; External = $ext }) }
+        Log ("   • {0}: {1} {2} ({3}{4})" -f $l, "$($v.FileSystemLabel)", $(if ($ok) { $fs } else { 'illisible' }), (Format-Size $size), $(if ($ext) { ', externe' } else { '' }))
+    }
+    $sync.RecoverPlan = @{ Sources = $src.ToArray(); Targets = $dst.ToArray(); Tool = [bool](Get-Winfr) }
+}
+function Start-FileRecovery([string]$Source, [string]$Dest, [string]$Kind, [string]$Mode) {
+    Step "Récupération de fichiers effacés"
+    $sync.RecoverDone = $null
+    $arguments = @(Get-WinfrArgs $Source $Dest $Mode $Kind)
+    $Source = $Source.ToUpper(); $Dest = $Dest.ToUpper()
+    $dv = Get-Volume -DriveLetter $Dest -ErrorAction Stop
+    if (-not "$($dv.FileSystem)" -or "$($dv.FileSystem)" -match '(?i)^(RAW|Unknown)$') { throw "Le disque ${Dest}: n'est pas lisible : choisis un autre disque pour ranger les fichiers retrouvés." }
+    try { $ps = Get-Partition -DriveLetter $Source -ErrorAction Stop; $pd = Get-Partition -DriveLetter $Dest -ErrorAction Stop; if ($ps.DiskNumber -eq $pd.DiskNumber -and $ps.PartitionNumber -eq $pd.PartitionNumber) { throw "même partition" } } catch { if ("$_" -match 'même partition') { throw "Les fichiers retrouvés doivent aller sur un autre disque que celui qu'on fouille." } }
+    if ([double]$dv.SizeRemaining -lt 1GB) { Add-TaskError -Title "Pas assez de place sur ${Dest}: pour ranger les fichiers retrouvés" -Cause ("Il reste {0}." -f (Format-Size ([double]$dv.SizeRemaining))) -Effect "La récupération n'a pas démarré." -Steps @("Choisis un autre disque, ou libère de la place sur ${Dest}:."); return }
+    $tool = Get-Winfr
+    if (-not $tool) { if (Install-Winfr) { $tool = Get-Winfr } }
+    if (-not $tool) {
+        Add-TaskError -Title "L'outil de récupération de Microsoft n'a pas pu être installé" -Cause "« Windows File Recovery » s'installe depuis le Microsoft Store, qui n'a pas répondu (Store désactivé, pas de connexion, ou compte sans accès au Store)." -Effect "La récupération n'a pas démarré. Rien n'a été écrit sur le disque à fouiller." `
+            -Steps @("Ouvre le Microsoft Store, cherche « Windows File Recovery » (éditeur : Microsoft Corporation) et installe-le.", "Reviens ici et relance la récupération.", "En attendant, n'écris plus rien sur le disque à fouiller : chaque fichier ajouté peut écraser ceux à retrouver.")
+        return
+    }
+    Log ("   Disque fouillé : {0}: (rien n'est écrit dessus) · Fichiers retrouvés rangés sur {1}: · Recherche {2} · {3}" -f $Source, $Dest, $(if ($Mode -eq 'regular') { 'rapide' } else { 'approfondie' }), $script:RecoverKinds[$Kind].Name)
+    Log "   Ça peut être long : quelques minutes pour une clé USB, plusieurs heures pour un gros disque. « Annuler » arrête proprement."
+    $out = Join-Path $env:TEMP ("aerox-winfr-{0}.txt" -f [guid]::NewGuid().ToString('N'))
+    $start = Get-Date
+    $argLine = (@($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+    $p = Start-Process -FilePath $tool -ArgumentList $argLine -WindowStyle Hidden -PassThru -RedirectStandardOutput $out -ErrorAction Stop
+    $full = $false; $lastPct = -1
+    while (-not $p.HasExited) {
+        Start-Sleep -Seconds 2
+        if ($sync.Cancel) { try { $p.Kill() } catch {}; Log "   • Arrêté à ta demande. Ce qui a déjà été retrouvé reste sur ${Dest}:."; break }
+        # Disque d'arrivée presque plein : l'outil poserait une question à laquelle personne ne peut répondre
+        try { if ([double](New-Object IO.DriveInfo "${Dest}:").AvailableFreeSpace -lt 200MB) { $full = $true; try { $p.Kill() } catch {}; break } } catch {}
+        try {
+            $fs = New-Object IO.FileStream ($out, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try { $len = [math]::Min(600, $fs.Length); $fs.Position = $fs.Length - $len; $b = New-Object byte[] $len; [void]$fs.Read($b, 0, $len) } finally { $fs.Dispose() }
+            $m = [regex]::Matches(([Text.Encoding]::UTF8.GetString($b) -replace "`0", ''), '(\d{1,3})\s?%')
+            if ($m.Count) { $pct = [int]$m[$m.Count - 1].Groups[1].Value; if ($pct -ge 0 -and $pct -le 100 -and $pct -ne $lastPct) { $lastPct = $pct; $sync.Progress = $pct } }
+        } catch {}
+    }
+    $code = -1; try { $p.WaitForExit(5000) | Out-Null; $code = [int]$p.ExitCode } catch {}
+    $tail = ''; try { $tail = ((Get-Content -LiteralPath $out -Encoding UTF8 -ErrorAction Stop | ForEach-Object { "$_" -replace "`0", '' } | Where-Object { "$_".Trim() } | Select-Object -Last 4) -join ' · ') } catch {}
+    try { Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue } catch {}
+    # Ce que l'outil a rangé : dossier « Recovery_date » créé sur le disque d'arrivée pendant cette recherche
+    $dir = @(Get-ChildItem -LiteralPath "${Dest}:\" -Directory -Filter 'Recovery_*' -ErrorAction SilentlyContinue | Where-Object { $_.CreationTime -ge $start.AddSeconds(-5) } | Sort-Object CreationTime) | Select-Object -Last 1
+    $files = 0; $bytes = [double]0
+    if ($dir) { foreach ($f in @(Get-ChildItem -LiteralPath $dir.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '(?i)^RecoveryLog' })) { $files++; $bytes += $f.Length } }
+    $sync.RecoverDone = @{ Folder = $(if ($dir) { $dir.FullName } else { '' }); Files = $files; Bytes = $bytes }
+    if ($full) { Add-TaskError -Title "Le disque ${Dest}: est plein : la récupération s'est arrêtée" -Cause "Il n'y a plus de place pour ranger les fichiers retrouvés." -Effect ("{0} fichier(s) ont été retrouvés avant l'arrêt." -f $files) -Steps @("Relance avec un disque d'arrivée plus grand, ou en choisissant un seul type de fichiers.") }
+    if ($files) {
+        Log ("✅ {0} fichier(s) retrouvé(s), {1}, dans {2}" -f $files, (Format-Size $bytes), $dir.FullName)
+        Log "   Ouvre-les pour vérifier : un fichier retrouvé peut être incomplet si une partie a déjà été écrasée. Les noms d'origine sont parfois perdus."
+    } elseif (-not $sync.Cancel -and -not $full) {
+        Log ("   • Aucun fichier retrouvé{0}." -f $(if ($tail) { " (l'outil a répondu : $tail)" } else { '' }))
+        Add-TaskError -Title "Aucun fichier n'a pu être retrouvé" -Cause $(if ($Mode -eq 'regular') { "La recherche rapide ne retrouve que ce qui a été effacé récemment sur un disque en bon état." } else { "Les fichiers ont sans doute déjà été écrasés par d'autres, ou le disque est trop abîmé. Sur un SSD interne, un fichier effacé est le plus souvent détruit pour de bon en quelques minutes (fonction TRIM)." }) -Effect "Rien n'a été écrit sur le disque fouillé." `
+            -Steps @($(if ($Mode -eq 'regular') { "Relance en recherche approfondie (plus longue, elle fouille tout le disque)." } else { "Essaie avec « Tout ce qui est retrouvable » si tu avais choisi un seul type de fichiers." }), "Si les fichiers sont très importants : n'utilise plus ce disque et confie-le à un service de récupération de données.")
+    }
+}
+# ---------------------------------------------------------------- Test de la mémoire (RAM) au redémarrage
+# C'est le « Diagnostic de mémoire Windows » de Microsoft, programmé comme le fait mdsched.exe (démarrage unique sur
+# l'outil de test). AEROX note l'heure pour afficher le résultat à sa prochaine ouverture.
+function Get-MemTestMarker { return (Join-Path $AppInfo.LogDir 'test-memoire.txt') }
+function Start-MemoryTest {
+    Step "Test de la mémoire : programmé pour le prochain redémarrage"
+    $exe = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+    $null = & $exe /bootsequence '{memdiag}' 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Add-TaskError -Title "Le test de mémoire n'a pas pu être programmé" -Cause "Windows a refusé de programmer son outil de test au redémarrage." -Effect "Rien n'est changé." `
+            -Steps @("Tape « mdsched » dans le menu Démarrer.", "Choisis « Redémarrer maintenant et rechercher les problèmes éventuels ».", "Au retour, relance le diagnostic d'AEROX : le résultat y sera.")
+        return
+    }
+    try { [IO.File]::WriteAllText((Get-MemTestMarker), (Get-Date).ToString('o')) } catch {}
+    Log "   ✔ Au prochain redémarrage, Windows teste la mémoire avant de démarrer : 10 à 30 minutes, écran bleu avec une barre de progression (c'est normal)."
+    Log "   Le PC redémarre ensuite tout seul. Rouvre AEROX : le résultat s'affichera."
+    Add-Change -Title "Test de mémoire programmé au prochain redémarrage" -Undo 'Clear-MemoryTest'
+    Request-Reboot
+}
+function Clear-MemoryTest {
+    $exe = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+    $null = & $exe /deletevalue '{bootmgr}' bootsequence 2>&1
+    try { Remove-Item -LiteralPath (Get-MemTestMarker) -Force -ErrorAction SilentlyContinue } catch {}
+    Log "   ✔ Test de mémoire annulé : le PC redémarrera normalement."
+}
+# Résultat du test dans le journal de Windows après $Since : 'ok' | 'errors' | 'none'
+function Get-MemTestVerdict($Events, [datetime]$Since) {
+    $e = @($Events | Where-Object { $_ -and $_.TimeCreated -ge $Since -and [int]$_.Id -in 1201, 1202 } | Sort-Object { $_.TimeCreated }) | Select-Object -Last 1
+    if (-not $e) { return @{ State = 'none'; Time = $null } }
+    return @{ State = $(if ([int]$e.Id -eq 1202) { 'errors' } else { 'ok' }); Time = $e.TimeCreated }
+}
+function Get-MemoryTestResult([datetime]$Since) {
+    return (Get-MemTestVerdict @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = $Since } 5) $Since)
+}
+# ---------------------------------------------------------------- Test de stabilité (processeur + mémoire à fond)
+function Get-StressMarker { return (Join-Path $AppInfo.LogDir 'test-stabilite.txt') }
+# Verdict du test, à partir des faits relevés pendant qu'il tournait
+function Get-StabilityVerdict($R) {
+    $min = [math]::Round([double]$R.Seconds / 60, 1)
+    if ([long]$R.Errors -gt 0 -or [long]$R.MemErrors -gt 0 -or [int]$R.Whea -gt 0) {
+        $what = @(); if ([long]$R.Errors -gt 0) { $what += "$($R.Errors) erreur(s) de calcul du processeur" }; if ([long]$R.MemErrors -gt 0) { $what += "$($R.MemErrors) erreur(s) de mémoire" }; if ([int]$R.Whea -gt 0) { $what += "$($R.Whea) erreur(s) matérielle(s) notée(s) par Windows" }
+        return @{ Level = 'crit'; Title = "Le PC est instable : " + ($what -join ', '); Cause = "Sous la charge, le processeur ou la mémoire ont donné un résultat faux. Un PC sain ne se trompe jamais : c'est un overclocking ou un undervolting trop poussé, un profil XMP / EXPO instable, une barrette de RAM défectueuse, ou une alimentation qui fatigue."
+                  Steps = @("Remets le BIOS par défaut (pas d'overclocking, pas d'undervolting) et refais le test.", "Si c'est stable sans XMP / EXPO : la mémoire ne tient pas son profil. Baisse la vitesse d'un cran dans le BIOS, ou garde-la sans profil.", "Si les erreurs restent même par défaut : lance « Tester la mémoire (RAM) », puis teste les barrettes une par une.", "Si la mémoire est bonne : alimentation ou processeur à faire vérifier.") }
+    }
+    if ($R.HeatStop) {
+        return @{ Level = 'crit'; Title = "Test arrêté : le processeur a atteint $($R.MaxTemp) °C"; Cause = "Le refroidissement ne suffit pas quand le processeur travaille à fond. AEROX a arrêté le test pour le protéger."
+                  Steps = @("Dépoussière le PC, surtout le radiateur et le ventilateur du processeur.", "Vérifie que le ventilateur du processeur tourne et que le radiateur est bien fixé.", "PC de plus de 4 ou 5 ans : change la pâte thermique.", "Vérifie que l'air circule dans le boîtier (ventilateurs en façade et à l'arrière).") }
+    }
+    if ($R.Cancelled -and [double]$R.Seconds -lt 120) { return @{ Level = 'info'; Title = "Test arrêté trop tôt pour conclure"; Cause = "Il faut au moins 2 minutes de charge pour dire quelque chose de fiable ($([math]::Round([double]$R.Seconds)) secondes ici, sans erreur)."; Steps = @() } }
+    if ($null -ne $R.MaxTemp -and [double]$R.MaxTemp -ge 95 -and -not $R.Ryzen95) {
+        return @{ Level = 'warn'; Title = "Stable, mais le processeur chauffe trop : $($R.MaxTemp) °C"; Cause = "Aucune erreur en $min minute(s), mais à cette température le processeur ralentit pour se protéger et s'use plus vite."
+                  Steps = @("Dépoussière le PC, surtout le radiateur du processeur.", "Vérifie que tous les ventilateurs tournent.", "PC de plus de 4 ou 5 ans : change la pâte thermique.") }
+    }
+    if ($null -ne $R.MinPerf -and [double]$R.MinPerf -gt 0 -and [double]$R.MinPerf -lt 70) {
+        return @{ Level = 'warn'; Title = "Stable, mais le processeur se bride sous la charge"; Cause = "Aucune erreur en $min minute(s), mais le processeur est descendu à $([math]::Round([double]$R.MinPerf)) % de sa vitesse normale : il ralentit pour ne pas trop chauffer (ou parce que l'alimentation le limite, sur un portable)."
+                  Steps = @("Dépoussière le PC et vérifie les ventilateurs.", "Portable : branche-le sur secteur et pose-le sur une surface dure.", "Vérifie le mode d'alimentation (onglet Performances).") }
+    }
+    $t = if ($null -ne $R.MaxTemp) { ", $($R.MaxTemp) °C au plus chaud" } else { '' }
+    return @{ Level = 'ok'; Title = "PC stable : $min minute(s) à fond, aucune erreur$t"; Cause = ''; Steps = @() }
+}
+function Start-StabilityTest([int]$Minutes = 10, [int]$Seconds = 0) {
+    $total = if ($Seconds -gt 0) { $Seconds } else { [math]::Max(1, $Minutes) * 60 }
+    Step ("Test de stabilité : processeur et mémoire à fond pendant {0}" -f $(if ($total -ge 120) { "$([math]::Round($total / 60)) minutes" } else { "$total secondes" }))
+    $cores = [Environment]::ProcessorCount
+    $freeMb = 0; try { $freeMb = [double](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory / 1024 } catch {}
+    $memMb = [int]([math]::Floor([math]::Max(0, [math]::Min(8192, $freeMb * 0.5)) / 64) * 64)
+    $cpuName = "$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)".Trim()
+    $ryzen95 = Test-RyzenTarget95 $cpuName
+    Log ("   {0} : {1} cœurs logiques au travail, {2} de mémoire écrite et relue en boucle" -f $cpuName, $cores, (Format-Size ([double]$memMb * 1MB)))
+    $hasTemp = $false; try { $hasTemp = [bool]($sync.Sens -and $sync.Sens['cpu.temp']) } catch {}
+    if (-not $hasTemp) { Log "   • Température du processeur non lisible sur ce PC (outil capteurs de l'onglet Gaming pas installé) : le test tourne quand même, le processeur se protège tout seul." }
+    $start = Get-Date
+    try { [IO.File]::WriteAllText((Get-StressMarker), $start.ToString('o')) } catch {}
+    $r = @{ Seconds = 0; Errors = 0; MemErrors = 0; MemPasses = 0; Iter = 0; Whea = 0; MaxTemp = $null; HeatStop = $false; Ryzen95 = $ryzen95; MinPerf = $null; Cancelled = $false }
+    $hot = 0; $lastLog = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
+    [AeroxStress]::Start($cores, $memMb)
+    try {
+        while ($sw.Elapsed.TotalSeconds -lt $total) {
+            Start-Sleep -Seconds 2
+            $q = @("$([AeroxStress]::Status())".Split('|'))
+            $r.Iter = [long]$q[0]; $r.Errors = [long]$q[1]; $r.MemPasses = [long]$q[2]; $r.MemErrors = [long]$q[3]
+            $r.Seconds = $sw.Elapsed.TotalSeconds
+            $temp = $null; try { if ($sync.Sens -and $sync.Sens['cpu.temp']) { $temp = [math]::Round([double]$sync.Sens['cpu.temp']) } } catch {}
+            if ($null -ne $temp -and ($null -eq $r.MaxTemp -or $temp -gt $r.MaxTemp)) { $r.MaxTemp = $temp }
+            if ($null -ne $temp -and $temp -ge 100) { $hot++ } else { $hot = 0 }
+            $sync.Progress = [int][math]::Min(99, 100 * $sw.Elapsed.TotalSeconds / $total)
+            if ($hot -ge 2) { $r.HeatStop = $true; Log "   ⚠ $temp °C : test arrêté pour protéger le processeur."; break }
+            if ($r.Errors -gt 0 -or $r.MemErrors -gt 0) { Log "   ⚠ Une erreur a été détectée : inutile de continuer, le PC est instable."; break }
+            if ($sync.Cancel) { $r.Cancelled = $true; Log "   • Test arrêté à ta demande."; break }
+            if ($sw.Elapsed.TotalSeconds - $lastLog -ge 30) {
+                $lastLog = $sw.Elapsed.TotalSeconds
+                # Vitesse du processeur par rapport à sa vitesse normale (moins de 70 % = il se bride), après la première minute
+                try { $pp = [double](Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorPerformance; if ($pp -gt 0 -and $sw.Elapsed.TotalSeconds -ge 60 -and ($null -eq $r.MinPerf -or $pp -lt $r.MinPerf)) { $r.MinPerf = $pp } } catch {}
+                Log ("   {0} : {1} calculs vérifiés, {2} passe(s) de mémoire, 0 erreur{3}" -f $(if ($lastLog -ge 60) { "{0:N0} min {1:00} s" -f [math]::Floor($lastLog / 60), ($lastLog % 60) } else { "{0:N0} s" -f $lastLog }), $r.Iter, $r.MemPasses, $(if ($null -ne $temp) { ", $temp °C" } else { '' }))
+            }
+        }
+    } finally {
+        try { $q = @("$([AeroxStress]::Status())".Split('|')); $r.Iter = [long]$q[0]; $r.Errors = [long]$q[1]; $r.MemPasses = [long]$q[2]; $r.MemErrors = [long]$q[3] } catch {}
+        [AeroxStress]::Stop()
+        try { Remove-Item -LiteralPath (Get-StressMarker) -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    $r.Seconds = $sw.Elapsed.TotalSeconds
+    $r.Whea = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $start }).Count
+    $sync.StressResult = $r
+    $v = Get-StabilityVerdict $r
+    Log ("   Bilan : {0} calculs vérifiés, {1} passe(s) de mémoire{2}" -f $r.Iter, $r.MemPasses, $(if ($null -ne $r.MaxTemp) { ", température maximale $($r.MaxTemp) °C" } else { '' }))
+    switch ($v.Level) {
+        'ok'   { Log ("✅ " + $v.Title + ". Pour la carte graphique, le meilleur test reste un jeu : lance « Mesurer pendant un jeu » (onglet Gaming).") }
+        'info' { Log ("• " + $v.Title + " : " + $v.Cause) }
+        default { Add-TaskError -Title $v.Title -Cause $v.Cause -Effect $(if ($v.Level -eq 'crit') { "Plantages, écrans bleus, jeux qui se ferment, fichiers abîmés." } else { "Perte de performances en jeu et usure plus rapide." }) -Steps $v.Steps }
+    }
+}
+# Le test de stabilité ne s'est pas terminé et le PC a redémarré de façon anormale juste après : il a planté sous la charge
+function Get-StressCrashVerdict($MarkerTime, $BootTime, $BadEvents) {
+    if (-not $MarkerTime -or -not $BootTime -or $BootTime -le $MarkerTime) { return $false }
+    return (@($BadEvents | Where-Object { $_ -and $_ -ge $MarkerTime -and ($_ - $MarkerTime).TotalHours -le 24 }).Count -gt 0)
+}
+function Get-PendingTestResults {
+    $out = New-Object System.Collections.ArrayList
+    $m = Get-MemTestMarker
+    if (Test-Path -LiteralPath $m) {
+        $t = $null; try { $t = [datetime]::Parse((Get-Content -LiteralPath $m -Raw).Trim(), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch {}
+        $res = if ($t) { Get-MemoryTestResult $t } else { @{ State = 'none' } }
+        if ($res.State -ne 'none') { [void]$out.Add(@{ Kind = 'mem'; State = $res.State; Time = $res.Time }) }
+        if ($res.State -ne 'none' -or -not $t -or ((Get-Date) - $t).TotalDays -gt 3) { try { Remove-Item -LiteralPath $m -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+    $s = Get-StressMarker
+    if ((Test-Path -LiteralPath $s) -and -not [AeroxStress]::Running) {
+        $t = $null; try { $t = [datetime]::Parse((Get-Content -LiteralPath $s -Raw).Trim(), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch {}
+        if ($t) {
+            $boot = $null; try { $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime } catch {}
+            $bad = @(); $bad += @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $t } | ForEach-Object { $_.TimeCreated })
+            $bad += @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $t } | ForEach-Object { $_.TimeCreated })
+            if (Get-StressCrashVerdict $t $boot $bad) { [void]$out.Add(@{ Kind = 'stress'; State = 'crash'; Time = $t }) }
+        }
+        try { Remove-Item -LiteralPath $s -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    return $out.ToArray()
+}
+# ---------------------------------------------------------------- Clé USB / disque externe illisible
+# Seuls les disques branchés en USB ou les cartes mémoire sont concernés : jamais un disque interne.
+$script:ExtBusRx = '(?i)^(USB|SD|MMC)$'
+# Ce qu'il y a vraiment au début d'une partition que Windows dit « illisible » : chiffrée, d'un autre système, vide, abîmée
+function ConvertTo-FsSignature([byte[]]$B) {
+    if (-not $B -or $B.Length -lt 2048) { return '' }
+    $a = [Text.Encoding]::ASCII
+    $s = $a.GetString($B, 3, 8)
+    if ($s -eq '-FVE-FS-') { return 'bitlocker' }
+    if ($s -eq 'NTFS    ') { return 'ntfs' }
+    if ($s -eq 'EXFAT   ') { return 'exfat' }
+    if ($a.GetString($B, 0x52, 5) -eq 'FAT32' -or $a.GetString($B, 0x36, 3) -eq 'FAT') { return 'fat' }
+    if ($a.GetString($B, 0, 4) -ceq 'LUKS' -or ($B[0x438] -eq 0x53 -and $B[0x439] -eq 0xEF)) { return 'linux' }
+    if ($a.GetString($B, 32, 4) -ceq 'NXSB' -or $a.GetString($B, 1024, 2) -cin 'H+', 'HX') { return 'mac' }
+    if ([Convert]::ToBase64String($B).Trim([char[]]'A=').Length -eq 0) { return 'blank' }
+    return 'unknown'
+}
+function Get-PartitionSignature([int]$Disk, [long]$Offset) {
+    try {
+        $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$Disk", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try { $buf = New-Object byte[] 4096; $fs.Position = $Offset; $n = $fs.Read($buf, 0, $buf.Length); if ($n -lt 2048) { return '' }; return (ConvertTo-FsSignature $buf) } finally { $fs.Dispose() }
+    } catch { return '' }
+}
+# Problèmes d'un disque externe, à partir des faits relevés : { Kind; Part; Letter; Sig }
+function Get-ExtDiskProblems($D) {
+    $p = New-Object System.Collections.ArrayList
+    if ([double]$D.Size -le 0) { [void]$p.Add(@{ Kind = 'nomedia' }); return $p.ToArray() }
+    if ($D.IsOffline) { [void]$p.Add(@{ Kind = 'offline' }); return $p.ToArray() }
+    if ($D.IsReadOnly) { [void]$p.Add(@{ Kind = 'readonly' }) }
+    $parts = @($D.Parts | Where-Object { $_ })
+    if (-not $parts.Count) { [void]$p.Add(@{ Kind = 'empty'; Blank = [bool]$D.Blank }); return $p.ToArray() }
+    foreach ($v in $parts) {
+        $fs = "$($v.Fs)"
+        if ($fs -and $fs -notmatch '(?i)^(RAW|Unknown)$') {
+            if (-not $v.Letter) { [void]$p.Add(@{ Kind = 'noletter'; Part = $v.Number; Fs = $fs }) }
+            elseif ($v.Dirty) { [void]$p.Add(@{ Kind = 'dirty'; Letter = $v.Letter; Fs = $fs }) }
+            continue
+        }
+        $k = switch ("$($v.Sig)") { 'bitlocker' { 'bitlocker' } 'linux' { 'foreign' } 'mac' { 'foreign' } 'blank' { 'unformatted' } 'ntfs' { 'damaged' } 'exfat' { 'damaged' } 'fat' { 'damaged' } default { 'rawunknown' } }
+        [void]$p.Add(@{ Kind = $k; Part = $v.Number; Letter = $v.Letter; Sig = "$($v.Sig)" })
+    }
+    return $p.ToArray()
+}
+# AEROX ne formate que ce que Windows ne peut pas lire : aucune partition lisible, et rien de chiffré par BitLocker
+function Test-ExtDiskFormattable($D) {
+    if ([double]$D.Size -le 0 -or $D.IsOffline) { return $false }
+    foreach ($v in @($D.Parts | Where-Object { $_ })) {
+        if ("$($v.Fs)" -and "$($v.Fs)" -notmatch '(?i)^(RAW|Unknown)$') { return $false }
+        if ("$($v.Sig)" -eq 'bitlocker') { return $false }
+    }
+    return $true
+}
+function Get-ExternalDisks {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { "$($_.BusType)" -match $script:ExtBusRx -and -not $_.IsBoot -and -not $_.IsSystem })) {
+        $n = [int]$d.Number
+        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false }
+        if (-not $o.IsOffline -and $o.Size -gt 0) {
+            $parts = New-Object System.Collections.ArrayList
+            foreach ($pt in @(Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' })) {
+                $vol = $null; try { $vol = $pt | Get-Volume -ErrorAction Stop } catch {}
+                $letter = if ("$($pt.DriveLetter)" -match '^[A-Za-z]$') { "$($pt.DriveLetter)".ToUpper() } else { '' }
+                $fs = "$($vol.FileSystem)"; if (-not $fs) { $fs = "$($vol.FileSystemType)" }
+                $dirty = $false
+                if ($letter -and $fs -and $fs -notmatch '(?i)^(RAW|Unknown)$') { try { $wv = Get-CimInstance Win32_Volume -Filter "DriveLetter='${letter}:'" -ErrorAction Stop; $dirty = [bool]$wv.DirtyBitSet } catch {} }
+                $sig = ''; if (-not $fs -or $fs -match '(?i)^(RAW|Unknown)$') { $sig = Get-PartitionSignature $n ([long]$pt.Offset) }
+                [void]$parts.Add(@{ Number = [int]$pt.PartitionNumber; Letter = $letter; Fs = $fs; Size = [double]$pt.Size; Dirty = $dirty; Sig = $sig })
+            }
+            $o.Parts = $parts.ToArray()
+            if (-not $parts.Count) { $o.Blank = Test-DiskBlank $n }
+        }
+        [void]$out.Add($o)
+    }
+    return $out.ToArray()
+}
+# Garde-fou commun à toutes les réparations : c'est bien un disque externe, et bien celui affiché
+function Get-ExtDiskChecked([int]$Number, [string]$Id) {
+    $d = Get-Disk -Number $Number -ErrorAction Stop
+    if ("$($d.BusType)" -notmatch $script:ExtBusRx) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
+    if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché (débranché ?) : rien n'a été touché." }
+    return $d
+}
+function Set-ExtDiskOnline([int]$Number, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    Set-Disk -Number $Number -IsOffline $false -ErrorAction Stop
+    Log "   ✔ Disque remis en ligne : Windows peut de nouveau le lire."
+}
+function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {}
+    if ((Get-Disk -Number $Number).IsReadOnly) {
+        Add-TaskError -Title "La protection en écriture ne s'enlève pas" -Cause "Le disque refuse : soit il a un verrou physique (petit loquet sur le côté d'une carte SD ou d'un adaptateur), soit sa mémoire est en fin de vie et il s'est bloqué en lecture seule pour protéger ce qu'il contient." -Effect "Tu peux lire les fichiers mais plus rien écrire ni effacer." `
+            -Steps @("Carte SD : pousse le petit loquet du côté opposé à « LOCK ».", "Sinon : copie tout de suite tes fichiers ailleurs. Une clé qui se verrouille toute seule ne se répare pas, elle se remplace.")
+    } else { Log "   ✔ Protection en écriture enlevée : tu peux de nouveau écrire sur le disque." }
+}
+function Add-ExtDiskLetter([int]$Number, [int]$Part, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    $pt = Get-Partition -DiskNumber $Number -PartitionNumber $Part -ErrorAction Stop
+    try { Set-Partition -DiskNumber $Number -PartitionNumber $Part -NoDefaultDriveLetter $false -IsHidden $false -ErrorAction Stop } catch {}
+    $pt | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
+    $l = "$((Get-Partition -DiskNumber $Number -PartitionNumber $Part).DriveLetter)"
+    if ($l -match '^[A-Za-z]$') { Log ("✅ Le disque a maintenant la lettre {0}: : il apparaît dans l'Explorateur." -f $l.ToUpper()) } else { throw "Windows n'a pas donné de lettre au disque." }
+}
+function Repair-ExternalVolume([string]$Letter) {
+    if ($Letter -notmatch '^[A-Za-z]$') { throw "lettre de lecteur invalide" }
+    $pt = Get-Partition -DriveLetter $Letter -ErrorAction Stop
+    $d = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop
+    if ("$($d.BusType)" -notmatch $script:ExtBusRx -or $d.IsBoot -or $d.IsSystem) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    Step "Réparation des fichiers du disque ${Letter}:"
+    Log "   Ne débranche pas le disque. Ferme les fenêtres de l'Explorateur ouvertes dessus."
+    $ok = $false
+    try { $res = "$(Repair-Volume -DriveLetter $Letter -OfflineScanAndFix -ErrorAction Stop)"; Log "   Résultat : $res"; $ok = $true }
+    catch { $ec = Invoke-Native 'chkdsk.exe' @("${Letter}:", '/f', '/x'); $ok = ($ec -in 0, 1) }
+    if ($ok) { Log "✅ Disque ${Letter}: vérifié et réparé. Tes fichiers sont toujours dessus."; Add-Change -Kind 'info' -Title "Disque ${Letter}: réparé (système de fichiers)" }
+    else { Add-TaskError -Title "Le disque ${Letter}: n'a pas pu être réparé" -Cause "L'outil de réparation de Windows a échoué : le disque est peut-être utilisé par un programme, ou trop abîmé." -Effect "Les erreurs restent." -Steps @("Ferme tout ce qui utilise ce disque et réessaie.", "Copie tes fichiers importants ailleurs dès que possible.") }
+}
+# Dernier recours, uniquement pour un disque externe que Windows ne peut pas lire du tout : tout effacer et le refaire
+# à neuf (FAT32 jusqu'à 32 Go, exFAT au-delà : lisibles partout). Tout est revérifié juste avant d'écrire.
+function Format-ExternalDisk([int]$Number, [string]$Id) {
+    Step "Remise à neuf du disque externe (tout est effacé)"
+    $d = Get-ExtDiskChecked $Number $Id
+    $me = @(Get-ExternalDisks | Where-Object { $_.Number -eq $Number })[0]
+    if (-not $me -or -not (Test-ExtDiskFormattable $me)) { throw "Ce disque est lisible par Windows (ou protégé par BitLocker) : AEROX ne formate que ce qui est illisible. Rien n'a été touché." }
+    if ($d.IsReadOnly) { try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {} }
+    try {
+        if ("$($d.PartitionStyle)" -ne 'RAW') { Clear-Disk -Number $Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop }
+        $d = Get-Disk -Number $Number
+        if ("$($d.PartitionStyle)" -eq 'RAW') { Initialize-Disk -Number $Number -PartitionStyle $(if ([double]$d.Size -gt 2TB) { 'GPT' } else { 'MBR' }) -ErrorAction Stop }
+        $p = New-Partition -DiskNumber $Number -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
+        $fsName = if ([double]$p.Size -le 32GB) { 'FAT32' } else { 'exFAT' }
+        $null = Format-Volume -Partition $p -FileSystem $fsName -NewFileSystemLabel 'USB' -Force -Confirm:$false -ErrorAction Stop
+        $l = "$((Get-Partition -DiskNumber $Number -PartitionNumber $p.PartitionNumber).DriveLetter)"
+        Log ("✅ Le disque est comme neuf : {0}: en {1}, {2}. Il est vide et utilisable partout." -f $l, $fsName, (Format-Size ([double]$p.Size)))
+        Add-Change -Kind 'info' -Title ("Disque externe remis à neuf : {0}:" -f $l) -Detail ("{0}, {1}" -f "$($d.FriendlyName)".Trim(), $fsName)
+    } catch {
+        Add-TaskError -Title "Le disque n'a pas pu être remis à neuf" -Cause ("Windows n'arrive pas à écrire dessus : {0}" -f $_.Exception.Message) -Effect "Le disque reste inutilisable." `
+            -Steps @("Essaie sur un autre port USB, directement sur le PC.", "Si ça échoue encore : la mémoire du disque est morte, il faut le remplacer. Ce n'est pas réparable par un logiciel.")
+    }
+}
+# Carte « Clé USB ou disque externe illisible » : tout ce qui est branché, ce qui cloche, et le bouton qui va avec
+function Get-ExternalDiskReport {
+    Step "Clés USB et disques externes : ce que Windows voit"
+    $null = Invoke-Native 'pnputil.exe' @('/scan-devices') -Quiet
+    Start-Sleep -Seconds 2
+    $disks = @(Get-ExternalDisks)
+    if (-not $disks.Count) {
+        Log "   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment."
+        Add-TaskError -Title "Aucun disque externe n'est vu par Windows" -Cause "Si ta clé ou ton disque est branché, il ne répond pas du tout : le port USB, le câble, l'alimentation du disque, ou le disque lui-même." -Effect "Rien n'apparaît dans l'Explorateur." `
+            -FixLabel "Relancer les ports USB" -FixAction 'Repair-Usb' `
+            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.")
+        return
+    }
+    $okAll = $true
+    foreach ($d in $disks) {
+        $nm = if ($d.Name) { $d.Name } else { "Disque $($d.Number)" }
+        $idL = ConvertTo-PsLiteral $d.Id
+        Log ("   {0} ({1}, {2})" -f $nm, (Format-Size $d.Size), $d.Bus)
+        foreach ($v in @($d.Parts)) { Log ("     • {0} {1} {2}" -f $(if ($v.Letter) { "$($v.Letter):" } else { 'sans lettre' }), $(if ($v.Fs -and $v.Fs -notmatch '(?i)^(RAW|Unknown)$') { $v.Fs } else { 'illisible' }), (Format-Size $v.Size)) }
+        $pb = @(Get-ExtDiskProblems $d)
+        if (-not $pb.Count) { Log "     ✔ Lisible, rien d'anormal"; continue }
+        $okAll = $false
+        $canFormat = Test-ExtDiskFormattable $d
+        $fmtConfirm = "TOUT ce qui est sur ce disque sera effacé définitivement :`n`n{0} ({1})`n`nSi des fichiers importants sont dessus, réponds Non et essaie d'abord la carte « Récupérer des fichiers effacés ».`n`nEffacer et remettre à neuf ?" -f $nm, (Format-Size $d.Size)
+        $fmtDone = $false
+        foreach ($x in $pb) {
+            switch ($x.Kind) {
+                'nomedia' { Log "     • Windows voit le lecteur mais aucune mémoire dedans : lecteur de cartes sans carte, ou clé USB dont la mémoire est morte (dans ce cas elle ne se répare pas)." }
+                'offline' { Add-TaskError -Title "« $nm » est hors ligne" -Cause "Windows a mis ce disque hors ligne (conflit avec un autre disque, ou réglage)." -Effect "Il n'apparaît pas dans l'Explorateur." -FixLabel "Le remettre en ligne" -FixAction "Set-ExtDiskOnline $($d.Number) $idL" }
+                'readonly' { Add-TaskError -Title "« $nm » est protégé en écriture" -Cause "Le disque est marqué « lecture seule » : par un réglage de Windows, un verrou physique, ou parce que sa mémoire fatigue." -Effect "Impossible d'y copier, d'effacer ou de formater." -FixLabel "Enlever la protection" -FixAction "Clear-ExtDiskReadOnly $($d.Number) $idL" }
+                'noletter' { Add-TaskError -Title "« $nm » n'a pas de lettre de lecteur" -Cause "Le disque est sain ($($x.Fs)) mais Windows ne lui a pas donné de lettre (E:, F:…)." -Effect "Il n'apparaît pas dans l'Explorateur alors que tes fichiers sont dessus." -FixLabel "Lui donner une lettre" -FixAction "Add-ExtDiskLetter $($d.Number) $($x.Part) $idL" }
+                'dirty' { Add-TaskError -Title "« $nm » ($($x.Letter):) a des erreurs de fichiers" -Cause "Le disque a été débranché sans « Éjecter », ou pendant une copie : son index de fichiers est abîmé." -Effect "Fichiers illisibles, message « Analyser et réparer », copies qui échouent." -FixLabel "Réparer (tes fichiers restent)" -FixAction "Repair-ExternalVolume $($x.Letter)" -Confirm "Réparer le disque $($x.Letter): ?`n`nC'est la réparation de Windows (chkdsk) : tes fichiers restent dessus. Ne débranche pas le disque pendant l'opération." }
+                'bitlocker' { Log "     • Cette partition est protégée par BitLocker : elle n'est pas en panne. Ouvre-la dans l'Explorateur et entre son mot de passe (ou sa clé de récupération). AEROX n'y touche pas." }
+                'foreign' {
+                    $os = if ($x.Sig -eq 'mac') { 'Mac' } else { 'Linux' }
+                    Add-TaskError -Title "« $nm » est formaté pour $os" -Cause "Ce disque n'est pas en panne : il a été préparé sur $os, dans un format que Windows ne sait pas lire." -Effect "Windows propose de le formater, ce qui effacerait tout." `
+                        -Steps @("Pour lire les fichiers : branche-le sur un $os.", "Pour t'en servir sur Windows : copie d'abord les fichiers ailleurs depuis un $os, puis remets-le à neuf ici.") `
+                        -FixLabel $(if ($canFormat -and -not $fmtDone) { "Effacer et remettre à neuf" } else { '' }) -FixAction $(if ($canFormat -and -not $fmtDone) { "Format-ExternalDisk $($d.Number) $idL" } else { '' }) -Confirm $fmtConfirm
+                    $fmtDone = $true
+                }
+                default {
+                    $t = switch ($x.Kind) { 'empty' { "« $nm » est vide : aucune partition" } 'unformatted' { "« $nm » n'est pas formaté" } 'damaged' { "« $nm » : le système de fichiers est abîmé" } default { "« $nm » est illisible" } }
+                    $c = switch ($x.Kind) {
+                        'empty' { if ($x.Blank) { "Le disque est complètement vierge : il n'a jamais été préparé, ou il a été effacé." } else { "Le disque n'a plus de table de partitions. Il a pu être effacé, abîmé, ou chiffré en entier par un logiciel (VeraCrypt…)." } }
+                        'unformatted' { "La partition existe mais elle est vierge : elle n'a jamais été formatée." }
+                        'damaged' { "Le début du disque est abîmé (souvent un débranchement pendant une écriture, ou une mémoire qui fatigue). Windows ne peut plus lire la liste des fichiers." }
+                        default { "Windows ne reconnaît pas ce qu'il y a dessus : format abîmé, disque chiffré, ou mémoire en fin de vie." }
+                    }
+                    $st = if ($x.Kind -in 'empty', 'unformatted' -and ($x.Kind -ne 'empty' -or $x.Blank)) { @("Il n'y a rien à perdre dessus : clique sur le bouton pour le préparer.") } else { @("Des fichiers importants dessus ? Ne formate pas : essaie d'abord la carte « Récupérer des fichiers effacés » (elle lit le disque sans rien écrire dessus), ou un autre PC.", "Rien d'important dessus ? Clique sur le bouton : le disque repart à neuf.", "Si la remise à neuf échoue, la mémoire du disque est morte : il faut le remplacer.") }
+                    if ($fmtDone -or -not $canFormat) { Log ("     • {0} : {1}" -f $t, $c) }
+                    else { Add-TaskError -Title $t -Cause $c -Effect "Le disque est inutilisable en l'état." -Steps $st -FixLabel "Effacer et remettre à neuf" -FixAction "Format-ExternalDisk $($d.Number) $idL" -Confirm $fmtConfirm; $fmtDone = $true }
+                }
+            }
+        }
+    }
+    if ($okAll) { Log "✅ Windows lit correctement tout ce qui est branché. Si un fichier précis ne s'ouvre pas, c'est ce fichier qui est abîmé, pas le disque." }
+}
+# ---------------------------------------------------------------- PC neuf / Windows réinstallé : liste guidée
+# Date de la première installation de Windows : une grosse mise à jour de Windows remet « InstallDate » à zéro et range
+# l'ancienne date dans HKLM\SYSTEM\Setup\Source OS…, donc on garde la plus ancienne des deux.
+function Get-InstallAgeDays($UnixDates, [datetime]$Now) {
+    $d = @($UnixDates | Where-Object { [long]$_ -gt 946684800 } | ForEach-Object { [long]$_ } | Sort-Object)
+    if (-not $d.Count) { return -1 }
+    $t = (New-Object datetime 1970, 1, 1, 0, 0, 0, ([DateTimeKind]::Utc)).AddSeconds($d[0]).ToLocalTime()
+    return [int][math]::Floor(($Now - $t).TotalDays)
+}
+function Get-WindowsInstallAge {
+    $dates = @()
+    try { $dates += [long](Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name InstallDate -ErrorAction Stop).InstallDate } catch {}
+    try { foreach ($k in @(Get-ChildItem 'HKLM:\SYSTEM\Setup' -ErrorAction Stop | Where-Object { $_.PSChildName -like 'Source OS*' })) { try { $dates += [long]$k.GetValue('InstallDate') } catch {} } } catch {}
+    return (Get-InstallAgeDays $dates (Get-Date))
+}
+# Un disque « vide » qu'AEROX peut préparer : interne, en ligne, jamais celui de Windows, et sans AUCUNE partition.
+# Un disque jamais initialisé (RAW) doit en plus être vraiment vierge (premiers secteurs à zéro) : un disque chiffré en
+# entier ou venu d'un autre système a aussi l'air « non initialisé » alors qu'il contient des données.
+function Test-EmptyDisk($D, [int]$Partitions, [bool]$Blank) {
+    if (-not $D) { return $false }
+    if ($D.IsBoot -or $D.IsSystem -or $D.IsOffline -or $D.IsReadOnly) { return $false }
+    if ("$($D.BusType)" -match '(?i)^(USB|SD|MMC|1394|iSCSI|Fibre Channel|Storage Spaces|Spaces)$') { return $false }
+    if ([double]$D.Size -lt 8GB) { return $false }
+    if ($Partitions -ne 0) { return $false }
+    if ("$($D.PartitionStyle)" -eq 'RAW') { return $Blank }
+    return ("$($D.PartitionStyle)" -in 'GPT', 'MBR')
+}
+function Test-DiskBlank([int]$Number) {
+    try {
+        $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$Number", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $buf = New-Object byte[] (1MB); $n = 0
+            while ($n -lt $buf.Length) { $r = $fs.Read($buf, $n, $buf.Length - $n); if ($r -le 0) { break }; $n += $r }
+            if ($n -lt $buf.Length) { return $false }
+            # Que des zéros : en base64 cela ne donne que des « A » (et le remplissage « = »)
+            return ([Convert]::ToBase64String($buf).Trim([char[]]'A=').Length -eq 0)
+        } finally { $fs.Dispose() }
+    } catch { return $false }
+}
+function Get-DiskUsedPartitions([int]$Number) {
+    # Les partitions « réservées » que Windows crée tout seul à l'initialisation (MSR) ne contiennent rien
+    return @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' -and "$($_.GptType)" -ne '{e3c9e316-0b5c-4db8-817d-f92df00215ae}' }).Count
+}
+function Get-EmptyDisks {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue)) {
+        $n = [int]$d.Number; $parts = Get-DiskUsedPartitions $n
+        $blank = $false; if ("$($d.PartitionStyle)" -eq 'RAW' -and $parts -eq 0) { $blank = Test-DiskBlank $n }
+        if (Test-EmptyDisk $d $parts $blank) { [void]$out.Add(@{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Id = "$($d.UniqueId)"; Serial = "$($d.SerialNumber)".Trim(); Raw = ("$($d.PartitionStyle)" -eq 'RAW') }) }
+        elseif ("$($d.PartitionStyle)" -eq 'RAW' -and $parts -eq 0 -and -not $d.IsBoot -and -not $d.IsSystem -and "$($d.BusType)" -notmatch '(?i)^(USB|SD|MMC)$') { Log ("   • Disque {0} ({1}, {2}) : pas de partition lisible mais pas vierge (chiffré, ou venu d'un autre système ?) : AEROX n'y touche pas." -f $n, "$($d.FriendlyName)".Trim(), (Format-Size ([double]$d.Size))) }
+    }
+    return $out.ToArray()
+}
+# Prépare un disque vide : table GPT, une seule partition NTFS, une lettre (D: si elle est libre). Tout est revérifié
+# juste avant d'écrire : c'est bien le même disque que celui confirmé à l'écran, et il est toujours vide.
+function Initialize-EmptyDisk([int]$Number, [string]$Id) {
+    Step "Préparation du disque vide"
+    $d = Get-Disk -Number $Number -ErrorAction Stop
+    if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché : rien n'a été touché." }
+    $parts = Get-DiskUsedPartitions $Number
+    $blank = ("$($d.PartitionStyle)" -eq 'RAW') -and (Test-DiskBlank $Number)
+    if (-not (Test-EmptyDisk $d $parts $blank)) { throw "Ce disque n'est pas (ou plus) vide : rien n'a été touché." }
+    if ("$($d.PartitionStyle)" -eq 'RAW') { Initialize-Disk -Number $Number -PartitionStyle GPT -ErrorAction Stop; Log "   ✔ Disque initialisé (GPT)" }
+    $used = @(); try { $used = @([IO.DriveInfo]::GetDrives() | ForEach-Object { $_.Name.Substring(0, 1).ToUpperInvariant() }) } catch {}
+    $p = if ($used -notcontains 'D') { New-Partition -DiskNumber $Number -UseMaximumSize -DriveLetter 'D' -ErrorAction Stop } else { New-Partition -DiskNumber $Number -UseMaximumSize -AssignDriveLetter -ErrorAction Stop }
+    $null = Format-Volume -Partition $p -FileSystem NTFS -NewFileSystemLabel 'Données' -Force -Confirm:$false -ErrorAction Stop
+    $letter = "$((Get-Partition -DiskNumber $Number -PartitionNumber $p.PartitionNumber).DriveLetter)"
+    Log ("✅ Le disque est prêt : {0}: « Données » ({1}). Tu peux y installer tes jeux et y ranger tes fichiers." -f $letter, (Format-Size ([double]$p.Size)))
+    Add-Change -Kind 'info' -Title ("Disque vide préparé : {0}: « Données »" -f $letter) -Detail ("{0}, {1}" -f "$($d.FriendlyName)".Trim(), (Format-Size ([double]$d.Size)))
+}
+# Mémoire à sa vitesse de base (profil XMP / EXPO sans doute pas activé) : DDR4 jusqu'à 2666, DDR5 jusqu'à 4800
+function Test-RamBaseSpeed([int]$Type, [int]$Speed) {
+    if ($Speed -le 0) { return $false }
+    return (($Type -eq 26 -and $Speed -le 2666) -or ($Type -eq 34 -and $Speed -le 4800))
+}
+# Logiciels proposés après une installation de Windows : uniquement cette liste, installés par winget (source officielle)
+$script:NewPcApps = @(
+    @{ Id = 'Google.Chrome';        Name = 'Google Chrome';   Cat = 'Navigateur';  Rx = '^Google Chrome' },
+    @{ Id = 'Mozilla.Firefox';      Name = 'Mozilla Firefox'; Cat = 'Navigateur';  Rx = '^Mozilla Firefox' },
+    @{ Id = 'Brave.Brave';          Name = 'Brave';           Cat = 'Navigateur';  Rx = '^Brave' },
+    @{ Id = 'Discord.Discord';      Name = 'Discord';         Cat = 'Discussion';  Rx = '^Discord' },
+    @{ Id = 'Valve.Steam';          Name = 'Steam';           Cat = 'Jeux';        Rx = '^Steam$' },
+    @{ Id = 'EpicGames.EpicGamesLauncher'; Name = 'Epic Games'; Cat = 'Jeux';      Rx = '^Epic Games Launcher' },
+    @{ Id = '7zip.7zip';            Name = '7-Zip';           Cat = 'Fichiers compressés (zip, rar)'; Rx = '^7-Zip' },
+    @{ Id = 'VideoLAN.VLC';         Name = 'VLC';             Cat = 'Vidéos et musique'; Rx = '^VLC media player' },
+    @{ Id = 'Spotify.Spotify';      Name = 'Spotify';         Cat = 'Musique';     Rx = '^Spotify' },
+    @{ Id = 'OBSProject.OBSStudio'; Name = 'OBS Studio';      Cat = 'Enregistrer et streamer'; Rx = '^OBS Studio' },
+    @{ Id = 'Notepad++.Notepad++';  Name = 'Notepad++';       Cat = 'Bloc-notes avancé'; Rx = '^Notepad\+\+' }
+)
+function Get-NewPcApps {
+    $names = New-Object System.Collections.ArrayList
+    $keys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
+    try { $su = Get-SessionUser; if ($su.Hkcu) { $keys += "$($su.Hkcu)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" } } catch {}
+    foreach ($k in $keys) { foreach ($e in @(Get-ItemProperty $k -ErrorAction SilentlyContinue)) { if ($e.DisplayName) { [void]$names.Add("$($e.DisplayName)".Trim()) } } }
+    return @($script:NewPcApps | ForEach-Object { $rx = $_.Rx; @{ Id = $_.Id; Name = $_.Name; Cat = $_.Cat; Installed = [bool](@($names | Where-Object { $_ -match $rx }).Count) } })
+}
+function Install-PickedApps([string[]]$Ids) {
+    $known = @($script:NewPcApps | ForEach-Object { $_.Id })
+    $todo = @($Ids | Where-Object { $_ -and $known -contains $_ } | Select-Object -Unique)
+    if (-not $todo.Count) { Log "   • Aucun logiciel choisi."; return }
+    $i = 0
+    foreach ($id in $todo) {
+        if ($sync.Cancel) { Log "   • Arrêté à ta demande : les logiciels suivants ne sont pas installés."; break }
+        $i++; $app = @($script:NewPcApps | Where-Object { $_.Id -eq $id })[0]
+        Step ("Installation de {0} ({1} sur {2})" -f $app.Name, $i, $todo.Count)
+        if (Install-WingetTool $id $app.Name) { Log ("   ✔ {0} installé" -f $app.Name); Add-Change -Kind 'info' -Title ("Logiciel installé : {0}" -f $app.Name) }
+        elseif (-not (Get-Winget)) { break }
+        else { Add-TaskError -Title ("{0} n'a pas pu être installé" -f $app.Name) -Cause "L'installation automatique (winget) a échoué pour ce logiciel." -Effect "Les autres logiciels ne sont pas touchés." -Steps @("Télécharge-le depuis son site officiel.", "Ou réessaie plus tard : le serveur est parfois occupé.") }
+    }
+}
+# La liste guidée : chaque point est un fait relevé sur le PC. État : ok (fait), todo (à faire), info (à savoir)
+function Get-NewPcPlan {
+    Step "Préparation du PC : ce qui est fait, ce qui reste"
+    $items = New-Object System.Collections.ArrayList
+    $add = { param($Id, $State, $Title, $Detail, $Btn, $Arg) [void]$items.Add(@{ Id = $Id; State = $State; Title = $Title; Detail = $Detail; Btn = $Btn; Arg = $Arg }) }
+    $age = Get-WindowsInstallAge
+    # 1. Activation
+    try {
+        $lic = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)
+        if (@($lic | Where-Object { $_.LicenseStatus -eq 1 }).Count) { & $add 'activation' 'ok' "Windows est activé" "Ta licence est reconnue." '' $null }
+        else { & $add 'activation' 'todo' "Windows n'est pas activé" "Connecte-toi avec ton compte Microsoft (la licence y est souvent attachée), ou entre ta clé." 'Ouvrir l''activation' $null }
+    } catch {}
+    # 2. Mises à jour Windows
+    Log "   • Recherche des mises à jour de Windows (jusqu'à 2 minutes)…"
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session; $session.ClientApplicationID = 'AEROX PC Care'
+        $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
+        $n = 0; foreach ($u in $res.Updates) { if ("$($u.Title)" -notmatch '(?i)KB2267602|Security Intelligence|veille de sécurité') { $n++ } }
+        if ($n) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
+        else { & $add 'wupdate' 'ok' "Windows est à jour" "Aucune mise à jour en attente." '' $null }
+    } catch { & $add 'wupdate' 'info' "Mises à jour de Windows : pas pu vérifier" "Windows Update n'a pas répondu. Regarde dans l'onglet Mises à jour." '' $null }
+    if ($sync.Cancel) { return }
+    # 3. Pilotes : appareils sans pilote, carte graphique sur le pilote de secours de Windows
+    try {
+        $bad = @(Get-CimInstance Win32_PnPEntity -Filter "ConfigManagerErrorCode <> 0" -ErrorAction Stop | Where-Object { [int]$_.ConfigManagerErrorCode -notin 22, 45 })
+        $basic = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | Where-Object { "$($_.Name)" -match '(?i)Basic Display|Carte vidéo de base|Basic Render' })
+        if ($basic.Count) { & $add 'drivers' 'todo' "La carte graphique n'a pas son pilote" "Windows utilise son pilote de secours : image lente, pas de jeux. Installe le pilote officiel (NVIDIA, AMD ou Intel)." 'Voir les pilotes' $null }
+        elseif ($bad.Count) { & $add 'drivers' 'todo' "$($bad.Count) appareil(s) sans pilote" ((@($bad | Select-Object -First 3 | ForEach-Object { if ($_.Name) { "$($_.Name)" } else { 'Appareil inconnu' } }) -join ', ') + $(if ($bad.Count -gt 3) { '…' } else { '' })) 'Voir les pilotes' $null }
+        else { & $add 'drivers' 'ok' "Tous les appareils ont un pilote" "Pense quand même au dernier pilote de la carte graphique pour les jeux." 'Vérifier les pilotes' $null }
+    } catch {}
+    # 4. Disques vides
+    try {
+        $empty = @(Get-EmptyDisks)
+        foreach ($e in $empty) { & $add 'disk' 'todo' ("Un disque de {0} est vide et pas encore utilisable" -f (Format-Size $e.Size)) ("{0} : Windows ne l'affiche pas tant qu'il n'est pas préparé (une partition et une lettre)." -f $(if ($e.Name) { $e.Name } else { "Disque $($e.Number)" })) 'Le préparer' $e }
+        if (-not $empty.Count) {
+            $vols = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter -and "$($_.DriveType)" -eq 'Fixed' } | Sort-Object DriveLetter | ForEach-Object { "{0}: {1}" -f $_.DriveLetter, (Format-Size ([double]$_.Size)) })
+            & $add 'disk' 'ok' "Tous les disques sont utilisables" ($vols -join ' · ') '' $null
+        }
+    } catch {}
+    # 5. Écran réglé en dessous de sa fréquence
+    try {
+        $low = @(Get-Displays | Where-Object { Test-DisplayHzLow $_ }) | Select-Object -First 1
+        if ($low) { & $add 'display' 'todo' ("{0} tourne à {1} Hz au lieu de {2} Hz" -f $low.Name, $low.Hz, $low.MaxHz) "Après une installation, Windows règle souvent l'écran à 60 Hz : l'image est moins fluide que ce que l'écran sait faire." 'Régler' $null }
+        else { & $add 'display' 'ok' "Écran à la bonne fréquence" "Windows utilise bien la fréquence la plus haute de ton écran." '' $null }
+    } catch {}
+    # 6. Mémoire à sa vitesse de base (PC fixe seulement : sur un portable ce n'est pas réglable)
+    try {
+        $laptop = [bool](@((Get-CimStatic Win32_SystemEnclosure -Quiet).ChassisTypes | Where-Object { $_ -in 8, 9, 10, 11, 14, 30, 31, 32 }).Count)
+        $m = @(Get-CimStatic Win32_PhysicalMemory)
+        $t = @($m | ForEach-Object { [int]$_.SMBIOSMemoryType } | Where-Object { $_ }) | Select-Object -First 1
+        $spd = @($m | ForEach-Object { [int]$_.ConfiguredClockSpeed } | Where-Object { $_ }) | Sort-Object | Select-Object -First 1
+        if (-not $laptop -and (Test-RamBaseSpeed ([int]$t) ([int]$spd))) { & $add 'ram' 'info' ("Mémoire à {0} MT/s : la vitesse de base" -f $spd) "Si l'étiquette de tes barrettes annonce plus (3200, 3600, 6000…), active le profil XMP / EXPO dans le BIOS pour avoir la vitesse payée. Si elle annonce $spd, il n'y a rien à faire." '' $null }
+    } catch {}
+    # 7. Programmes au démarrage
+    try { $n = @(Get-StartupEntries | Where-Object { $_.Enabled }).Count; & $add 'startup' $(if ($n -gt 8) { 'todo' } else { 'ok' }) "$n programme(s) se lancent au démarrage" $(if ($n -gt 8) { "Chaque logiciel installé s'ajoute au démarrage : garde seulement ceux que tu utilises tout le temps." } else { "Rien d'excessif. À revoir quand tu auras installé tes logiciels." }) 'Choisir' $null } catch {}
+    # 8. Logiciels utiles
+    try {
+        $apps = @(Get-NewPcApps); $miss = @($apps | Where-Object { -not $_.Installed })
+        if ($miss.Count) { & $add 'apps' 'info' "Logiciels utiles" ("Pas encore installés : " + (($miss | ForEach-Object { $_.Name }) -join ', ') + ". Coche ceux que tu veux, AEROX les installe depuis la source officielle.") 'Choisir' $apps }
+        else { & $add 'apps' 'ok' "Logiciels utiles" "Les logiciels courants sont déjà installés." '' $null }
+    } catch {}
+    # 9. Protection : antivirus actif, point de restauration
+    try {
+        $mp = Get-MpComputerStatus -ErrorAction Stop
+        if ($mp.RealTimeProtectionEnabled) { & $add 'defender' 'ok' "Antivirus de Windows actif" "Windows Defender protège le PC en temps réel : pas besoin d'un autre antivirus." '' $null }
+        else {
+            $other = @(); try { $other = @(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct -ErrorAction Stop | Where-Object { "$($_.displayName)" -notmatch '(?i)defender' } | ForEach-Object { "$($_.displayName)" }) } catch {}
+            if ($other.Count) { & $add 'defender' 'ok' ("Antivirus : {0}" -f ($other -join ', ')) "Un autre antivirus que celui de Windows protège le PC." '' $null }
+            else { & $add 'defender' 'todo' "La protection en temps réel est coupée" "Aucun antivirus ne surveille le PC en ce moment." 'Ouvrir Sécurité Windows' $null }
+        }
+    } catch {}
+    try {
+        $rp = @(Get-ComputerRestorePoint -ErrorAction Stop)
+        if ($rp.Count) { & $add 'restore' 'ok' "Point de restauration présent" ("Dernier : {0}" -f "$($rp[-1].Description)") '' $null }
+        else { & $add 'restore' 'todo' "Aucun point de restauration" "Sur un Windows neuf la protection du système est souvent coupée. Un point de restauration permet de revenir en arrière si une installation se passe mal." 'Créer un point' $null }
+    } catch { & $add 'restore' 'todo' "Aucun point de restauration" "La protection du système semble coupée. Un point de restauration permet de revenir en arrière si une installation se passe mal." 'Créer un point' $null }
+    # 10. Pour finir : réglages pour les jeux, BIOS
+    & $add 'games' 'info' "Réglages de Windows pour les jeux" "Mode Jeu, planification GPU, Game Bar : AEROX lit tes réglages et te dit lesquels changer." 'Vérifier' $null
+    & $add 'bios' 'info' "BIOS de la carte mère" "Pas urgent : à mettre à jour seulement si tu as un souci (AEROX te montre ta version et ouvre la page du fabricant, il ne touche jamais au BIOS)." 'Voir la page' $null
+    foreach ($it in $items) { Log ("   {0} {1}{2}" -f $(switch ($it.State) { 'ok' { '✔' } 'todo' { '→' } default { '•' } }), $it.Title, $(if ($it.State -eq 'todo') { ' : à faire' } else { '' })) }
+    $todo = @($items | Where-Object { $_.State -eq 'todo' }).Count
+    Log $(if ($todo) { "→ $todo chose(s) à faire pour finir la préparation du PC." } else { "✅ Le PC est prêt : rien d'important ne manque." })
+    $sync.NewPc = @{ Items = $items.ToArray(); Age = $age; Todo = $todo }
+}
 function New-RestorePoint {
     Step "Création d'un point de restauration (sécurité)"
     try {

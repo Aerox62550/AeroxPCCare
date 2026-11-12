@@ -469,6 +469,8 @@ $script:Settings = @{
     StatsOff = $false
     PostOptimize = $false
     AutoUpdate = $true; UpdSnoozeVer = ''; UpdSnoozes = 0
+    NewPcHide = $false
+    BlackBox = $true
     InstallId = ''; Launches = 0; ReviewSent = $false; ReviewNever = $false; ReviewSnooze = ''; ReviewNote = 0; ReviewText = ''; ReviewPseudo = ''; LastSeenVersion = ''
     Overlay = @{ Visible = $false; X = 30; Y = 30; Scale = 1.0; Opacity = 0.6; Metrics = @('fps', 'low', 'cpu', 'cputemp', 'gpu', 'gputemp'); AlertOn = $true; AlertCpu = 90; AlertGpu = 85 }
     Gaming = @{ Track = $true; Tray = $false; TrayTip = $false; Ignore = @() }
@@ -505,7 +507,7 @@ function Load-Settings {
     try {
         $h = Read-SettingsFile
         if ($h) {
-            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion', 'AutoUpdate', 'UpdSnoozeVer', 'UpdSnoozes') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
+            foreach ($k in 'LogOpen', 'IgnoredApps', 'IgnoredIssues', 'StartupKept', 'StartupOff', 'SpeedHistory', 'BetaChannel', 'StatsOff', 'PostOptimize', 'InstallId', 'Launches', 'ReviewSent', 'ReviewNever', 'ReviewSnooze', 'ReviewNote', 'ReviewText', 'ReviewPseudo', 'LastSeenVersion', 'AutoUpdate', 'UpdSnoozeVer', 'UpdSnoozes', 'NewPcHide', 'BlackBox') { if ($h.ContainsKey($k)) { $script:Settings[$k] = $h[$k] } }
             if ($h.Overlay -is [hashtable]) { foreach ($k in @($h.Overlay.Keys)) { $script:Settings.Overlay[$k] = $h.Overlay[$k] } }
             if ($h.Gaming -is [hashtable]) { foreach ($k in @($h.Gaming.Keys)) { $script:Settings.Gaming[$k] = $h.Gaming[$k] } }
             if ($h.StabilityFixAt -is [hashtable]) { $script:Settings.StabilityFixAt = $h.StabilityFixAt }
@@ -601,7 +603,7 @@ $script:CardIcons = @{
     slow = 'E9D9'; lag = 'E839'; share = 'E72D'; discord = 'E8F2'; 'stats-toggle' = 'E9D2'; bgitems = 'E71D'; startup = 'E7E8'; 'Set-HighPerformance' = 'E945'; 'Set-BalancedPower' = 'E945'; 'Open-VisualEffects' = 'E790'; uninstall = 'E74D'
     'autoupd-toggle' = 'E895'; remotehelp = 'E7F4'; whatsnew = 'E946'; review = 'E734'; report = 'EBE8'; history = 'E81C'; checkupdate = 'E896'; logs = 'E8B7'
     optimize = 'E945'; diag = 'E9D9'; 'Start-QuickOptimize' = 'EC4A'; freespace = 'EDA2'; 'Repair-Discord' = 'E8F2'
-    'Repair-Bluetooth' = 'E702'; 'Repair-Usb' = 'E88E'; 'Repair-GameLaunch' = 'E7FC'; 'Repair-WindowsApps' = 'E719'; 'Get-SleepReport' = 'E708'; 'Repair-ExplorerCache' = 'E8B9'; 'Get-GameSettingsReport' = 'E713'
+    'Get-BsodReport' = 'E783'; 'Get-ExternalDiskReport' = 'E88E'; 'Test-DiskSpeed' = 'EC4A'; backup = 'E8F7'; recover = 'E777'; 'blackbox-toggle' = 'E7C1'; stability = 'E9D9'; 'Start-MemoryTest' = 'E950'; newpc = 'E7F8'; 'Repair-Bluetooth' = 'E702'; 'Repair-Usb' = 'E88E'; 'Repair-GameLaunch' = 'E7FC'; 'Repair-WindowsApps' = 'E719'; 'Get-SleepReport' = 'E708'; 'Repair-ExplorerCache' = 'E8B9'; 'Get-GameSettingsReport' = 'E713'
 }
 function New-CardIcon([string]$Hex, [bool]$Primary) {
     $b = New-Object System.Windows.Controls.Border; $b.Width = 42; $b.Height = 42; $b.CornerRadius = Corner 11; $b.Margin = Th 0 0 16 0; $b.VerticalAlignment = 'Top'
@@ -916,6 +918,8 @@ $PageDefs = [ordered]@{
     @{ G = "Dépannage rapide"; Tile = $true; S = "Vide la file bloquée et remet l'imprimante en ligne."; T = "L'imprimante n'imprime plus"; B = "Débloquer"; A = "Repair-Printing"; D = "Vide la file d'impression bloquée, relance le service d'impression, remet en ligne une imprimante restée « hors connexion » et affiche l'état de chaque imprimante."; C = "Les impressions en attente seront annulées (tu pourras les relancer après).`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Relance l'Explorateur en quelques secondes, sans redémarrer."; T = "Bureau ou barre des tâches figés"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Écran noir, plantages : trouve le coupable et répare, sans réinstaller."; T = "Discord bugue ou ne s'installe plus"; B = "Réparer"; A = "Repair-Discord"; D = "Écran noir ou gris, Discord qui se coupe d'un coup, chargement sans fin ? Ferme Discord, vide ses caches (tu restes connecté), coupe son accélération matérielle (cause n° 1 de l'écran noir), retire un mode de compatibilité forcé, lit ses plantages notés par Windows pour trouver le coupable (pilote graphique, overlay, logiciel audio, antivirus…) et remet à neuf ses composants abîmés, puis le relance. Réinstallation propre proposée seulement en dernier recours."; C = "Discord va être fermé, ses caches vidés et son accélération matérielle coupée, ses plantages analysés, ses composants remis à neuf s'ils sont abîmés, puis il sera relancé. Tu restes connecté, tes réglages et tes serveurs sont gardés.`n`nContinuer ?" },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Quel pilote ou quel composant fait planter le PC, et quoi faire."; T = "Écran bleu"; B = "Analyser"; A = "Get-BsodReport"; D = "Lit tout ce que Windows a noté sur les écrans bleus des 90 derniers jours : le code expliqué en clair, le pilote en cause, dans quelle situation c'est arrivé (démarrage, sortie de veille, en pleine utilisation) et ce qui a été installé juste avant le premier. Rien n'est modifié." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "« Il faut formater le disque », pas de lettre, protégé en écriture."; T = "Clé USB ou disque externe illisible"; B = "Analyser"; A = "Get-ExternalDiskReport"; D = "Regarde chaque clé USB, carte mémoire et disque externe branché : hors ligne, sans lettre, protégé en écriture, fichiers abîmés (réparés sans rien effacer), formaté pour Mac ou Linux, protégé par BitLocker, ou vraiment illisible. La remise à neuf (qui efface tout) n'est proposée que si Windows ne peut rien lire dessus, et jamais sans ta confirmation." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Manette, casque ou souris qui ne se connecte plus."; T = "Le Bluetooth ne marche pas"; B = "Réparer"; A = "Repair-Bluetooth"; D = "Réactive les services et la puce Bluetooth s'ils sont désactivés, vérifie son pilote, relance la puce (comme l'éteindre et la rallumer) et t'explique comment réassocier un appareil."; C = "La puce Bluetooth va être relancée : une souris ou un clavier Bluetooth se déconnecte quelques secondes puis revient.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Clé, manette, disque ou souris USB que Windows ne voit pas."; T = "Périphérique USB non reconnu"; B = "Réparer"; A = "Repair-Usb"; D = "Relance la recherche des périphériques, réactive ceux qui sont désactivés, relance ceux qui sont en erreur et te dit si c'est le pilote, le câble ou le port." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Composants manquants, anti-triche coupé, plantages : trouve pourquoi."; T = "Un jeu ne se lance pas"; B = "Vérifier"; A = "Repair-GameLaunch"; D = "Vérifie les composants que les jeux réclament (Visual C++, DirectX : les erreurs « VCRUNTIME140.dll / d3dx9_43.dll introuvable »), les anti-triche désactivés, et lit les plantages notés par Windows pour nommer le coupable (pilote graphique, overlay, logiciel audio, antivirus)." },
@@ -926,7 +930,12 @@ $PageDefs = [ordered]@{
     @{ G = "Windows"; T = "Réparer les fichiers de Windows"; P = $true; B = "Réparer"; A = "Repair-System"; D = "Vérifie et répare les fichiers système abîmés (outils officiels DISM + SFC). À faire si Windows bugue, plante ou fait des écrans bleus. 15 à 45 minutes."; C = "La réparation prend 15 à 45 minutes. Laisse le PC branché et le logiciel ouvert.`n`nLancer ?" },
     @{ G = "Windows"; T = "Vérifier le disque"; B = "Vérifier"; A = "Test-Disk"; D = "Contrôle la santé de tes disques et cherche des erreurs sur le disque de Windows et sur tes autres disques (jeux, données)." },
     @{ G = "Windows"; T = "Débloquer Windows Update"; B = "Débloquer"; A = "Reset-WindowsUpdate"; D = "Si les mises à jour Windows restent bloquées ou échouent en boucle : remet Windows Update à zéro."; C = "Windows Update va être remis à zéro. Un redémarrage sera conseillé ensuite.`n`nContinuer ?" },
-    @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." }) }
+    @{ G = "Windows"; T = "Créer un point de restauration"; B = "Créer"; A = "New-RestorePoint"; D = "Sauvegarde l'état actuel de Windows pour pouvoir revenir en arrière si quelque chose se passe mal plus tard." },
+    @{ G = "Tester le matériel"; T = "Test de stabilité (10 min)"; B = "Lancer le test"; UI = 'stability'; UiBusy = $true; D = "Fait travailler le processeur et la mémoire à 100 % pendant 10 minutes en vérifiant chaque calcul : une seule erreur et le PC est instable (overclocking, XMP / EXPO, barrette défectueuse). Surveille la température et s'arrête tout seul si elle devient dangereuse. Pas besoin d'installer un benchmark." },
+    @{ G = "Tester le matériel"; T = "Tester la mémoire (RAM)"; B = "Programmer le test"; A = "Start-MemoryTest"; StatusFn = { Get-MemTestCardStatus }; C = "Le test de mémoire de Windows se lance au prochain redémarrage, avant Windows : 10 à 30 minutes, écran bleu avec une barre de progression (c'est normal). Le PC redémarre ensuite tout seul.`n`nRouvre AEROX après : le résultat s'affichera.`n`nProgrammer le test ? (un redémarrage te sera proposé)"; D = "Lance le « Diagnostic de mémoire Windows » de Microsoft au prochain redémarrage, puis t'explique le résultat à la réouverture d'AEROX. À faire en cas d'écrans bleus ou de plantages au hasard." },
+    @{ G = "Tester le matériel"; T = "Vitesse des disques"; B = "Mesurer"; A = "Test-DiskSpeed"; D = "Mesure la vitesse réelle de chaque disque interne (écriture, lecture, petits fichiers) avec un fichier temporaire de 1 Go supprimé à la fin, et la compare à ce qu'un disque de ce type doit donner. Repère un SSD qui fatigue ou qui tourne au ralenti, sans rien installer. Environ 30 secondes par disque." },
+    @{ G = "Sauver ses fichiers"; T = "Sauvegarder mes fichiers"; P = $true; B = "Choisir"; UI = 'backup'; UiBusy = $true; D = "Copie Bureau, Documents, Images, Vidéos, Musique et Téléchargements sur un autre disque (disque externe, clé USB), puis vérifie la copie. À faire avant de réinstaller Windows ou quand un disque fatigue. Rien n'est supprimé ni déplacé." },
+    @{ G = "Sauver ses fichiers"; T = "Récupérer des fichiers effacés"; B = "Choisir"; UI = 'recover'; UiBusy = $true; D = "Photos supprimées par erreur, clé USB ou carte mémoire illisible : lance l'outil officiel de Microsoft (Windows File Recovery), qui fouille le disque sans rien écrire dessus et range ce qu'il retrouve sur un autre disque. Le résultat n'est jamais garanti, surtout sur un SSD." }) }
  security = @{ Title = "Sécurité"; Sub = "Virus cachés, voleurs de mots de passe, prise en main à distance : vérifie que personne d'autre ne profite de ton PC."; Cards = @(
     @{ G = "Analyser le PC"; T = "Analyse de sécurité approfondie"; Badge = "Commence ici"; P = $true; B = "Analyser"; UI = 'secscan'; UiBusy = $true; StatusFn = { Get-SecCardStatus }; D = "Cherche les signes d'intrusion : antivirus saboté, programmes cachés qui se lancent tout seuls, faux programmes de Windows, prise en main à distance, téléchargements piégés (faux cheats, cracks) et fichiers de mots de passe laissés en clair. Rien n'est modifié : tu choisis ensuite quoi traiter. Environ 1 minute." },
     @{ G = "Analyser le PC"; T = "Analyse complète Windows Defender"; B = "Lancer"; A = "Start-DefenderFullScan"; D = "Fait vérifier chaque fichier du PC par Windows Defender. Long (30 minutes à 2 heures), mais à faire au moindre doute. Tu peux l'arrêter avec « Annuler »."; C = "L'analyse complète vérifie tous les fichiers du PC : 30 minutes à 2 heures. Tu peux continuer à utiliser le PC (un peu plus lent) et l'arrêter avec « Annuler ».`n`nLancer ?" },
@@ -952,6 +961,7 @@ $PageDefs = [ordered]@{
     @{ G = "AEROX PC Care"; Tile = $true; S = "Les nouveautés des dernières versions."; T = "Quoi de neuf ?"; B = "Voir"; UI = 'whatsnew'; D = "Les nouveautés des dernières versions d'AEROX PC Care." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Installe chaque nouvelle version tout seul (10 s pour dire « Plus tard »)."; T = "Mises à jour automatiques"; B = "Changer"; UI = 'autoupd-toggle'; StatusFn = { Get-AutoUpdCardStatus }; D = "Quand une nouvelle version d'AEROX sort, elle s'installe toute seule au lancement après 10 secondes (tu peux toujours dire « Plus tard »). Le fichier est vérifié avant d'être installé. Désactivé : AEROX te la propose et tu choisis quand." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Vérifie s'il y a une nouvelle version et l'installe en un clic."; T = "Rechercher une mise à jour d'AEROX PC Care"; B = "Rechercher"; UI = 'checkupdate'; D = "Vérifie si une nouvelle version du logiciel est disponible et l'installe en un clic (tes réglages sont gardés)." },
+    @{ G = "AEROX PC Care"; Tile = $true; S = "Ce que faisait le PC dans la minute avant un plantage ou une coupure."; T = "Boîte noire"; B = "Changer"; UI = 'blackbox-toggle'; StatusFn = { Get-BlackBoxCardStatus }; D = "Tant qu'AEROX est ouvert ou près de l'horloge, il note toutes les 10 secondes la charge du processeur, la mémoire et, quand les capteurs tournent (partie en cours, page Gaming), les températures. Après un écran bleu ou une coupure brutale, le diagnostic te montre la dernière minute avant : « processeur à 97 °C juste avant la coupure ». Les relevés restent sur ce PC (une heure au plus), rien n'est envoyé." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Compteurs anonymes pour corriger d'abord ce qui touche le plus de monde. Jamais ton nom ni tes fichiers."; T = "Statistiques anonymes"; B = "Changer"; UI = 'stats-toggle'; StatusFn = { Get-StatsCardStatus }; D = "Des compteurs envoyés de temps en temps au développeur : version d'AEROX, types de problèmes trouvés, lenteurs qu'AEROX n'a pas su expliquer, réparations qui n'ont pas suffi. Jamais ton nom, celui du PC, tes fichiers ni ton adresse IP : ça sert seulement à corriger d'abord ce qui touche le plus de monde." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Ce qui est envoyé, ce qui ne l'est jamais, et pourquoi."; T = "Confidentialité"; B = "Lire"; UI = 'privacy'; D = "Ce qu'AEROX PC Care envoie (statistiques anonymes, rapports que tu choisis d'envoyer), ce qu'il n'envoie jamais (nom, fichiers, mots de passe) et ce qui reste sur ce PC." },
     @{ G = "AEROX PC Care"; Tile = $true; S = "Les journaux de chaque jour, enregistrés sur ce PC."; T = "Dossier des journaux"; B = "Ouvrir"; UI = 'logs'; D = "Tous les journaux sont enregistrés jour par jour sur ce PC." }) }
@@ -1069,6 +1079,18 @@ function Build-HomePage {
         Add-Child $ft (New-Text "Windows ralentit et les mises à jour échouent. Un clic : AEROX te montre tout ce qui peut partir, ce qui est sans risque est déjà coché." $Typo.Body $Pal.Muted)
         Add-Child $fg $ft; $fc.Child = $fg; Add-Child $sp $fc
     }
+    # Windows installé depuis peu : la liste guidée « Préparer ce PC » mise en avant
+    if (Test-NewPcBanner) {
+        $nc = New-CardBorder $Pal.AccentSoft; $ng = New-Object System.Windows.Controls.DockPanel
+        $nb = New-Object System.Windows.Controls.StackPanel; $nb.Orientation = 'Horizontal'; [System.Windows.Controls.DockPanel]::SetDock($nb, 'Right'); $nb.VerticalAlignment = 'Center'
+        $n1 = New-Button 'Ne plus afficher' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'newpc-hide' } } $false; $n1.Margin = Th 0 0 8 0; Add-Child $nb $n1
+        Add-Child $nb (New-Button 'Préparer ce PC' 'PrimaryBtn' @{ Kind = 'ui'; Def = @{ UI = 'newpc'; UiBusy = $true } })
+        Add-Child $ng $nb
+        $nt = New-Object System.Windows.Controls.StackPanel; $nt.VerticalAlignment = 'Center'
+        Add-Child $nt (New-Text ("Windows vient d'être installé (il y a {0} jour(s))" -f [int]$script:WinAge) $Typo.Title $Pal.White 'SemiBold')
+        Add-Child $nt (New-Text "Mises à jour, pilotes, disque vide à préparer, logiciels utiles : AEROX te guide étape par étape." $Typo.Body $Pal.Muted)
+        Add-Child $ng $nt; $nc.Child = $ng; Add-Child $sp $nc
+    }
     # Tuiles
     $tiles = New-Object System.Windows.Controls.Primitives.UniformGrid; $tiles.Columns = 4; $tiles.Margin = Th 0 0 0 4
     foreach ($k in 'OS', 'CPU', 'RAM', 'DISK') {
@@ -1104,6 +1126,9 @@ function Build-HomePage {
         @{ G = 'Optimiser ton PC'; Tile = $true; T = "Libérer de la place"; B = "Libérer"; UI = 'freespace'; UiBusy = $true
            S = $(if ($dSize -gt 0) { "{0} libres sur {1}. Tout ce qui peut partir, en une liste." -f (Format-Size $dFree), $env:SystemDrive } else { "Tout ce qui peut partir, en une liste." })
            D = "Fichiers inutiles, place gardée par Windows, vieux installateurs, jeux et logiciels pas utilisés depuis 3 mois : une seule liste, ce qui est sans risque déjà coché, un seul bouton." }
+        @{ G = 'Optimiser ton PC'; Tile = $true; T = "PC neuf ou Windows réinstallé"; B = "Préparer"; UI = 'newpc'; UiBusy = $true
+           S = "La liste guidée : mises à jour, pilotes, disque vide, logiciels."
+           D = "Après une installation de Windows : activation, mises à jour, pilotes, disque vide à préparer, fréquence de l'écran, logiciels utiles, protection. Chaque étape a son bouton, rien n'est changé sans ton clic." }
         @{ G = 'Optimiser ton PC'; Tile = $true; T = "Historique des changements"; B = "Voir"; UI = 'history'
            S = $(if ($nCh) { "$nCh réglage(s) modifié(s) par AEROX, annulables en un clic." } else { "Tout ce qu'AEROX change est noté ici, avec un bouton pour l'annuler." })
            D = "Tout ce qu'AEROX PC Care change sur ce PC est noté ici, avec un bouton pour l'annuler." })
@@ -1344,7 +1369,7 @@ function Set-Busy([bool]$Busy, [string]$Label = '') {
 # ---------------------------------------------------------------- Annuler une tâche en cours
 # Analyses (lecture seule) : arrêt immédiat. Mises à jour de logiciels : arrêt après le logiciel en cours.
 # Opérations qui modifient Windows en profondeur : pas d'arrêt au milieu (risque de laisser le PC dans un état bancal).
-$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk|Get-SleepReport|Get-GameSettingsReport|Repair-GameLaunch)\b'
+$script:HardCancel = '^(Invoke-Diagnostic|Get-SpaceUsage|Get-DriverReport|Get-AppUpdatesForUi|Get-CleanupAnalysis|Get-InstalledAppsAdvice|Get-SlowReport|Get-BgItems|Get-BrowserReport|Get-Duplicates|Open-BatteryReport|Test-Internet|Test-Disk|Get-SleepReport|Get-GameSettingsReport|Repair-GameLaunch|Get-BsodReport|Get-NewPcPlan|Get-BackupPlan|Get-RecoveryPlan)\b'
 $script:SoftCancel = '^(Update-SelectedApps|Update-Apps|Invoke-WindowsSpace|New-RestorePoint; Invoke-WindowsSpace|Invoke-DeepClean)\b'
 function Stop-AeroxTask {
     $job = $script:Job
@@ -1417,7 +1442,7 @@ function Start-Background([string]$Code) {
 function Start-IssueCheck($I) {
     # Plantages, écrans bleus, arrêts brutaux : ils sont dans l'historique de Windows et ne disparaissent pas d'un coup.
     # On note l'heure de la réparation : à partir de maintenant, seuls les nouveaux comptent (vérifiable aux prochains diagnostics).
-    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $I.Id; return $false }
+    if ($I.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset', 'rtc') { Set-StabilityFixed $I.Id; return $false }
     if (-not $I.Id -or $I.UiFix -or $I.OpenOnly -or -not (Get-DiagCheckFn $I.Cat)) { return $false }
     $I.VerifyAt = Get-Date
     Start-Background ("Test-IssueGone {0} {1}" -f (ConvertTo-PsLiteral $I.Cat), (ConvertTo-PsLiteral $I.Id))
@@ -1554,6 +1579,12 @@ function Complete-Job {
     elseif ($job.OnDone -eq 'freedialog' -and $sync.FreePlan) { Show-FreeSpaceDialog }
     elseif ($job.OnDone -eq 'freedone') { Start-FreeUninstalls }
     elseif ($job.OnDone -eq 'slowdialog' -and $sync.SlowReport) { Show-SlowDialog }
+    elseif ($job.OnDone -eq 'newpcdialog' -and $sync.NewPc) { Show-NewPcDialog }
+    elseif ($job.OnDone -eq 'backupdialog' -and $sync.BackupPlan) { Show-BackupDialog }
+    elseif ($job.OnDone -eq 'backupdone' -and $sync.BackupDone -and $sync.BackupDone.Root) { try { Start-Process explorer.exe ('"{0}"' -f $sync.BackupDone.Root) } catch {} }
+    elseif ($job.OnDone -eq 'recoverdialog' -and $sync.RecoverPlan) { Show-RecoverDialog }
+    elseif ($job.OnDone -eq 'recoverdone' -and $sync.RecoverDone -and $sync.RecoverDone.Files -and $sync.RecoverDone.Folder) { try { Start-Process explorer.exe ('"{0}"' -f $sync.RecoverDone.Folder) } catch {} }
+    if ($job.OnDone -eq 'stressdone') { $script:StressRun = $false }
     elseif ($job.OnDone -eq 'biospage' -and $sync.BiosUrl) { [void](Open-Url $sync.BiosUrl.Url) }
     elseif ($job.OnDone -eq 'bgdialog' -and $null -ne $sync.BgItems) { Show-BgDialog $script:BgIssue; $script:BgIssue = $null }
     elseif ($job.OnDone -eq 'dupdialog' -and $null -ne $sync.Dupes) { Show-DuplicatesDialog }
@@ -1702,7 +1733,7 @@ function Invoke-UiCommand($T) {
             'done' {
                 $T.Issue.Status = 'done'; Write-UiLog ("✅ Marqué comme fait : " + $T.Issue.Title)
                 # Problème lu dans l'historique de Windows (extinctions, plantages…) : « c'est fait » = seuls les nouveaux comptent désormais
-                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset') { Set-StabilityFixed $T.Issue.Id }
+                if ($T.Issue.Id -in 'crash', 'bsod', 'power41', 'tdr', 'hang', 'diskbad', 'diskretry', 'ntfs', 'autorepair', 'whea', 'diskreset', 'rtc') { Set-StabilityFixed $T.Issue.Id }
                 Update-DiagBadge; Refresh-Page
             }
             'openurl' { [void](Open-Url $T.Url) }
@@ -1763,6 +1794,12 @@ function Invoke-UiCommand($T) {
                     'uninstall' { Start-UninstallList $null }
                     'space' { Start-SpaceScan }
                     'freespace' { Start-FreeSpace $null }
+                    'newpc' { Start-NewPc }
+                    'backup' { Start-Backup }
+                    'recover' { Start-Recover }
+                    'blackbox-toggle' { $script:Settings.BlackBox = -not [bool]$script:Settings.BlackBox; Save-Settings; if (-not $script:Settings.BlackBox) { try { Remove-Item -LiteralPath (Get-BlackBoxPath) -Force -ErrorAction SilentlyContinue } catch {} }; Write-UiLog $(if ($script:Settings.BlackBox) { "Boîte noire activée." } else { "Boîte noire désactivée, relevés effacés." }); Refresh-Page }
+                    'stability' { Start-StabilityUi }
+                    'newpc-hide' { $script:Settings.NewPcHide = $true; Save-Settings; Refresh-Page }
                     'drivers' { Start-DriverCheck $null }
                     'inst-pm' { [void](Start-AeroxTask 'Install-PresentMon' 'Installation du compteur de FPS' 'tools') }
                     'inst-lhm' { [void](Start-AeroxTask 'Install-SensorLib' 'Installation du module de températures' 'tools') }
@@ -2852,6 +2889,17 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.4.0' = @("Nouveau : « Sauvegarder mes fichiers » (onglet Réparation). Bureau, Documents, Images, Vidéos, Musique et Téléchargements copiés sur un autre disque puis vérifiés, avant une réinstallation de Windows par exemple.",
+        "Nouveau : « Récupérer des fichiers effacés ». AEROX lance l'outil officiel de Microsoft, qui fouille le disque (ou la clé USB illisible) sans rien écrire dessus.",
+        "Nouveau : « Vitesse des disques » : écriture, lecture et petits fichiers mesurés en 30 secondes et comparés à ce que le disque doit donner.",
+        "Nouveau : boîte noire. Après un écran bleu ou une coupure brutale, le diagnostic montre ce que faisait le PC dans la dernière minute (températures, charge, mémoire) si AEROX tournait.",
+        "Nouveau : « Clé USB ou disque externe illisible » (onglet Réparation). Hors ligne, sans lettre, protégé en écriture, fichiers abîmés réparés sans rien effacer ; la remise à neuf n'est proposée que si Windows ne peut rien lire dessus.",
+        "Nouveau : « Test de stabilité » (10 minutes, processeur et mémoire à fond, chaque calcul vérifié, arrêt automatique si ça chauffe trop) et « Tester la mémoire (RAM) » au redémarrage, avec le résultat expliqué à la réouverture.",
+        "Nouveau : « PC neuf ou Windows réinstallé » (accueil). Une liste guidée qui vérifie l'activation, les mises à jour, les pilotes, la fréquence de l'écran, la protection, et qui prépare un disque vide en D: (seulement s'il est complètement vide) et installe les logiciels utiles que tu coches.",
+        "Écrans bleus enfin expliqués : nouvelle carte « Écran bleu » (onglet Réparation) avec le code en clair (60 codes connus), le pilote en cause, la situation (démarrage, sortie de veille, en pleine utilisation) et ce qui a été installé juste avant le premier.",
+        "Le nettoyage garde maintenant les rapports d'écrans bleus des 30 derniers jours (c'est eux qui nomment le pilote fautif), et AEROX retient ce qu'il y a lu même si un autre nettoyeur les efface.",
+        "Écran bleu sans rapport : le code est quand même retrouvé, et si Windows est réglé pour ne rien garder, AEROX propose de réactiver les rapports (annulable).",
+        "Nouveau contrôle : pile de la carte mère vide. Si l'horloge du PC repart à une vieille date au démarrage (après une coupure ou une multiprise éteinte), le diagnostic le dit et explique comment changer la pile CR2032 (2 à 5 €).")
     '3.3.0' = @("7 nouveaux dépannages (onglet Réparation) : Bluetooth, périphérique USB non reconnu, jeu qui ne se lance pas (Visual C++, DirectX, anti-triche), applis Windows / Store / menu Démarrer bloqués, problème de veille (qui réveille le PC), icônes ou miniatures cassées, réglages de Windows pour les jeux.",
                 "« Pas de son » : s'il y a plusieurs sorties (casque, écran HDMI, enceintes), tu choisis la bonne avec un son de test.",
                 "« Réparer la connexion » : réactive aussi les services et la carte réseau désactivés, et relance un Wi-Fi qui ne voit plus aucun réseau.",
@@ -4400,6 +4448,313 @@ $script:SlowSymptoms = @(
     @('tout', "Tout est lent, tout le temps", "Lance le diagnostic complet : santé du disque, pilotes, plantages, logiciels inutiles, Windows.")
 )
 # « Pas de son » : choisir où le son doit sortir (casque, écran, enceintes), avec un son de test
+# ---------------------------------------------------------------- Boîte noire : un relevé toutes les 10 secondes
+function Get-BlackBoxCardStatus {
+    if ($script:Settings.BlackBox) { return @{ B = 'Désactiver'; StatusText = "Activée : relevés gardés sur ce PC seulement"; StatusKind = 'on' } }
+    return @{ B = 'Activer'; StatusText = "Désactivée"; StatusKind = 'off' }
+}
+function Format-BlackBoxLine([datetime]$Time, $Cpu, $CpuT, $Gpu, $GpuT, $Ram, [string]$Game) {
+    $f = { param($v) if ($null -eq $v -or "$v" -eq '' -or [double]$v -lt 0) { '' } else { ([math]::Round([double]$v)).ToString([Globalization.CultureInfo]::InvariantCulture) } }
+    return ("{0}|S|{1}|{2}|{3}|{4}|{5}|{6}" -f $Time.ToString('o'), (& $f $Cpu), (& $f $CpuT), (& $f $Gpu), (& $f $GpuT), (& $f $Ram), ("$Game" -replace '[|\r\n]', ' '))
+}
+function Add-BlackBoxSample {
+    if (-not $script:Settings.BlackBox) { return }
+    $now = Get-Date
+    if ($script:BbLast -and ($now - $script:BbLast).TotalSeconds -lt 10) { return }
+    $script:BbLast = $now
+    try {
+        $q = @("$([AeroxLoad]::Sample())".Split('|'))
+        # Températures seulement quand les capteurs tournent (partie en cours, page Gaming, overlay, test de stabilité)
+        $live = if ((Test-MonitorNeeded) -and $script:Live) { $script:Live } else { @{} }
+        $line = Format-BlackBoxLine $now $q[0] $live['cpu.temp'] $live['gpu.load'] $live['gpu.temp'] $q[1] $(if ($script:GameSess) { "$($script:GameSess.Name)" } else { '' })
+        $p = Get-BlackBoxPath
+        [IO.File]::AppendAllText($p, $line + "`r`n", (New-Object Text.UTF8Encoding $false))
+        # Le fichier ne garde qu'une heure environ : au-delà de 720 lignes, on ne garde que les 360 dernières
+        $script:BbCount = [int]$script:BbCount + 1
+        if ($script:BbCount -ge 360) {
+            $script:BbCount = 0
+            $all = [IO.File]::ReadAllLines($p)
+            if ($all.Length -gt 720) { [IO.File]::WriteAllLines($p, [string[]]($all | Select-Object -Last 360), (New-Object Text.UTF8Encoding $false)) }
+        }
+    } catch {}
+}
+# AEROX fermé normalement : noté, pour ne jamais prendre de vieux relevés pour « la dernière minute avant la coupure »
+function Stop-BlackBox { try { if ($script:Settings.BlackBox -and $script:BbLast) { [IO.File]::AppendAllText((Get-BlackBoxPath), ((Get-Date).ToString('o') + "|X`r`n"), (New-Object Text.UTF8Encoding $false)) } } catch {} }
+# ---------------------------------------------------------------- Sauvegarder mes fichiers
+function Start-Backup { $sync.BackupPlan = $null; [void](Start-AeroxTask 'Get-BackupPlan' 'Sauvegarde : préparation' 'backupdialog') }
+function Show-BackupDialog {
+    $plan = $sync.BackupPlan
+    if (-not $plan) { return }
+    $w = New-Dialog "$AppName : sauvegarder mes fichiers" 640
+    $script:BkWin = $w; $script:BkGo = $false; $script:BkRows = New-Object System.Collections.ArrayList; $script:BkPlan = $plan
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Sauvegarder mes fichiers" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Une copie de tes dossiers sur un autre disque, vérifiée à la fin. À faire avant de réinstaller Windows, ou quand un disque donne des signes de fatigue. Rien n'est supprimé ni déplacé." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    $targets = @($plan.Targets); $folders = @($plan.Folders)
+    if (-not $targets.Count) {
+        $x = New-Text "Aucun autre disque que celui de Windows n'est branché. Une sauvegarde sur le même disque ne protège de rien : branche un disque dur externe ou une clé USB assez grande, puis recommence." $Typo.Body $Pal.Warn
+        Add-Child $sp $x
+    } else {
+        foreach ($f in $folders) {
+            $c = New-Object System.Windows.Controls.StackPanel
+            Add-Child $c (New-Text $f.Name $Typo.Strong $Pal.White 'SemiBold')
+            Add-Child $c (New-Text (("{0} fichier(s), {1}" -f $f.Files, (Format-Size $f.Bytes)) + $(if ($f.Cloud) { " · $($f.Cloud) en ligne seulement (déjà dans OneDrive, pas copiés)" } else { '' })) $Typo.Small $Pal.Muted)
+            $r = New-CheckRow ([bool]($f.Files -gt 0)) $c $null
+            if (-not $f.Files) { $r.Check.IsEnabled = $false }
+            $r.Check.Add_Click({ & $script:BkCount })
+            [void]$script:BkRows.Add(@{ Check = $r.Check; Folder = $f }); Add-Child $sp $r.Row
+        }
+        $dl = New-Object System.Windows.Controls.DockPanel; $dl.Margin = Th 0 10 0 0
+        $lt = New-Text "Copier vers :" $Typo.Body $Pal.Text3; $lt.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($lt, 'Left'); Add-Child $dl $lt
+        $cb = New-Object System.Windows.Controls.ComboBox; $cb.Height = 32; $cb.Margin = Th 10 0 0 0; $cb.VerticalContentAlignment = 'Center'; $cb.FontSize = $Typo.Body
+        foreach ($t in $targets) { [void]$cb.Items.Add(("{0}: {1} · {2} libres{3}" -f $t.Letter, $t.Label, (Format-Size $t.Free), $(if ($t.External) { ' · externe' } else { '' }))) }
+        # Par défaut : un disque externe s'il y en a un, sinon le plus de place libre
+        $best = @($targets | Sort-Object @{ E = { [bool]$_.External }; Descending = $true }, @{ E = { $_.Free }; Descending = $true })[0]
+        $cb.SelectedIndex = [array]::IndexOf($targets, $best); if ($cb.SelectedIndex -lt 0) { $cb.SelectedIndex = 0 }
+        $cb.Add_SelectionChanged({ & $script:BkCount })
+        $script:BkTarget = $cb; Add-Child $dl $cb; Add-Child $sp $dl
+        $script:BkSum = New-Text '' $Typo.Body $Pal.Text2; $script:BkSum.Margin = Th 0 10 0 0; Add-Child $sp $script:BkSum
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bNo = New-DlgButton $(if ($targets.Count) { 'Annuler' } else { 'Fermer' }) $(if ($targets.Count) { 'TextBtn' } else { 'PrimaryBtn' }); $bNo.Margin = Th 0 0 8 0; $bNo.Add_Click({ $script:BkWin.Close() }); Add-Child $bar $bNo
+    if ($targets.Count) {
+        $script:BkBtn = New-DlgButton 'Sauvegarder' 'PrimaryBtn'; $script:BkBtn.Add_Click({ $script:BkGo = $true; $script:BkWin.Close() }); Add-Child $bar $script:BkBtn
+        $script:BkCount = {
+            $sel = @($script:BkRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Folder })
+            $tot = [double]0; foreach ($s in $sel) { $tot += [double]$s.Bytes }
+            $t = @($script:BkPlan.Targets)[[math]::Max(0, $script:BkTarget.SelectedIndex)]
+            $fits = ($tot + 500MB -le [double]$t.Free)
+            $script:BkSum.Text = if (-not $sel.Count) { "Coche au moins un dossier." } elseif ($fits) { "À copier : {0}. Il restera {1} sur {2}:." -f (Format-Size $tot), (Format-Size ([double]$t.Free - $tot)), $t.Letter } else { "À copier : {0}, mais {1}: n'a que {2} de libre. Décoche un dossier ou choisis un autre disque." -f (Format-Size $tot), $t.Letter, (Format-Size ([double]$t.Free)) }
+            $script:BkSum.Foreground = Brush $(if ($sel.Count -and -not $fits) { $Pal.Warn } else { $Pal.Text2 })
+            $script:BkBtn.IsEnabled = ($sel.Count -gt 0 -and $fits)
+        }
+        & $script:BkCount
+    }
+    Add-Child $sp $bar
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $sp
+    $w.Content = $sv
+    [void]$w.ShowDialog()
+    if (-not $script:BkGo) { return }
+    $sel = @($script:BkRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { "$($_.Folder.Path)" })
+    $t = @($plan.Targets)[[math]::Max(0, $script:BkTarget.SelectedIndex)]
+    if (-not $sel.Count -or -not $t) { return }
+    $sync.BackupDone = $null
+    [void](Start-AeroxTask ("Start-UserBackup " + (ConvertTo-PsList $sel) + " " + (ConvertTo-PsLiteral $t.Letter)) 'Sauvegarde de tes fichiers' 'backupdone')
+}
+# ---------------------------------------------------------------- Récupérer des fichiers effacés
+function Start-Recover { $sync.RecoverPlan = $null; [void](Start-AeroxTask 'Get-RecoveryPlan' 'Récupération : préparation' 'recoverdialog') }
+function Show-RecoverDialog {
+    $plan = $sync.RecoverPlan
+    if (-not $plan) { return }
+    $w = New-Dialog "$AppName : récupérer des fichiers effacés" 660
+    $script:RcWin = $w; $script:RcGo = $false; $script:RcPlan = $plan
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Récupérer des fichiers effacés" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Photos supprimées par erreur, clé USB ou carte mémoire devenue illisible : AEROX lance « Windows File Recovery », l'outil officiel de Microsoft. Il fouille le disque sans rien écrire dessus et range ce qu'il retrouve sur un autre disque." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 4; Add-Child $sp $p
+    $warn = New-Text "Important : n'écris plus rien sur le disque à fouiller (pas de copie, pas d'installation). Chaque nouveau fichier peut écraser ceux à retrouver. Le résultat n'est jamais garanti." $Typo.Body $Pal.Warn
+    $warn.Margin = Th 0 4 0 12; Add-Child $sp $warn
+    $src = @($plan.Sources); $dst = @($plan.Targets)
+    $mk = { param($Label) $d = New-Object System.Windows.Controls.DockPanel; $d.Margin = Th 0 0 0 8; $t = New-Text $Label $Typo.Body $Pal.Text3; $t.Width = 170; $t.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($t, 'Left'); Add-Child $d $t; $c = New-Object System.Windows.Controls.ComboBox; $c.Height = 32; $c.VerticalContentAlignment = 'Center'; $c.FontSize = $Typo.Body; Add-Child $d $c; Add-Child $sp $d; return $c }
+    $script:RcSrc = & $mk "Disque à fouiller :"
+    foreach ($s in $src) { [void]$script:RcSrc.Items.Add(("{0}: {1} · {2} · {3}{4}" -f $s.Letter, $(if ($s.Label) { $s.Label } elseif ($s.Name) { $s.Name } else { 'sans nom' }), $(if ($s.Fs) { $s.Fs } else { 'illisible' }), (Format-Size $s.Size), $(if ($s.External) { ' · externe' } else { '' }))) }
+    $script:RcKind = & $mk "Quoi retrouver :"
+    foreach ($k in $script:RecoverKinds.Keys) { [void]$script:RcKind.Items.Add($script:RecoverKinds[$k].Name) }
+    $script:RcKind.SelectedIndex = 0
+    $script:RcDst = & $mk "Ranger ce qui est retrouvé sur :"
+    foreach ($t in $dst) { [void]$script:RcDst.Items.Add(("{0}: {1} · {2} libres" -f $t.Letter, $t.Label, (Format-Size $t.Free))) }
+    $script:RcRecent = New-Object System.Windows.Controls.CheckBox; $script:RcRecent.Content = (New-Text "Les fichiers viennent d'être effacés (recherche rapide, disque NTFS seulement)" $Typo.Body $Pal.Text3); $script:RcRecent.Margin = Th 0 2 0 0; Add-Child $sp $script:RcRecent
+    $script:RcMsg = New-Text '' $Typo.Body $Pal.Text2; $script:RcMsg.Margin = Th 0 10 0 0; Add-Child $sp $script:RcMsg
+    if (-not $plan.Tool) { $ti = New-Text "L'outil de Microsoft n'est pas encore sur ce PC : AEROX l'installera depuis le Microsoft Store au lancement (gratuit, éditeur Microsoft Corporation)." $Typo.Small $Pal.Muted; $ti.Margin = Th 0 8 0 0; Add-Child $sp $ti }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 14 0 0
+    $bNo = New-DlgButton 'Annuler' 'TextBtn'; $bNo.Margin = Th 0 0 8 0; $bNo.Add_Click({ $script:RcWin.Close() }); Add-Child $bar $bNo
+    $script:RcBtn = New-DlgButton 'Lancer la récupération' 'PrimaryBtn'; $script:RcBtn.Add_Click({ $script:RcGo = $true; $script:RcWin.Close() }); Add-Child $bar $script:RcBtn
+    Add-Child $sp $bar
+    $script:RcCheck = {
+        $s = if ($script:RcSrc.SelectedIndex -ge 0) { @($script:RcPlan.Sources)[$script:RcSrc.SelectedIndex] } else { $null }
+        $d = if ($script:RcDst.SelectedIndex -ge 0) { @($script:RcPlan.Targets)[$script:RcDst.SelectedIndex] } else { $null }
+        $script:RcRecent.IsEnabled = [bool]($s -and $s.Fs -eq 'NTFS'); if (-not $script:RcRecent.IsEnabled) { $script:RcRecent.IsChecked = $false }
+        $msg = ''; $ok = $false
+        if (-not @($script:RcPlan.Sources).Count) { $msg = "Aucun disque avec une lettre n'est branché." }
+        elseif (-not $s) { $msg = "Choisis le disque où étaient les fichiers." }
+        elseif (@($script:RcPlan.Targets | Where-Object { $_.Letter -ne $s.Letter }).Count -eq 0) { $msg = "Il faut un deuxième disque pour ranger ce qui est retrouvé (jamais sur le disque fouillé) : branche une clé USB ou un disque externe, puis recommence." }
+        elseif (-not $d) { $msg = "Choisis où ranger les fichiers retrouvés." }
+        elseif ($d.Letter -eq $s.Letter) { $msg = "Les fichiers retrouvés doivent aller sur un autre disque que celui qu'on fouille." }
+        elseif ([double]$d.Free -lt 1GB) { $msg = "$($d.Letter): n'a presque plus de place : choisis un autre disque." }
+        else { $ok = $true; $msg = if ($script:RcRecent.IsChecked) { "Recherche rapide : quelques minutes." } else { "Recherche approfondie : de quelques minutes (clé USB) à plusieurs heures (gros disque). Tu peux arrêter à tout moment." } }
+        $script:RcMsg.Text = $msg; $script:RcMsg.Foreground = Brush $(if ($ok) { $Pal.Text2 } else { $Pal.Warn }); $script:RcBtn.IsEnabled = $ok
+    }
+    # Par défaut : le premier disque externe à fouiller, et pour ranger le disque (différent) qui a le plus de place
+    $si = -1; for ($i = 0; $i -lt $src.Count; $i++) { if ($src[$i].External) { $si = $i; break } }
+    $script:RcSrc.SelectedIndex = $si
+    $pick = { $s = if ($script:RcSrc.SelectedIndex -ge 0) { @($script:RcPlan.Sources)[$script:RcSrc.SelectedIndex] } else { $null }; $bi = -1; $bf = -1.0; $ts = @($script:RcPlan.Targets); for ($i = 0; $i -lt $ts.Count; $i++) { if ((-not $s -or $ts[$i].Letter -ne $s.Letter) -and [double]$ts[$i].Free -gt $bf) { $bf = [double]$ts[$i].Free; $bi = $i } }; $script:RcDst.SelectedIndex = $bi }
+    $script:RcPick = $pick; & $pick
+    $script:RcSrc.Add_SelectionChanged({ & $script:RcPick; & $script:RcCheck })
+    $script:RcDst.Add_SelectionChanged({ & $script:RcCheck })
+    $script:RcRecent.Add_Click({ & $script:RcCheck })
+    & $script:RcCheck
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $sp
+    $w.Content = $sv
+    [void]$w.ShowDialog()
+    if (-not $script:RcGo -or $script:RcSrc.SelectedIndex -lt 0 -or $script:RcDst.SelectedIndex -lt 0) { return }
+    $s = $src[$script:RcSrc.SelectedIndex]; $d = $dst[$script:RcDst.SelectedIndex]
+    $kind = @($script:RecoverKinds.Keys)[[math]::Max(0, $script:RcKind.SelectedIndex)]
+    $mode = Get-RecoveryMode "$($s.Fs)" ([bool]$script:RcRecent.IsChecked)
+    $sync.RecoverDone = $null
+    [void](Start-AeroxTask ("Start-FileRecovery {0} {1} {2} {3}" -f (ConvertTo-PsLiteral $s.Letter), (ConvertTo-PsLiteral $d.Letter), (ConvertTo-PsLiteral $kind), (ConvertTo-PsLiteral $mode)) 'Récupération de fichiers' 'recoverdone')
+}
+# ---------------------------------------------------------------- Tests du matériel : stabilité, mémoire
+function Start-StabilityUi {
+    if (-not (Confirm-Box "Test de stabilité : 10 minutes`n`nLe processeur et la mémoire vont travailler à 100 %. Le PC va chauffer et souffler fort : c'est le but. Chaque calcul est vérifié : une seule erreur, et tu sais que le PC est instable.`n`n• AEROX arrête tout seul si la température devient dangereuse.`n• « Annuler » arrête le test à tout moment.`n• Enregistre ton travail avant : si le PC est instable, il peut planter pendant le test (c'est justement ce qu'on cherche à savoir).`n`nLancer le test ?")) { return }
+    # Températures suivies pendant tout le test
+    $script:StressRun = $true
+    try { Start-Sensors } catch {}
+    if (-not (Start-AeroxTask 'Start-StabilityTest 10' 'Test de stabilité' 'stressdone')) { $script:StressRun = $false }
+}
+function Get-MemTestCardStatus {
+    try {
+        if (Test-Path -LiteralPath (Get-MemTestMarker)) { return @{ StatusText = 'Test programmé : il se lance au prochain redémarrage'; StatusKind = 'on'; B = 'Annuler le test'; A = 'Clear-MemoryTest'; P = $false; C = '' } }
+        $r = Get-MemoryTestResult (Get-Date).AddDays(-90)
+        if ($r.State -eq 'ok') { return @{ StatusText = ("Dernier test : aucune erreur (le {0:dd/MM/yyyy})" -f $r.Time); StatusKind = 'on' } }
+        if ($r.State -eq 'errors') { return @{ StatusText = ("Dernier test : des erreurs ont été trouvées (le {0:dd/MM/yyyy})" -f $r.Time); StatusKind = 'warn' } }
+    } catch {}
+    return $null
+}
+# Résultat d'un test qui s'est terminé pendant qu'AEROX était fermé (test de mémoire au redémarrage, plantage pendant le test de stabilité)
+function Show-TestResultDialog($R) {
+    $w = New-Dialog "$AppName : résultat du test" 600
+    $script:TestWin = $w
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    $title = ''; $color = $Pal.Ok; $lines = @()
+    if ($R.Kind -eq 'mem' -and $R.State -eq 'ok') {
+        $title = "Test de mémoire : aucune erreur"
+        $lines = @(("Le test de Windows du {0:dd/MM/yyyy à HH:mm} n'a trouvé aucun défaut dans la mémoire (RAM)." -f $R.Time), "Si le PC plante quand même, la mémoire n'est sans doute pas la cause : regarde les pilotes et les températures (diagnostic, carte « Écran bleu », test de stabilité).")
+    } elseif ($R.Kind -eq 'mem') {
+        $title = "Test de mémoire : des erreurs ont été trouvées"; $color = $Pal.Bad
+        $lines = @(("Le test de Windows du {0:dd/MM/yyyy à HH:mm} a trouvé des défauts dans la mémoire (RAM). C'est une cause directe d'écrans bleus et de plantages au hasard." -f $R.Time),
+                   "1. Dans le BIOS, désactive le profil XMP / EXPO et refais le test : si les erreurs disparaissent, la mémoire ne tient pas son profil.",
+                   "2. Si les erreurs restent : teste les barrettes une par une pour trouver la mauvaise.",
+                   "3. Remplace la barrette fautive (la RAM est souvent garantie à vie).")
+    } else {
+        $title = "Le PC a planté pendant le test de stabilité"; $color = $Pal.Bad
+        $lines = @(("Le test lancé le {0:dd/MM/yyyy à HH:mm} ne s'est pas terminé : Windows a noté un arrêt brutal juste après. Le PC ne tient pas la charge." -f $R.Time),
+                   "1. Remets le BIOS par défaut (pas d'overclocking, pas d'undervolting, sans XMP / EXPO) et refais le test.",
+                   "2. Dépoussière le PC et vérifie que tous les ventilateurs tournent.",
+                   "3. Si ça plante encore : l'alimentation (bloc d'alim) est le premier suspect, puis la mémoire (carte « Tester la mémoire »).")
+    }
+    Add-Child $sp (New-Text $title $Typo.H2 $color 'Bold')
+    foreach ($l in $lines) { $t = New-Text $l $Typo.Body $Pal.Text3; $t.Margin = Th 0 8 0 0; Add-Child $sp $t }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 16 0 0
+    $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'; $bClose.Add_Click({ $script:TestWin.Close() }); Add-Child $bar $bClose; Add-Child $sp $bar
+    $w.Content = $sp
+    Write-UiLog ("🧪 " + $title)
+    [void]$w.ShowDialog()
+}
+function Show-PendingTestResults { foreach ($r in @(Get-PendingTestResults)) { Show-TestResultDialog $r } }
+# ---------------------------------------------------------------- PC neuf / Windows réinstallé : la liste guidée
+function Start-NewPc { $sync.NewPc = $null; [void](Start-AeroxTask 'Get-NewPcPlan' 'Préparation du PC' 'newpcdialog') }
+# Une étape de la liste, puis la liste est relue et rouverte (ce qui est fait passe au vert)
+function Start-NewPcStep([string]$Action, [string]$Label) { $sync.NewPc = $null; [void](Start-AeroxTask ("$Action; if (-not `$sync.Cancel) { Get-NewPcPlan }") $Label 'newpcdialog') }
+# Bandeau de l'accueil : Windows installé depuis 30 jours au plus (une grosse mise à jour de Windows ne compte pas)
+function Test-NewPcBanner {
+    if ($script:Settings.NewPcHide) { return $false }
+    if ($null -eq $script:WinAge) { $script:WinAge = -1; try { $script:WinAge = [int](Get-WindowsInstallAge) } catch {} }
+    return ($script:WinAge -ge 0 -and $script:WinAge -le 30)
+}
+function Show-NewPcAppsDialog($Apps) {
+    $w = New-Dialog "$AppName : logiciels utiles" 560
+    $script:AppsWin = $w; $script:AppsPick = $null; $script:AppsRows = New-Object System.Collections.ArrayList
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 20
+    Add-Child $sp (New-Text "Quels logiciels installer ?" $Typo.H2 $Pal.White 'Bold')
+    $p = New-Text "Coche ceux que tu veux. AEROX les installe l'un après l'autre depuis la source officielle (winget, le gestionnaire de Microsoft), sans barre d'outils ni logiciel en plus. Rien n'est coché d'avance : c'est toi qui choisis." $Typo.Body $Pal.Text3
+    $p.Margin = Th 0 6 0 12; Add-Child $sp $p
+    foreach ($a in @($Apps)) {
+        $c = New-Object System.Windows.Controls.StackPanel
+        Add-Child $c (New-Text $a.Name $Typo.Strong $(if ($a.Installed) { $Pal.Text2 } else { $Pal.White }) 'SemiBold')
+        Add-Child $c (New-Text $(if ($a.Installed) { "$($a.Cat) · déjà installé" } else { $a.Cat }) $Typo.Small $Pal.Muted)
+        $r = New-CheckRow $false $c $null
+        if ($a.Installed) { $r.Check.IsEnabled = $false } else { [void]$script:AppsRows.Add(@{ Check = $r.Check; Id = $a.Id }) }
+        Add-Child $sp $r.Row
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 0 10 0 0
+    $bNo = New-DlgButton 'Annuler' 'TextBtn'; $bNo.Margin = Th 0 0 8 0; $bNo.Add_Click({ $script:AppsWin.Close() })
+    $bGo = New-DlgButton 'Installer ce qui est coché' 'PrimaryBtn'
+    $bGo.Add_Click({ $script:AppsPick = @($script:AppsRows | Where-Object { $_.Check.IsChecked } | ForEach-Object { $_.Id }); $script:AppsWin.Close() })
+    Add-Child $bar $bNo; Add-Child $bar $bGo; Add-Child $sp $bar
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $sp
+    $w.Content = $sv
+    [void]$w.ShowDialog()
+    return @($script:AppsPick | Where-Object { $_ })
+}
+function Show-NewPcDialog {
+    $r = $sync.NewPc
+    if (-not $r) { return }
+    $w = New-Dialog "$AppName : préparer ce PC" 800
+    $script:NewPcWin = $w; $script:NewPcNext = ''; $script:NewPcArg = $null
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = Th 24 22 24 8
+    Add-Child $sp (New-Text "Préparer ce PC" $Typo.H2 $Pal.White 'Bold')
+    $todo = [int]$r.Todo
+    $hd = New-Text $(if ($todo) { "$todo chose(s) à faire" } else { "Tout est prêt" }) $Typo.Strong $(if ($todo) { $Pal.Warn } else { $Pal.Ok }) 'SemiBold'
+    $hd.Margin = Th 0 6 0 0; Add-Child $sp $hd
+    $intro = "La liste de ce qu'on règle après une installation de Windows, dans l'ordre. Chaque bouton fait une étape, puis la liste se met à jour. Rien n'est changé sans que tu cliques."
+    if ([int]$r.Age -ge 0 -and [int]$r.Age -le 30) { $intro = ("Windows est installé depuis {0} jour(s). " -f [int]$r.Age) + $intro }
+    $p = New-Text $intro $Typo.Body $Pal.Text3; $p.Margin = Th 0 4 0 10; Add-Child $sp $p
+    $list = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $list; $sv.Margin = Th 24 0 24 0
+    $n = 0
+    foreach ($it in @($r.Items)) {
+        $n++
+        $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 10; $row.Padding = Th 14 10 14 10; $row.Margin = Th 0 0 6 6
+        $row.BorderThickness = Th 1 1 1 1; $row.BorderBrush = Brush $(if ($it.State -eq 'todo') { $Pal.Warn } else { $Pal.Line })
+        $dp = New-Object System.Windows.Controls.DockPanel
+        if ($it.Btn) {
+            $b = New-DlgButton $it.Btn $(if ($it.State -eq 'todo') { 'PrimaryBtn' } else { 'ActionBtn' }); $b.Tag = @($it.Id, $it.Arg); $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0
+            $b.Add_Click({ $script:NewPcNext = [string]$this.Tag[0]; $script:NewPcArg = $this.Tag[1]; $script:NewPcWin.Close() })
+            [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+        }
+        $mark = New-Text $(switch ($it.State) { 'ok' { '✔' } 'todo' { "$n" } default { 'i' } }) $Typo.Strong $(switch ($it.State) { 'ok' { $Pal.Ok } 'todo' { $Pal.Warn } default { $Pal.Muted } }) 'Bold'
+        $mark.Width = 26; $mark.VerticalAlignment = 'Center'; [System.Windows.Controls.DockPanel]::SetDock($mark, 'Left'); Add-Child $dp $mark
+        $c = New-Object System.Windows.Controls.StackPanel; $c.VerticalAlignment = 'Center'
+        Add-Child $c (New-Text $it.Title $Typo.Strong $(if ($it.State -eq 'ok') { $Pal.Text2 } else { $Pal.White }) 'SemiBold')
+        if ($it.Detail) { Add-Child $c (New-Text $it.Detail $Typo.Small $Pal.Muted) }
+        Add-Child $dp $c
+        $row.Child = $dp; Add-Child $list $row
+    }
+    $bar = New-Object System.Windows.Controls.StackPanel; $bar.Orientation = 'Horizontal'; $bar.HorizontalAlignment = 'Right'; $bar.Margin = Th 24 10 24 18
+    $bAgain = New-DlgButton 'Revérifier' 'ActionBtn'; $bAgain.Margin = Th 0 0 8 0; $bAgain.Add_Click({ $script:NewPcNext = 'again'; $script:NewPcWin.Close() })
+    $bClose = New-DlgButton 'Fermer' 'PrimaryBtn'; $bClose.Add_Click({ $script:NewPcWin.Close() })
+    Add-Child $bar $bAgain; Add-Child $bar $bClose
+    $g2 = New-Object System.Windows.Controls.Grid
+    foreach ($hh in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($hh); $g2.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($sp, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($bar, 2)
+    Add-Child $g2 $sp; Add-Child $g2 $sv; Add-Child $g2 $bar
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight
+    $w.Content = $g2
+    [void]$w.ShowDialog()
+    $arg = $script:NewPcArg
+    switch ($script:NewPcNext) {
+        'again'      { Start-NewPc }
+        'activation' { try { Open-WinUri 'ms-settings:activation' } catch {} }
+        'wupdate'    { Start-NewPcStep 'Update-Windows' 'Mises à jour Windows' }
+        'drivers'    { Start-DriverCheck $null }
+        'disk'       {
+            if ($arg -and (Confirm-Box ("Préparer ce disque vide ?`n`n{0}`nTaille : {1}`n`nAEROX crée une partition et lui donne une lettre (D: si elle est libre) pour que Windows puisse s'en servir. Le disque est revérifié juste avant : s'il n'est pas complètement vide, rien n'est touché.`n`nCette étape ne s'annule pas (mais il n'y a rien à perdre sur un disque vide)." -f $(if ($arg.Name) { $arg.Name } else { "Disque $($arg.Number)" }), (Format-Size ([double]$arg.Size))))) {
+                Start-NewPcStep ("Initialize-EmptyDisk {0} {1}" -f [int]$arg.Number, (ConvertTo-PsLiteral "$($arg.Id)")) 'Préparation du disque'
+            } else { Show-NewPcDialog }
+        }
+        'display'    { $d = @(Get-Displays | Where-Object { Test-DisplayHzLow $_ }) | Select-Object -First 1; if ($d) { Set-DisplayWithConfirm $d $null } }
+        'startup'    { Show-StartupDialog $null }
+        'apps'       {
+            $ids = @(Show-NewPcAppsDialog $arg)
+            if ($ids.Count) { Start-NewPcStep ("Install-PickedApps " + (ConvertTo-PsList $ids)) 'Installation des logiciels' } else { Show-NewPcDialog }
+        }
+        'defender'   { try { Open-WinUri 'windowsdefender:' } catch {} }
+        'restore'    { Start-NewPcStep 'New-RestorePoint' 'Point de restauration' }
+        'games'      { [void](Start-AeroxTask 'Get-GameSettingsReport' 'Réglages de Windows pour les jeux') }
+        'bios'       { [void](Start-AeroxTask 'Find-BiosPage' 'Page du BIOS' 'biospage') }
+    }
+}
 function Show-SoundDialog($Outputs) {
     $w = New-Dialog "$AppName : où le son doit-il sortir ?" 620
     $script:SndWin = $w
@@ -5228,7 +5583,7 @@ function Start-FpsCounter {
 function Stop-FpsCounter { if ($script:Fps) { try { $script:Fps.Stop() } catch {} } }
 function Stop-Monitoring { Stop-FpsCounter; Stop-Sensors }
 
-function Test-MonitorNeeded { return (($script:Cur -eq 'monitor' -and -not $script:InTray) -or ($script:Cur -eq 'system' -and -not $script:InTray -and $script:FanUi -and $script:FanUi.Lhm) -or ($script:Ov -and $script:Ov.IsVisible) -or $script:GameSess -or $script:GameProbe) }
+function Test-MonitorNeeded { return (($script:Cur -eq 'monitor' -and -not $script:InTray) -or ($script:Cur -eq 'system' -and -not $script:InTray -and $script:FanUi -and $script:FanUi.Lhm) -or ($script:Ov -and $script:Ov.IsVisible) -or $script:GameSess -or $script:GameProbe -or $script:StressRun) }
 
 # Collecte : capteurs + FPS du jeu au premier plan
 function Update-LiveData {
@@ -5590,6 +5945,7 @@ function Invoke-MonitorTick {
     $script:TickN++
     if ($script:TickN % 20 -eq 0) {
         try { Invoke-GameWatch } catch { Write-Bug -Context 'Gaming : détection du jeu' -ErrorRecord $_ }
+        Add-BlackBoxSample
         # Mode discret sans partie en cours : mémoire rendue à Windows à la mise en veille, après une partie, puis toutes les 15 minutes
         if ($script:InTray -and -not $script:GameSess -and -not $script:GameProbe -and -not $script:Job -and (($script:TrimDue -and (Get-Date) -ge $script:TrimDue) -or ($script:LastTrim -and ((Get-Date) - $script:LastTrim).TotalMinutes -ge 15))) {
             try { Optimize-TrayMemory } catch { Write-Bug -Context 'Mode discret : mémoire' -ErrorRecord $_ }
@@ -6352,6 +6708,7 @@ $window.Add_Closing({
         $r = [System.Windows.MessageBox]::Show("Une opération est en cours. Quitter quand même ?`n(Mieux vaut attendre la fin, surtout pendant une réparation ou des mises à jour.)", $AppName, 'YesNo', 'Warning')
         if ($r -ne 'Yes') { $e.Cancel = $true; return } else { try { $script:Job.PS.Stop() } catch {} }
     }
+    Stop-BlackBox
     try { Stop-GameSession } catch { Write-Bug -Context 'Gaming : fin de partie' -ErrorRecord $_ }
     try { if ($script:SaveSoon -and $script:SaveSoon.IsEnabled) { $script:SaveSoon.Stop(); Save-Settings } } catch {}
     try { Stop-Monitoring } catch {}
@@ -6439,6 +6796,7 @@ $window.Add_ContentRendered({
 })
 function Invoke-StartupExtras {
     try { Show-WhatsNewIfUpdated } catch { Write-Bug -Context 'Quoi de neuf' -ErrorRecord $_ }
+    try { Show-PendingTestResults } catch { Write-Bug -Context 'Résultat des tests' -ErrorRecord $_ }
     if ($script:Settings.PostOptimize) {
         $script:Settings.PostOptimize = $false; Save-Settings
         Write-UiLog "Bilan après l'optimisation complète : diagnostic en cours…"

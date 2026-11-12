@@ -993,6 +993,15 @@ public static class AeroxDump {
         foreach (Drv d in l) if (v >= d.Base && v < d.Base + d.Size) return d.Name;
         return null;
     }
+    // En-tête d'un vidage (minidump ou MEMORY.DMP, sans lire tout le fichier) : code|p1..p4|heure du plantage (FILETIME)|durée depuis le démarrage (100 ns)
+    public static string Head(string path) {
+        try {
+            byte[] b = new byte[0x1040];
+            using (FileStream f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { if (f.Read(b, 0, b.Length) < b.Length) return ""; }
+            if (Encoding.ASCII.GetString(b, 0, 8) != "PAGEDU64") return "";
+            return string.Format("0x{0:X8}|0x{1:X}|0x{2:X}|0x{3:X}|0x{4:X}|{5}|{6}", U32(b, 0x38), U64(b, 0x40), U64(b, 0x48), U64(b, 0x50), U64(b, 0x58), U64(b, 0xFA8), U64(b, 0x1030));
+        } catch { return ""; }
+    }
     public static string Analyze(string path) {
         try {
             byte[] b = File.ReadAllBytes(path);
@@ -1033,6 +1042,145 @@ public static class AeroxDump {
 
 // Barre de titre des fenêtres aux couleurs d'AEROX (sombre) : Windows 10 20H1 et plus, couleur exacte sur Windows 11.
 // Sans effet (et sans erreur) sur les versions plus anciennes.
+// Test de stabilité : des calculs dont le résultat est connu d'avance tournent sur tous les cœurs, et de la mémoire est
+// écrite puis relue. Un résultat différent = le processeur ou la mémoire s'est trompé (overclocking, XMP, composant fatigué).
+public static class AeroxStress {
+    static volatile bool stop = true;
+    static List<Thread> ts = new List<Thread>();
+    static long iters, errors, memPasses, memErrors, memMb, lastAlive;
+    static ulong[] refs = new ulong[4];
+    public static bool Running { get { return !stop; } }
+    static ulong Work(int seed) {
+        double x = 1.0 + seed * 0.001, acc = 0;
+        for (int i = 1; i <= 300000; i++) { x = Math.Sqrt(x * 1.000001 + i); acc += Math.Sin(x) * Math.Cos(i * 0.001) + x / i; }
+        ulong h = 1469598103934665603UL; uint s = unchecked((uint)(seed + 1) * 2654435761u);
+        for (int i = 0; i < 3000000; i++) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; h = unchecked((h ^ s) * 1099511628211UL); }
+        return h ^ (ulong)BitConverter.DoubleToInt64Bits(acc);
+    }
+    static bool Expired() { return (Stopwatch.GetTimestamp() - Interlocked.Read(ref lastAlive)) > 20L * Stopwatch.Frequency; }
+    public static void Start(int threads, int memoryMb) {
+        Stop();
+        iters = 0; errors = 0; memPasses = 0; memErrors = 0; memMb = 0;
+        for (int i = 0; i < 4; i++) refs[i] = Work(i);
+        Interlocked.Exchange(ref lastAlive, Stopwatch.GetTimestamp());
+        stop = false;
+        for (int n = 0; n < threads; n++) {
+            int seed = n % 4;
+            Thread t = new Thread(delegate() {
+                while (!stop) {
+                    if (Work(seed) != refs[seed]) Interlocked.Increment(ref errors);
+                    Interlocked.Increment(ref iters);
+                    if (Expired()) stop = true;
+                }
+            });
+            t.IsBackground = true; t.Priority = ThreadPriority.BelowNormal; t.Start(); ts.Add(t);
+        }
+        if (memoryMb >= 64) {
+            int mb = memoryMb;
+            Thread m = new Thread(delegate() { MemLoop(mb); });
+            m.IsBackground = true; m.Priority = ThreadPriority.BelowNormal; m.Start(); ts.Add(m);
+        }
+    }
+    static void MemLoop(int memoryMb) {
+        List<ulong[]> blocks = new List<ulong[]>();
+        try { for (int i = 0; i < memoryMb / 64 && !stop; i++) { blocks.Add(new ulong[8 * 1024 * 1024]); Interlocked.Add(ref memMb, 64); } } catch (OutOfMemoryException) { }
+        ulong pass = 1;
+        while (!stop && blocks.Count > 0) {
+            for (int b = 0; b < blocks.Count && !stop; b++) {
+                ulong[] a = blocks[b]; ulong k = unchecked(pass * 0x9E3779B97F4A7C15UL + (ulong)b);
+                for (int i = 0; i < a.Length; i++) a[i] = unchecked(k ^ ((ulong)i * 0xD6E8FEB86659FD93UL));
+            }
+            for (int b = 0; b < blocks.Count && !stop; b++) {
+                ulong[] a = blocks[b]; ulong k = unchecked(pass * 0x9E3779B97F4A7C15UL + (ulong)b);
+                long bad = 0;
+                for (int i = 0; i < a.Length; i++) { if (a[i] != unchecked(k ^ ((ulong)i * 0xD6E8FEB86659FD93UL))) bad++; }
+                if (bad > 0) Interlocked.Add(ref memErrors, bad);
+            }
+            if (!stop) Interlocked.Increment(ref memPasses);
+            pass++;
+        }
+        blocks.Clear();
+    }
+    // À appeler toutes les quelques secondes : sans appel pendant 20 s (tâche arrêtée, fenêtre fermée), tout s'arrête seul
+    public static string Status() {
+        Interlocked.Exchange(ref lastAlive, Stopwatch.GetTimestamp());
+        return Interlocked.Read(ref iters) + "|" + Interlocked.Read(ref errors) + "|" + Interlocked.Read(ref memPasses) + "|" + Interlocked.Read(ref memErrors) + "|" + Interlocked.Read(ref memMb);
+    }
+    public static void Stop() {
+        stop = true;
+        foreach (Thread t in ts) { try { t.Join(8000); } catch { } }
+        ts.Clear(); GC.Collect();
+    }
+}
+// Test de vitesse d'un disque : un fichier temporaire écrit puis relu sans passer par le cache de Windows (comme les
+// outils de mesure habituels), puis des lectures de 4 Ko au hasard. Le fichier se supprime tout seul à la fermeture,
+// même si le logiciel est arrêté en plein test.
+public static class AeroxDiskBench {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteFile(IntPtr h, IntPtr buf, uint n, out uint done, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool ReadFile(IntPtr h, IntPtr buf, uint n, out uint done, IntPtr ov);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetFilePointerEx(IntPtr h, long dist, out long pos, uint method);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr VirtualAlloc(IntPtr addr, UIntPtr size, uint type, uint protect);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool VirtualFree(IntPtr addr, UIntPtr size, uint type);
+    public static volatile bool Cancel;
+    // Renvoie « écriture Mo/s|lecture Mo/s|4 Ko au hasard Mo/s » (nombres en notation invariante), ou « ERR:code »
+    public static string Run(string path, int sizeMb, int randSeconds) {
+        const int Block = 1024 * 1024;
+        IntPtr buf = VirtualAlloc(IntPtr.Zero, (UIntPtr)Block, 0x3000, 0x04);
+        if (buf == IntPtr.Zero) return "ERR:mem";
+        IntPtr h = new IntPtr(-1);
+        try {
+            // Données impossibles à compresser (sinon certains SSD et NTFS trichent sur la vitesse)
+            byte[] rnd = new byte[Block]; new Random(12345).NextBytes(rnd); Marshal.Copy(rnd, 0, buf, Block);
+            // GENERIC_READ|WRITE, pas de partage, CREATE_ALWAYS, NO_BUFFERING | WRITE_THROUGH | DELETE_ON_CLOSE | TEMPORARY
+            h = CreateFileW(path, 0xC0000000, 0, IntPtr.Zero, 2, 0x20000000u | 0x80000000u | 0x04000000u | 0x100u, IntPtr.Zero);
+            if (h == new IntPtr(-1)) return "ERR:" + Marshal.GetLastWin32Error();
+            uint done; long pos;
+            Stopwatch sw = Stopwatch.StartNew();
+            for (int i = 0; i < sizeMb; i++) { if (Cancel) return "ERR:cancel"; if (!WriteFile(h, buf, (uint)Block, out done, IntPtr.Zero) || done != Block) return "ERR:" + Marshal.GetLastWin32Error(); }
+            double w = sizeMb / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            if (!SetFilePointerEx(h, 0, out pos, 0)) return "ERR:" + Marshal.GetLastWin32Error();
+            sw = Stopwatch.StartNew();
+            for (int i = 0; i < sizeMb; i++) { if (Cancel) return "ERR:cancel"; if (!ReadFile(h, buf, (uint)Block, out done, IntPtr.Zero) || done != Block) return "ERR:" + Marshal.GetLastWin32Error(); }
+            double r = sizeMb / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            Random pick = new Random(777); long blocks4k = (long)sizeMb * 256; long n = 0;
+            sw = Stopwatch.StartNew();
+            while (sw.Elapsed.TotalSeconds < randSeconds && !Cancel) {
+                long off = (long)(pick.NextDouble() * blocks4k) * 4096;
+                if (!SetFilePointerEx(h, off, out pos, 0) || !ReadFile(h, buf, 4096, out done, IntPtr.Zero) || done != 4096) return "ERR:" + Marshal.GetLastWin32Error();
+                n++;
+            }
+            double q = (n * 4096.0 / Block) / Math.Max(0.001, sw.Elapsed.TotalSeconds);
+            return w.ToString("0.0", CultureInfo.InvariantCulture) + "|" + r.ToString("0.0", CultureInfo.InvariantCulture) + "|" + q.ToString("0.00", CultureInfo.InvariantCulture);
+        } catch (Exception e) { return "ERR:" + e.GetType().Name; }
+        finally { if (h != new IntPtr(-1)) CloseHandle(h); VirtualFree(buf, UIntPtr.Zero, 0x8000); }
+    }
+}
+// Charge du processeur et mémoire utilisée, lues directement auprès de Windows (presque gratuit : sert à la boîte noire)
+public static class AeroxLoad {
+    [StructLayout(LayoutKind.Sequential)] struct FT { public uint lo, hi; }
+    [StructLayout(LayoutKind.Sequential)] struct MEMSTAT { public uint len, load; public ulong totalPhys, availPhys, totalPage, availPage, totalVirt, availVirt, availExt; }
+    [DllImport("kernel32.dll")] static extern bool GetSystemTimes(out FT idle, out FT kernel, out FT user);
+    [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMSTAT m);
+    static ulong pIdle, pTotal; static bool has;
+    static ulong U(FT f) { return ((ulong)f.hi << 32) | f.lo; }
+    // « charge processeur % depuis l'appel précédent|mémoire utilisée % » ; charge = -1 au premier appel
+    public static string Sample() {
+        int cpu = -1, mem = -1;
+        try {
+            FT i, k, u;
+            if (GetSystemTimes(out i, out k, out u)) {
+                ulong idle = U(i), total = U(k) + U(u);
+                if (has && total > pTotal) { cpu = (int)Math.Round(100.0 * (1.0 - (double)(idle - pIdle) / (double)(total - pTotal))); if (cpu < 0) cpu = 0; if (cpu > 100) cpu = 100; }
+                pIdle = idle; pTotal = total; has = true;
+            }
+            MEMSTAT m = new MEMSTAT(); m.len = (uint)Marshal.SizeOf(typeof(MEMSTAT));
+            if (GlobalMemoryStatusEx(ref m)) mem = (int)m.load;
+        } catch { }
+        return cpu + "|" + mem;
+    }
+}
 public static class AeroxWin {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     public static void DarkTitle(IntPtr hwnd, string hex) {

@@ -2,6 +2,46 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.4.0 : écrans bleus expliqués, pile de la carte mère (validé par Sam le 10/11)
+
+### Écrans bleus (« principale chose des testeurs, aucune idée de pourquoi »)
+
+- Cause trouvée : le nettoyage (case « Rapports d'erreurs et de plantages », cochée par défaut, et le Nettoyage de disque de Windows) effaçait `C:\Windows\Minidump`, donc le diagnostic lancé après n'avait plus que le code.
+- Le nettoyage garde les rapports d'écrans bleus de moins de 30 jours ; ce qu'AEROX y lit est noté dans `ecrans-bleus.txt` (dossier des journaux, 180 jours) et relu si un autre nettoyeur efface les fichiers.
+- Écran bleu sans rapport : code lu dans l'événement 41 du redémarrage (`BugcheckCode`), compté une seule fois avec le rapport de Windows du même redémarrage.
+- 60 codes expliqués (14 avant), rangés par famille (pilote, RAM, disque, processeur, carte graphique, USB, Windows), variantes `0x1000007E` reconnues, détail du premier paramètre pour 0x124 et 0x9F. Arrêts forcés à la main (0xE2, 0x1C8) non comptés comme des pannes.
+- Contexte de chaque écran bleu lu dans l'en-tête du rapport (`[AeroxDump]::Head` : heure du plantage, durée depuis le démarrage) : juste après le démarrage, à la sortie de veille, pendant la mise en veille, en pleine utilisation. Dit dans la cause seulement si au moins 2 rapports concordent.
+- Début de la série (premier écran bleu après 14 jours sans, sur 90 jours d'historique) et ce qui a été installé dans les 3 jours d'avant : mises à jour Windows (événement 19), pilotes (`oem*.inf`), logiciels. Pilote graphique changé juste avant + code ou coupable graphique : étape « Restaurer le pilote » en premier.
+- Rapports désactivés dans Windows (`CrashDumpEnabled = 0`) : alerte « Windows ne garde aucun rapport d'écran bleu » avec réactivation annulable (`Set-CrashDumpMode 7`) ; fichier d'échange désactivé : expliqué.
+- Nouvelle carte « Écran bleu » (Réparation > Dépannage rapide) : rapport complet sur 90 jours (`Get-BsodReport`).
+
+### Mode « PC neuf / Windows réinstallé » (proposé le 04/11 pour le frère de Sam, validé le 10/11)
+
+- Accueil : tuile « PC neuf ou Windows réinstallé » ; bandeau quand Windows est installé depuis 30 jours au plus (la date la plus ancienne entre `InstallDate` et les clés `Source OS` : une grosse mise à jour ne compte pas), masquable.
+- Liste guidée (`Get-NewPcPlan`, fenêtre `Show-NewPcDialog`) : activation, mises à jour Windows en attente, appareils sans pilote / carte graphique sur le pilote de secours, disque vide, écran sous sa fréquence, mémoire à sa vitesse de base (PC fixe, information), programmes au démarrage, logiciels utiles, antivirus actif, point de restauration, réglages pour les jeux, BIOS (lien, jamais flashé). Après chaque étape la liste est relue et rouverte.
+- Disque vide préparé en D: (`Initialize-EmptyDisk`) seulement si : interne, en ligne, pas le disque de Windows, 8 Go ou plus, aucune partition, et pour un disque jamais initialisé, premier Mo entièrement à zéro (un disque chiffré en entier a aussi l'air non initialisé : jamais proposé). Identifiant du disque revérifié juste avant d'écrire. Confirmation avec le nom et la taille.
+- Logiciels utiles : liste fixe de 11 (navigateurs, Discord, Steam, Epic, 7-Zip, VLC, Spotify, OBS, Notepad++), rien de coché d'avance, installés par winget ; un identifiant hors liste est ignoré.
+
+### Tester le matériel et disques externes (choisis par Sam le 12/11)
+
+- **Test de stabilité (10 min)** (`Start-StabilityTest`, natif `AeroxStress`) : des calculs au résultat connu d'avance sur tous les cœurs, de la mémoire (la moitié de la mémoire libre, 8 Go au plus) écrite puis relue en boucle. Une erreur arrête le test : PC instable. Température suivie (arrêt à 100 °C deux relevés de suite), processeur qui se bride noté, erreurs matérielles de Windows (WHEA) pendant le test comptées. Sans nouvelles de la tâche pendant 20 s, la charge s'arrête seule. Si le PC plante pendant le test, c'est dit à la réouverture (marqueur + arrêt brutal noté par Windows après).
+- **Tester la mémoire (RAM)** (`Start-MemoryTest`) : programme le Diagnostic de mémoire Windows au prochain démarrage (comme `mdsched`), annulable ; résultat (événements 1201 / 1202) affiché à la réouverture.
+- **Clé USB ou disque externe illisible** (`Get-ExternalDiskReport`) : uniquement les disques USB / SD / MMC, jamais le disque de Windows, identifiant revérifié avant chaque action. Hors ligne, protégé en écriture, sans lettre, fichiers abîmés (`Repair-Volume`, rien d'effacé), BitLocker et Mac / Linux reconnus par leur signature (pas des pannes). Remise à neuf (`Format-ExternalDisk`, FAT32 jusqu'à 32 Go, exFAT au-delà) proposée seulement si aucune partition n'est lisible et rien n'est en BitLocker, avec confirmation.
+- Les « fichiers en double » demandés existent déjà (onglet Nettoyage > Libérer de la place).
+
+### Sauver ses fichiers, vitesse des disques, boîte noire (« 1 2 3 4 en priorité », Sam le 12/11)
+
+- **Récupérer des fichiers effacés** (`Start-FileRecovery`) : AEROX pilote Windows File Recovery (`winfr`, Microsoft, installé depuis le Microsoft Store par winget, 5 minutes au plus). Disque fouillé jamais écrit ; ce qui est retrouvé va sur un autre lecteur (refusé sinon). Recherche rapide (`/regular`) seulement sur NTFS lisible et effacement récent, approfondie (`/extensive`) sinon. Arrêt si le disque d'arrivée se remplit. Types et lecteurs passés à l'outil viennent d'une liste fixe. Les messages de la carte « Clé USB ou disque externe illisible » renvoient vers cette carte avant de proposer d'effacer.
+- **Sauvegarder mes fichiers** (`Get-BackupPlan`, `Start-UserBackup`) : Bureau, Documents, Images, Vidéos, Musique, Téléchargements (dossiers du compte de la session, redirection OneDrive suivie) copiés par `robocopy` (jamais `/MIR` ni `/PURGE`) vers un disque qui n'est pas celui de Windows. Fichiers « en ligne seulement » non copiés et comptés à part. Place et limite de 4 Go du FAT32 vérifiées avant. Vérification à la fin : même nombre de fichiers et même taille.
+- **Vitesse des disques** (`Test-DiskSpeed`, natif `AeroxDiskBench`) : fichier temporaire de 1 Go (256 Mo si peu de place) écrit et relu sans le cache de Windows, puis lectures de 4 Ko au hasard pendant 5 s ; fichier supprimé à la fermeture même en cas d'arrêt. Seuils bas par type (NVMe, SSD SATA, disque dur), aucune conclusion pour USB / virtuel / RAID. Un résultat bas est mesuré une deuxième fois avant d'être annoncé.
+- **Boîte noire** (réglage `BlackBox`, activé par défaut, carte dans Aide) : un relevé toutes les 10 s dans `boite-noire.txt` (charge, mémoire, températures quand les capteurs tournent, jeu en cours), une heure au plus, local. Après un écran bleu ou une coupure brutale, le diagnostic ajoute la dernière minute à la cause, seulement si AEROX tournait encore au moment de l'arrêt (dernier relevé postérieur à la dernière chose notée par Windows avant le redémarrage, et pas de fermeture normale d'AEROX entre les deux). Sans température lue, aucune conclusion sur la chaleur.
+
+### Pile de la carte mère
+
+- Idée née du pote de Jazon : LDLC a annoncé « Windows corrompu + BIOS pas à jour + pile CM HS » pour 500 €.
+- `Test-RtcBattery` : au démarrage (Kernel-General 12), l'horloge indique une date plus ancienne d'au moins un jour que le dernier événement noté avant (lu dans l'ordre d'écriture, pas par date). Remise à l'heure par Windows lue pour le détail (Kernel-General 1). Alerte à partir de 2 fois en 180 jours, une seule fois seulement notée dans le journal. « C'est fait » après le changement de pile : seuls les nouveaux cas comptent.
+- Pas de fausse alerte : heure d'été, double démarrage Linux (quelques heures), remise à l'heure manuelle.
+
 ## Publié en 3.3.0 : dépannages élargis (plan validé par Sam le 09/11 après relecture complète du code)
 
 - Priorité 1 :

@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v3.3.0
+﻿AEROX PC Care - v3.4.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -148,6 +148,59 @@ HISTORIQUE ET ANNULATION
 Accueil ou onglet Aide > « Historique des changements » : tout ce qu'AEROX PC Care a
 modifié sur le PC. Chaque réglage (programmes au démarrage, mode d'alimentation,
 nettoyage automatique, veille prolongée) se remet comme avant avec « Annuler ».
+
+ÉCRANS BLEUS
+------------
+Onglet Réparation > « Écran bleu » : tout ce que Windows a noté sur les écrans bleus des
+90 derniers jours. Le code expliqué en clair, le pilote en cause, la situation (juste
+après le démarrage, à la sortie de veille, en pleine utilisation) et ce qui a été
+installé juste avant le premier. Le nettoyage garde les rapports d'écrans bleus de
+moins de 30 jours : ce sont eux qui nomment le pilote fautif.
+
+PC NEUF OU WINDOWS RÉINSTALLÉ
+-----------------------------
+Accueil > « PC neuf ou Windows réinstallé » : la liste de ce qu'on règle après une
+installation de Windows (activation, mises à jour, pilotes, fréquence de l'écran,
+logiciels utiles, protection). Un disque vide peut être préparé en D: : seulement s'il
+est complètement vide, jamais le disque de Windows, jamais un disque qui a une partition.
+
+TESTER LE MATÉRIEL
+------------------
+Onglet Réparation > « Tester le matériel ».
+- Test de stabilité (10 min) : processeur et mémoire à 100 %, chaque calcul vérifié.
+  Une seule erreur = PC instable (overclocking, XMP / EXPO, barrette défectueuse).
+  Arrêt automatique si la température devient dangereuse, « Annuler » à tout moment.
+- Tester la mémoire (RAM) : le test de Windows, lancé au prochain redémarrage. Le
+  résultat s'affiche à la réouverture d'AEROX PC Care.
+
+SAUVER SES FICHIERS
+-------------------
+Onglet Réparation > « Sauver ses fichiers ».
+- Sauvegarder mes fichiers : Bureau, Documents, Images, Vidéos, Musique et
+  Téléchargements copiés sur un autre disque (disque externe, clé USB), puis vérifiés.
+  Rien n'est supprimé ni déplacé. Les logiciels, les jeux et les mots de passe du
+  navigateur ne sont pas dans la sauvegarde.
+- Récupérer des fichiers effacés : AEROX PC Care lance « Windows File Recovery »,
+  l'outil officiel de Microsoft, qui fouille le disque sans rien écrire dessus et range
+  ce qu'il retrouve sur un autre disque. Le résultat n'est jamais garanti, surtout sur
+  un SSD. En attendant, n'écris plus rien sur le disque à fouiller.
+
+VITESSE DES DISQUES ET BOÎTE NOIRE
+----------------------------------
+- Onglet Réparation > « Vitesse des disques » : écriture, lecture et petits fichiers
+  mesurés avec un fichier temporaire (supprimé à la fin) et comparés à ce qu'un disque
+  de ce type doit donner.
+- Boîte noire (onglet Aide) : tant qu'AEROX PC Care est ouvert ou près de l'horloge, il
+  note toutes les 10 secondes la charge, la mémoire et les températures (quand les
+  capteurs tournent). Après un écran bleu ou une coupure, le diagnostic montre la
+  dernière minute avant. Les relevés restent sur le PC, une heure au plus.
+
+CLÉ USB OU DISQUE EXTERNE ILLISIBLE
+-----------------------------------
+Onglet Réparation > « Clé USB ou disque externe illisible » : hors ligne, sans lettre,
+protégé en écriture, fichiers abîmés (réparés sans rien effacer), formaté pour Mac ou
+Linux, protégé par BitLocker. La remise à neuf, qui efface tout, n'est proposée que si
+Windows ne peut plus rien lire dessus, et jamais sur un disque interne.
 
 ÉCRAN ET CONNEXION
 ------------------

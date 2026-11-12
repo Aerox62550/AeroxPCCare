@@ -19,6 +19,14 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
   conséquence et la réparation (automatique quand c'est possible).
 - **Libérer de la place** : une seule liste de tout ce qui peut partir (fichiers inutiles, place gardée par Windows,
   vieux installateurs, jeux et logiciels pas utilisés depuis 3 mois), ce qui est sans risque déjà coché, un seul bouton.
+- **Écrans bleus expliqués** : le code en clair, le pilote en cause, la situation, ce qui a été installé juste avant.
+- **PC neuf ou Windows réinstallé** : la liste guidée (mises à jour, pilotes, disque vide préparé en D:, logiciels utiles).
+- **Tester le matériel** : test de stabilité de 10 minutes (processeur et mémoire, chaque calcul vérifié) et test de
+  mémoire de Windows au redémarrage, sans installer de benchmark.
+- **Sauver ses fichiers** : sauvegarde vérifiée de tes dossiers sur un autre disque, et récupération de fichiers effacés
+  avec l'outil officiel de Microsoft (Windows File Recovery).
+- **Vitesse des disques** et **boîte noire** : ce que faisait le PC dans la minute avant un plantage.
+- **Clé USB ou disque externe illisible** : sans lettre, protégé en écriture, fichiers abîmés réparés sans rien effacer.
 - **Nettoyage approfondi** : fichiers temporaires, caches, anciennes mises à jour, Windows.old…
   avec la taille de chaque catégorie, et un arbre de ce qui prend de la place.
 - **Mises à jour des logiciels** au choix, avec « Ignorer » pour ceux que tu ne veux pas mettre à jour.
