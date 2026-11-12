@@ -1042,6 +1042,76 @@ public static class AeroxDump {
 
 // Barre de titre des fenêtres aux couleurs d'AEROX (sombre) : Windows 10 20H1 et plus, couleur exacte sur Windows 11.
 // Sans effet (et sans erreur) sur les versions plus anciennes.
+// Test de stabilité : des calculs dont le résultat est connu d'avance tournent sur tous les cœurs, et de la mémoire est
+// écrite puis relue. Un résultat différent = le processeur ou la mémoire s'est trompé (overclocking, XMP, composant fatigué).
+public static class AeroxStress {
+    static volatile bool stop = true;
+    static List<Thread> ts = new List<Thread>();
+    static long iters, errors, memPasses, memErrors, memMb, lastAlive;
+    static ulong[] refs = new ulong[4];
+    public static bool Running { get { return !stop; } }
+    static ulong Work(int seed) {
+        double x = 1.0 + seed * 0.001, acc = 0;
+        for (int i = 1; i <= 300000; i++) { x = Math.Sqrt(x * 1.000001 + i); acc += Math.Sin(x) * Math.Cos(i * 0.001) + x / i; }
+        ulong h = 1469598103934665603UL; uint s = unchecked((uint)(seed + 1) * 2654435761u);
+        for (int i = 0; i < 3000000; i++) { s ^= s << 13; s ^= s >> 17; s ^= s << 5; h = unchecked((h ^ s) * 1099511628211UL); }
+        return h ^ (ulong)BitConverter.DoubleToInt64Bits(acc);
+    }
+    static bool Expired() { return (Stopwatch.GetTimestamp() - Interlocked.Read(ref lastAlive)) > 20L * Stopwatch.Frequency; }
+    public static void Start(int threads, int memoryMb) {
+        Stop();
+        iters = 0; errors = 0; memPasses = 0; memErrors = 0; memMb = 0;
+        for (int i = 0; i < 4; i++) refs[i] = Work(i);
+        Interlocked.Exchange(ref lastAlive, Stopwatch.GetTimestamp());
+        stop = false;
+        for (int n = 0; n < threads; n++) {
+            int seed = n % 4;
+            Thread t = new Thread(delegate() {
+                while (!stop) {
+                    if (Work(seed) != refs[seed]) Interlocked.Increment(ref errors);
+                    Interlocked.Increment(ref iters);
+                    if (Expired()) stop = true;
+                }
+            });
+            t.IsBackground = true; t.Priority = ThreadPriority.BelowNormal; t.Start(); ts.Add(t);
+        }
+        if (memoryMb >= 64) {
+            int mb = memoryMb;
+            Thread m = new Thread(delegate() { MemLoop(mb); });
+            m.IsBackground = true; m.Priority = ThreadPriority.BelowNormal; m.Start(); ts.Add(m);
+        }
+    }
+    static void MemLoop(int memoryMb) {
+        List<ulong[]> blocks = new List<ulong[]>();
+        try { for (int i = 0; i < memoryMb / 64 && !stop; i++) { blocks.Add(new ulong[8 * 1024 * 1024]); Interlocked.Add(ref memMb, 64); } } catch (OutOfMemoryException) { }
+        ulong pass = 1;
+        while (!stop && blocks.Count > 0) {
+            for (int b = 0; b < blocks.Count && !stop; b++) {
+                ulong[] a = blocks[b]; ulong k = unchecked(pass * 0x9E3779B97F4A7C15UL + (ulong)b);
+                for (int i = 0; i < a.Length; i++) a[i] = unchecked(k ^ ((ulong)i * 0xD6E8FEB86659FD93UL));
+            }
+            for (int b = 0; b < blocks.Count && !stop; b++) {
+                ulong[] a = blocks[b]; ulong k = unchecked(pass * 0x9E3779B97F4A7C15UL + (ulong)b);
+                long bad = 0;
+                for (int i = 0; i < a.Length; i++) { if (a[i] != unchecked(k ^ ((ulong)i * 0xD6E8FEB86659FD93UL))) bad++; }
+                if (bad > 0) Interlocked.Add(ref memErrors, bad);
+            }
+            if (!stop) Interlocked.Increment(ref memPasses);
+            pass++;
+        }
+        blocks.Clear();
+    }
+    // À appeler toutes les quelques secondes : sans appel pendant 20 s (tâche arrêtée, fenêtre fermée), tout s'arrête seul
+    public static string Status() {
+        Interlocked.Exchange(ref lastAlive, Stopwatch.GetTimestamp());
+        return Interlocked.Read(ref iters) + "|" + Interlocked.Read(ref errors) + "|" + Interlocked.Read(ref memPasses) + "|" + Interlocked.Read(ref memErrors) + "|" + Interlocked.Read(ref memMb);
+    }
+    public static void Stop() {
+        stop = true;
+        foreach (Thread t in ts) { try { t.Join(8000); } catch { } }
+        ts.Clear(); GC.Collect();
+    }
+}
 public static class AeroxWin {
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     public static void DarkTitle(IntPtr hwnd, string hex) {

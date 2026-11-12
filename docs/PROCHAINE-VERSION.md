@@ -22,6 +22,13 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Disque vide préparé en D: (`Initialize-EmptyDisk`) seulement si : interne, en ligne, pas le disque de Windows, 8 Go ou plus, aucune partition, et pour un disque jamais initialisé, premier Mo entièrement à zéro (un disque chiffré en entier a aussi l'air non initialisé : jamais proposé). Identifiant du disque revérifié juste avant d'écrire. Confirmation avec le nom et la taille.
 - Logiciels utiles : liste fixe de 11 (navigateurs, Discord, Steam, Epic, 7-Zip, VLC, Spotify, OBS, Notepad++), rien de coché d'avance, installés par winget ; un identifiant hors liste est ignoré.
 
+### Tester le matériel et disques externes (choisis par Sam le 12/11)
+
+- **Test de stabilité (10 min)** (`Start-StabilityTest`, natif `AeroxStress`) : des calculs au résultat connu d'avance sur tous les cœurs, de la mémoire (la moitié de la mémoire libre, 8 Go au plus) écrite puis relue en boucle. Une erreur arrête le test : PC instable. Température suivie (arrêt à 100 °C deux relevés de suite), processeur qui se bride noté, erreurs matérielles de Windows (WHEA) pendant le test comptées. Sans nouvelles de la tâche pendant 20 s, la charge s'arrête seule. Si le PC plante pendant le test, c'est dit à la réouverture (marqueur + arrêt brutal noté par Windows après).
+- **Tester la mémoire (RAM)** (`Start-MemoryTest`) : programme le Diagnostic de mémoire Windows au prochain démarrage (comme `mdsched`), annulable ; résultat (événements 1201 / 1202) affiché à la réouverture.
+- **Clé USB ou disque externe illisible** (`Get-ExternalDiskReport`) : uniquement les disques USB / SD / MMC, jamais le disque de Windows, identifiant revérifié avant chaque action. Hors ligne, protégé en écriture, sans lettre, fichiers abîmés (`Repair-Volume`, rien d'effacé), BitLocker et Mac / Linux reconnus par leur signature (pas des pannes). Remise à neuf (`Format-ExternalDisk`, FAT32 jusqu'à 32 Go, exFAT au-delà) proposée seulement si aucune partition n'est lisible et rien n'est en BitLocker, avec confirmation.
+- Les « fichiers en double » demandés existent déjà (onglet Nettoyage > Libérer de la place).
+
 ### Pile de la carte mère
 
 - Idée née du pote de Jazon : LDLC a annoncé « Windows corrompu + BIOS pas à jour + pile CM HS » pour 500 €.

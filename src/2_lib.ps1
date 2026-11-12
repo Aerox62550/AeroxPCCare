@@ -612,7 +612,7 @@ function ConvertTo-PsList([string[]]$Items) {
 # Une action d'annulation lue dans l'historique n'est exécutée que si c'est UNE commande connue
 # avec uniquement des valeurs fixes (le fichier d'historique est modifiable par d'autres programmes).
 function Test-SafeUndo([string]$Code) {
-    $allowed = 'Set-CrashDumpMode', 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
+    $allowed = 'Clear-MemoryTest', 'Set-CrashDumpMode', 'Set-DeviceWake', 'Set-DiscordHwAccel', 'Set-UserProxy', 'Restore-HostsBackup', 'Set-StartupApps', 'Set-PowerScheme', 'Enable-StorageSense', 'Disable-StorageSense', 'Enable-Hibernation', 'Set-DisplayHz', 'Set-NetAdapterSleep', 'Restore-Dns', 'Set-CpuMaxState', 'Set-BgItem', 'Restore-RegBackup', 'Set-ReservedStorage', 'Set-HiberType', 'Set-RestoreSpace', 'Set-CompactOS', 'Resume-BitLockerOs', 'Restore-Quarantine'
     $tok = $null; $err = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($Code, [ref]$tok, [ref]$err)
     if ($err.Count -or $ast.EndBlock.Statements.Count -ne 1 -or $ast.BeginBlock -or $ast.ProcessBlock) { return $false }
@@ -7028,6 +7028,342 @@ function Reset-WindowsUpdate {
     } else { Log "✅ Windows Update remis à zéro." }
 }
 
+# ---------------------------------------------------------------- Test de la mémoire (RAM) au redémarrage
+# C'est le « Diagnostic de mémoire Windows » de Microsoft, programmé comme le fait mdsched.exe (démarrage unique sur
+# l'outil de test). AEROX note l'heure pour afficher le résultat à sa prochaine ouverture.
+function Get-MemTestMarker { return (Join-Path $AppInfo.LogDir 'test-memoire.txt') }
+function Start-MemoryTest {
+    Step "Test de la mémoire : programmé pour le prochain redémarrage"
+    $exe = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+    $null = & $exe /bootsequence '{memdiag}' 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Add-TaskError -Title "Le test de mémoire n'a pas pu être programmé" -Cause "Windows a refusé de programmer son outil de test au redémarrage." -Effect "Rien n'est changé." `
+            -Steps @("Tape « mdsched » dans le menu Démarrer.", "Choisis « Redémarrer maintenant et rechercher les problèmes éventuels ».", "Au retour, relance le diagnostic d'AEROX : le résultat y sera.")
+        return
+    }
+    try { [IO.File]::WriteAllText((Get-MemTestMarker), (Get-Date).ToString('o')) } catch {}
+    Log "   ✔ Au prochain redémarrage, Windows teste la mémoire avant de démarrer : 10 à 30 minutes, écran bleu avec une barre de progression (c'est normal)."
+    Log "   Le PC redémarre ensuite tout seul. Rouvre AEROX : le résultat s'affichera."
+    Add-Change -Title "Test de mémoire programmé au prochain redémarrage" -Undo 'Clear-MemoryTest'
+    Request-Reboot
+}
+function Clear-MemoryTest {
+    $exe = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+    $null = & $exe /deletevalue '{bootmgr}' bootsequence 2>&1
+    try { Remove-Item -LiteralPath (Get-MemTestMarker) -Force -ErrorAction SilentlyContinue } catch {}
+    Log "   ✔ Test de mémoire annulé : le PC redémarrera normalement."
+}
+# Résultat du test dans le journal de Windows après $Since : 'ok' | 'errors' | 'none'
+function Get-MemTestVerdict($Events, [datetime]$Since) {
+    $e = @($Events | Where-Object { $_ -and $_.TimeCreated -ge $Since -and [int]$_.Id -in 1201, 1202 } | Sort-Object { $_.TimeCreated }) | Select-Object -Last 1
+    if (-not $e) { return @{ State = 'none'; Time = $null } }
+    return @{ State = $(if ([int]$e.Id -eq 1202) { 'errors' } else { 'ok' }); Time = $e.TimeCreated }
+}
+function Get-MemoryTestResult([datetime]$Since) {
+    return (Get-MemTestVerdict @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-MemoryDiagnostics-Results'; StartTime = $Since } 5) $Since)
+}
+# ---------------------------------------------------------------- Test de stabilité (processeur + mémoire à fond)
+function Get-StressMarker { return (Join-Path $AppInfo.LogDir 'test-stabilite.txt') }
+# Verdict du test, à partir des faits relevés pendant qu'il tournait
+function Get-StabilityVerdict($R) {
+    $min = [math]::Round([double]$R.Seconds / 60, 1)
+    if ([long]$R.Errors -gt 0 -or [long]$R.MemErrors -gt 0 -or [int]$R.Whea -gt 0) {
+        $what = @(); if ([long]$R.Errors -gt 0) { $what += "$($R.Errors) erreur(s) de calcul du processeur" }; if ([long]$R.MemErrors -gt 0) { $what += "$($R.MemErrors) erreur(s) de mémoire" }; if ([int]$R.Whea -gt 0) { $what += "$($R.Whea) erreur(s) matérielle(s) notée(s) par Windows" }
+        return @{ Level = 'crit'; Title = "Le PC est instable : " + ($what -join ', '); Cause = "Sous la charge, le processeur ou la mémoire ont donné un résultat faux. Un PC sain ne se trompe jamais : c'est un overclocking ou un undervolting trop poussé, un profil XMP / EXPO instable, une barrette de RAM défectueuse, ou une alimentation qui fatigue."
+                  Steps = @("Remets le BIOS par défaut (pas d'overclocking, pas d'undervolting) et refais le test.", "Si c'est stable sans XMP / EXPO : la mémoire ne tient pas son profil. Baisse la vitesse d'un cran dans le BIOS, ou garde-la sans profil.", "Si les erreurs restent même par défaut : lance « Tester la mémoire (RAM) », puis teste les barrettes une par une.", "Si la mémoire est bonne : alimentation ou processeur à faire vérifier.") }
+    }
+    if ($R.HeatStop) {
+        return @{ Level = 'crit'; Title = "Test arrêté : le processeur a atteint $($R.MaxTemp) °C"; Cause = "Le refroidissement ne suffit pas quand le processeur travaille à fond. AEROX a arrêté le test pour le protéger."
+                  Steps = @("Dépoussière le PC, surtout le radiateur et le ventilateur du processeur.", "Vérifie que le ventilateur du processeur tourne et que le radiateur est bien fixé.", "PC de plus de 4 ou 5 ans : change la pâte thermique.", "Vérifie que l'air circule dans le boîtier (ventilateurs en façade et à l'arrière).") }
+    }
+    if ($R.Cancelled -and [double]$R.Seconds -lt 120) { return @{ Level = 'info'; Title = "Test arrêté trop tôt pour conclure"; Cause = "Il faut au moins 2 minutes de charge pour dire quelque chose de fiable ($([math]::Round([double]$R.Seconds)) secondes ici, sans erreur)."; Steps = @() } }
+    if ($null -ne $R.MaxTemp -and [double]$R.MaxTemp -ge 95 -and -not $R.Ryzen95) {
+        return @{ Level = 'warn'; Title = "Stable, mais le processeur chauffe trop : $($R.MaxTemp) °C"; Cause = "Aucune erreur en $min minute(s), mais à cette température le processeur ralentit pour se protéger et s'use plus vite."
+                  Steps = @("Dépoussière le PC, surtout le radiateur du processeur.", "Vérifie que tous les ventilateurs tournent.", "PC de plus de 4 ou 5 ans : change la pâte thermique.") }
+    }
+    if ($null -ne $R.MinPerf -and [double]$R.MinPerf -gt 0 -and [double]$R.MinPerf -lt 70) {
+        return @{ Level = 'warn'; Title = "Stable, mais le processeur se bride sous la charge"; Cause = "Aucune erreur en $min minute(s), mais le processeur est descendu à $([math]::Round([double]$R.MinPerf)) % de sa vitesse normale : il ralentit pour ne pas trop chauffer (ou parce que l'alimentation le limite, sur un portable)."
+                  Steps = @("Dépoussière le PC et vérifie les ventilateurs.", "Portable : branche-le sur secteur et pose-le sur une surface dure.", "Vérifie le mode d'alimentation (onglet Performances).") }
+    }
+    $t = if ($null -ne $R.MaxTemp) { ", $($R.MaxTemp) °C au plus chaud" } else { '' }
+    return @{ Level = 'ok'; Title = "PC stable : $min minute(s) à fond, aucune erreur$t"; Cause = ''; Steps = @() }
+}
+function Start-StabilityTest([int]$Minutes = 10, [int]$Seconds = 0) {
+    $total = if ($Seconds -gt 0) { $Seconds } else { [math]::Max(1, $Minutes) * 60 }
+    Step ("Test de stabilité : processeur et mémoire à fond pendant {0}" -f $(if ($total -ge 120) { "$([math]::Round($total / 60)) minutes" } else { "$total secondes" }))
+    $cores = [Environment]::ProcessorCount
+    $freeMb = 0; try { $freeMb = [double](Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).FreePhysicalMemory / 1024 } catch {}
+    $memMb = [int]([math]::Floor([math]::Max(0, [math]::Min(8192, $freeMb * 0.5)) / 64) * 64)
+    $cpuName = "$((Get-CimStatic Win32_Processor -Quiet | Select-Object -First 1).Name)".Trim()
+    $ryzen95 = Test-RyzenTarget95 $cpuName
+    Log ("   {0} : {1} cœurs logiques au travail, {2} de mémoire écrite et relue en boucle" -f $cpuName, $cores, (Format-Size ([double]$memMb * 1MB)))
+    $hasTemp = $false; try { $hasTemp = [bool]($sync.Sens -and $sync.Sens['cpu.temp']) } catch {}
+    if (-not $hasTemp) { Log "   • Température du processeur non lisible sur ce PC (outil capteurs de l'onglet Gaming pas installé) : le test tourne quand même, le processeur se protège tout seul." }
+    $start = Get-Date
+    try { [IO.File]::WriteAllText((Get-StressMarker), $start.ToString('o')) } catch {}
+    $r = @{ Seconds = 0; Errors = 0; MemErrors = 0; MemPasses = 0; Iter = 0; Whea = 0; MaxTemp = $null; HeatStop = $false; Ryzen95 = $ryzen95; MinPerf = $null; Cancelled = $false }
+    $hot = 0; $lastLog = 0; $sw = [Diagnostics.Stopwatch]::StartNew()
+    [AeroxStress]::Start($cores, $memMb)
+    try {
+        while ($sw.Elapsed.TotalSeconds -lt $total) {
+            Start-Sleep -Seconds 2
+            $q = @("$([AeroxStress]::Status())".Split('|'))
+            $r.Iter = [long]$q[0]; $r.Errors = [long]$q[1]; $r.MemPasses = [long]$q[2]; $r.MemErrors = [long]$q[3]
+            $r.Seconds = $sw.Elapsed.TotalSeconds
+            $temp = $null; try { if ($sync.Sens -and $sync.Sens['cpu.temp']) { $temp = [math]::Round([double]$sync.Sens['cpu.temp']) } } catch {}
+            if ($null -ne $temp -and ($null -eq $r.MaxTemp -or $temp -gt $r.MaxTemp)) { $r.MaxTemp = $temp }
+            if ($null -ne $temp -and $temp -ge 100) { $hot++ } else { $hot = 0 }
+            $sync.Progress = [int][math]::Min(99, 100 * $sw.Elapsed.TotalSeconds / $total)
+            if ($hot -ge 2) { $r.HeatStop = $true; Log "   ⚠ $temp °C : test arrêté pour protéger le processeur."; break }
+            if ($r.Errors -gt 0 -or $r.MemErrors -gt 0) { Log "   ⚠ Une erreur a été détectée : inutile de continuer, le PC est instable."; break }
+            if ($sync.Cancel) { $r.Cancelled = $true; Log "   • Test arrêté à ta demande."; break }
+            if ($sw.Elapsed.TotalSeconds - $lastLog -ge 30) {
+                $lastLog = $sw.Elapsed.TotalSeconds
+                # Vitesse du processeur par rapport à sa vitesse normale (moins de 70 % = il se bride), après la première minute
+                try { $pp = [double](Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name='_Total'" -ErrorAction Stop).PercentProcessorPerformance; if ($pp -gt 0 -and $sw.Elapsed.TotalSeconds -ge 60 -and ($null -eq $r.MinPerf -or $pp -lt $r.MinPerf)) { $r.MinPerf = $pp } } catch {}
+                Log ("   {0} : {1} calculs vérifiés, {2} passe(s) de mémoire, 0 erreur{3}" -f $(if ($lastLog -ge 60) { "{0:N0} min {1:00} s" -f [math]::Floor($lastLog / 60), ($lastLog % 60) } else { "{0:N0} s" -f $lastLog }), $r.Iter, $r.MemPasses, $(if ($null -ne $temp) { ", $temp °C" } else { '' }))
+            }
+        }
+    } finally {
+        try { $q = @("$([AeroxStress]::Status())".Split('|')); $r.Iter = [long]$q[0]; $r.Errors = [long]$q[1]; $r.MemPasses = [long]$q[2]; $r.MemErrors = [long]$q[3] } catch {}
+        [AeroxStress]::Stop()
+        try { Remove-Item -LiteralPath (Get-StressMarker) -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    $r.Seconds = $sw.Elapsed.TotalSeconds
+    $r.Whea = @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WHEA-Logger'; StartTime = $start }).Count
+    $sync.StressResult = $r
+    $v = Get-StabilityVerdict $r
+    Log ("   Bilan : {0} calculs vérifiés, {1} passe(s) de mémoire{2}" -f $r.Iter, $r.MemPasses, $(if ($null -ne $r.MaxTemp) { ", température maximale $($r.MaxTemp) °C" } else { '' }))
+    switch ($v.Level) {
+        'ok'   { Log ("✅ " + $v.Title + ". Pour la carte graphique, le meilleur test reste un jeu : lance « Mesurer pendant un jeu » (onglet Gaming).") }
+        'info' { Log ("• " + $v.Title + " : " + $v.Cause) }
+        default { Add-TaskError -Title $v.Title -Cause $v.Cause -Effect $(if ($v.Level -eq 'crit') { "Plantages, écrans bleus, jeux qui se ferment, fichiers abîmés." } else { "Perte de performances en jeu et usure plus rapide." }) -Steps $v.Steps }
+    }
+}
+# Le test de stabilité ne s'est pas terminé et le PC a redémarré de façon anormale juste après : il a planté sous la charge
+function Get-StressCrashVerdict($MarkerTime, $BootTime, $BadEvents) {
+    if (-not $MarkerTime -or -not $BootTime -or $BootTime -le $MarkerTime) { return $false }
+    return (@($BadEvents | Where-Object { $_ -and $_ -ge $MarkerTime -and ($_ - $MarkerTime).TotalHours -le 24 }).Count -gt 0)
+}
+function Get-PendingTestResults {
+    $out = New-Object System.Collections.ArrayList
+    $m = Get-MemTestMarker
+    if (Test-Path -LiteralPath $m) {
+        $t = $null; try { $t = [datetime]::Parse((Get-Content -LiteralPath $m -Raw).Trim(), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch {}
+        $res = if ($t) { Get-MemoryTestResult $t } else { @{ State = 'none' } }
+        if ($res.State -ne 'none') { [void]$out.Add(@{ Kind = 'mem'; State = $res.State; Time = $res.Time }) }
+        if ($res.State -ne 'none' -or -not $t -or ((Get-Date) - $t).TotalDays -gt 3) { try { Remove-Item -LiteralPath $m -Force -ErrorAction SilentlyContinue } catch {} }
+    }
+    $s = Get-StressMarker
+    if ((Test-Path -LiteralPath $s) -and -not [AeroxStress]::Running) {
+        $t = $null; try { $t = [datetime]::Parse((Get-Content -LiteralPath $s -Raw).Trim(), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch {}
+        if ($t) {
+            $boot = $null; try { $boot = (Get-CimInstance Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime } catch {}
+            $bad = @(); $bad += @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-Kernel-Power'; Id = 41; StartTime = $t } | ForEach-Object { $_.TimeCreated })
+            $bad += @(Get-EventsSafe @{ LogName = 'System'; ProviderName = 'Microsoft-Windows-WER-SystemErrorReporting'; Id = 1001; StartTime = $t } | ForEach-Object { $_.TimeCreated })
+            if (Get-StressCrashVerdict $t $boot $bad) { [void]$out.Add(@{ Kind = 'stress'; State = 'crash'; Time = $t }) }
+        }
+        try { Remove-Item -LiteralPath $s -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    return $out.ToArray()
+}
+# ---------------------------------------------------------------- Clé USB / disque externe illisible
+# Seuls les disques branchés en USB ou les cartes mémoire sont concernés : jamais un disque interne.
+$script:ExtBusRx = '(?i)^(USB|SD|MMC)$'
+# Ce qu'il y a vraiment au début d'une partition que Windows dit « illisible » : chiffrée, d'un autre système, vide, abîmée
+function ConvertTo-FsSignature([byte[]]$B) {
+    if (-not $B -or $B.Length -lt 2048) { return '' }
+    $a = [Text.Encoding]::ASCII
+    $s = $a.GetString($B, 3, 8)
+    if ($s -eq '-FVE-FS-') { return 'bitlocker' }
+    if ($s -eq 'NTFS    ') { return 'ntfs' }
+    if ($s -eq 'EXFAT   ') { return 'exfat' }
+    if ($a.GetString($B, 0x52, 5) -eq 'FAT32' -or $a.GetString($B, 0x36, 3) -eq 'FAT') { return 'fat' }
+    if ($a.GetString($B, 0, 4) -ceq 'LUKS' -or ($B[0x438] -eq 0x53 -and $B[0x439] -eq 0xEF)) { return 'linux' }
+    if ($a.GetString($B, 32, 4) -ceq 'NXSB' -or $a.GetString($B, 1024, 2) -cin 'H+', 'HX') { return 'mac' }
+    if ([Convert]::ToBase64String($B).Trim([char[]]'A=').Length -eq 0) { return 'blank' }
+    return 'unknown'
+}
+function Get-PartitionSignature([int]$Disk, [long]$Offset) {
+    try {
+        $fs = New-Object IO.FileStream ("\\.\PhysicalDrive$Disk", [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try { $buf = New-Object byte[] 4096; $fs.Position = $Offset; $n = $fs.Read($buf, 0, $buf.Length); if ($n -lt 2048) { return '' }; return (ConvertTo-FsSignature $buf) } finally { $fs.Dispose() }
+    } catch { return '' }
+}
+# Problèmes d'un disque externe, à partir des faits relevés : { Kind; Part; Letter; Sig }
+function Get-ExtDiskProblems($D) {
+    $p = New-Object System.Collections.ArrayList
+    if ([double]$D.Size -le 0) { [void]$p.Add(@{ Kind = 'nomedia' }); return $p.ToArray() }
+    if ($D.IsOffline) { [void]$p.Add(@{ Kind = 'offline' }); return $p.ToArray() }
+    if ($D.IsReadOnly) { [void]$p.Add(@{ Kind = 'readonly' }) }
+    $parts = @($D.Parts | Where-Object { $_ })
+    if (-not $parts.Count) { [void]$p.Add(@{ Kind = 'empty'; Blank = [bool]$D.Blank }); return $p.ToArray() }
+    foreach ($v in $parts) {
+        $fs = "$($v.Fs)"
+        if ($fs -and $fs -notmatch '(?i)^(RAW|Unknown)$') {
+            if (-not $v.Letter) { [void]$p.Add(@{ Kind = 'noletter'; Part = $v.Number; Fs = $fs }) }
+            elseif ($v.Dirty) { [void]$p.Add(@{ Kind = 'dirty'; Letter = $v.Letter; Fs = $fs }) }
+            continue
+        }
+        $k = switch ("$($v.Sig)") { 'bitlocker' { 'bitlocker' } 'linux' { 'foreign' } 'mac' { 'foreign' } 'blank' { 'unformatted' } 'ntfs' { 'damaged' } 'exfat' { 'damaged' } 'fat' { 'damaged' } default { 'rawunknown' } }
+        [void]$p.Add(@{ Kind = $k; Part = $v.Number; Letter = $v.Letter; Sig = "$($v.Sig)" })
+    }
+    return $p.ToArray()
+}
+# AEROX ne formate que ce que Windows ne peut pas lire : aucune partition lisible, et rien de chiffré par BitLocker
+function Test-ExtDiskFormattable($D) {
+    if ([double]$D.Size -le 0 -or $D.IsOffline) { return $false }
+    foreach ($v in @($D.Parts | Where-Object { $_ })) {
+        if ("$($v.Fs)" -and "$($v.Fs)" -notmatch '(?i)^(RAW|Unknown)$') { return $false }
+        if ("$($v.Sig)" -eq 'bitlocker') { return $false }
+    }
+    return $true
+}
+function Get-ExternalDisks {
+    $out = New-Object System.Collections.ArrayList
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { "$($_.BusType)" -match $script:ExtBusRx -and -not $_.IsBoot -and -not $_.IsSystem })) {
+        $n = [int]$d.Number
+        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false }
+        if (-not $o.IsOffline -and $o.Size -gt 0) {
+            $parts = New-Object System.Collections.ArrayList
+            foreach ($pt in @(Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' })) {
+                $vol = $null; try { $vol = $pt | Get-Volume -ErrorAction Stop } catch {}
+                $letter = if ("$($pt.DriveLetter)" -match '^[A-Za-z]$') { "$($pt.DriveLetter)".ToUpper() } else { '' }
+                $fs = "$($vol.FileSystem)"; if (-not $fs) { $fs = "$($vol.FileSystemType)" }
+                $dirty = $false
+                if ($letter -and $fs -and $fs -notmatch '(?i)^(RAW|Unknown)$') { try { $wv = Get-CimInstance Win32_Volume -Filter "DriveLetter='${letter}:'" -ErrorAction Stop; $dirty = [bool]$wv.DirtyBitSet } catch {} }
+                $sig = ''; if (-not $fs -or $fs -match '(?i)^(RAW|Unknown)$') { $sig = Get-PartitionSignature $n ([long]$pt.Offset) }
+                [void]$parts.Add(@{ Number = [int]$pt.PartitionNumber; Letter = $letter; Fs = $fs; Size = [double]$pt.Size; Dirty = $dirty; Sig = $sig })
+            }
+            $o.Parts = $parts.ToArray()
+            if (-not $parts.Count) { $o.Blank = Test-DiskBlank $n }
+        }
+        [void]$out.Add($o)
+    }
+    return $out.ToArray()
+}
+# Garde-fou commun à toutes les réparations : c'est bien un disque externe, et bien celui affiché
+function Get-ExtDiskChecked([int]$Number, [string]$Id) {
+    $d = Get-Disk -Number $Number -ErrorAction Stop
+    if ("$($d.BusType)" -notmatch $script:ExtBusRx) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
+    if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché (débranché ?) : rien n'a été touché." }
+    return $d
+}
+function Set-ExtDiskOnline([int]$Number, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    Set-Disk -Number $Number -IsOffline $false -ErrorAction Stop
+    Log "   ✔ Disque remis en ligne : Windows peut de nouveau le lire."
+}
+function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {}
+    if ((Get-Disk -Number $Number).IsReadOnly) {
+        Add-TaskError -Title "La protection en écriture ne s'enlève pas" -Cause "Le disque refuse : soit il a un verrou physique (petit loquet sur le côté d'une carte SD ou d'un adaptateur), soit sa mémoire est en fin de vie et il s'est bloqué en lecture seule pour protéger ce qu'il contient." -Effect "Tu peux lire les fichiers mais plus rien écrire ni effacer." `
+            -Steps @("Carte SD : pousse le petit loquet du côté opposé à « LOCK ».", "Sinon : copie tout de suite tes fichiers ailleurs. Une clé qui se verrouille toute seule ne se répare pas, elle se remplace.")
+    } else { Log "   ✔ Protection en écriture enlevée : tu peux de nouveau écrire sur le disque." }
+}
+function Add-ExtDiskLetter([int]$Number, [int]$Part, [string]$Id) {
+    $null = Get-ExtDiskChecked $Number $Id
+    $pt = Get-Partition -DiskNumber $Number -PartitionNumber $Part -ErrorAction Stop
+    try { Set-Partition -DiskNumber $Number -PartitionNumber $Part -NoDefaultDriveLetter $false -IsHidden $false -ErrorAction Stop } catch {}
+    $pt | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
+    $l = "$((Get-Partition -DiskNumber $Number -PartitionNumber $Part).DriveLetter)"
+    if ($l -match '^[A-Za-z]$') { Log ("✅ Le disque a maintenant la lettre {0}: : il apparaît dans l'Explorateur." -f $l.ToUpper()) } else { throw "Windows n'a pas donné de lettre au disque." }
+}
+function Repair-ExternalVolume([string]$Letter) {
+    if ($Letter -notmatch '^[A-Za-z]$') { throw "lettre de lecteur invalide" }
+    $pt = Get-Partition -DriveLetter $Letter -ErrorAction Stop
+    $d = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop
+    if ("$($d.BusType)" -notmatch $script:ExtBusRx -or $d.IsBoot -or $d.IsSystem) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    Step "Réparation des fichiers du disque ${Letter}:"
+    Log "   Ne débranche pas le disque. Ferme les fenêtres de l'Explorateur ouvertes dessus."
+    $ok = $false
+    try { $res = "$(Repair-Volume -DriveLetter $Letter -OfflineScanAndFix -ErrorAction Stop)"; Log "   Résultat : $res"; $ok = $true }
+    catch { $ec = Invoke-Native 'chkdsk.exe' @("${Letter}:", '/f', '/x'); $ok = ($ec -in 0, 1) }
+    if ($ok) { Log "✅ Disque ${Letter}: vérifié et réparé. Tes fichiers sont toujours dessus."; Add-Change -Kind 'info' -Title "Disque ${Letter}: réparé (système de fichiers)" }
+    else { Add-TaskError -Title "Le disque ${Letter}: n'a pas pu être réparé" -Cause "L'outil de réparation de Windows a échoué : le disque est peut-être utilisé par un programme, ou trop abîmé." -Effect "Les erreurs restent." -Steps @("Ferme tout ce qui utilise ce disque et réessaie.", "Copie tes fichiers importants ailleurs dès que possible.") }
+}
+# Dernier recours, uniquement pour un disque externe que Windows ne peut pas lire du tout : tout effacer et le refaire
+# à neuf (FAT32 jusqu'à 32 Go, exFAT au-delà : lisibles partout). Tout est revérifié juste avant d'écrire.
+function Format-ExternalDisk([int]$Number, [string]$Id) {
+    Step "Remise à neuf du disque externe (tout est effacé)"
+    $d = Get-ExtDiskChecked $Number $Id
+    $me = @(Get-ExternalDisks | Where-Object { $_.Number -eq $Number })[0]
+    if (-not $me -or -not (Test-ExtDiskFormattable $me)) { throw "Ce disque est lisible par Windows (ou protégé par BitLocker) : AEROX ne formate que ce qui est illisible. Rien n'a été touché." }
+    if ($d.IsReadOnly) { try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {} }
+    try {
+        if ("$($d.PartitionStyle)" -ne 'RAW') { Clear-Disk -Number $Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction Stop }
+        $d = Get-Disk -Number $Number
+        if ("$($d.PartitionStyle)" -eq 'RAW') { Initialize-Disk -Number $Number -PartitionStyle $(if ([double]$d.Size -gt 2TB) { 'GPT' } else { 'MBR' }) -ErrorAction Stop }
+        $p = New-Partition -DiskNumber $Number -UseMaximumSize -AssignDriveLetter -ErrorAction Stop
+        $fsName = if ([double]$p.Size -le 32GB) { 'FAT32' } else { 'exFAT' }
+        $null = Format-Volume -Partition $p -FileSystem $fsName -NewFileSystemLabel 'USB' -Force -Confirm:$false -ErrorAction Stop
+        $l = "$((Get-Partition -DiskNumber $Number -PartitionNumber $p.PartitionNumber).DriveLetter)"
+        Log ("✅ Le disque est comme neuf : {0}: en {1}, {2}. Il est vide et utilisable partout." -f $l, $fsName, (Format-Size ([double]$p.Size)))
+        Add-Change -Kind 'info' -Title ("Disque externe remis à neuf : {0}:" -f $l) -Detail ("{0}, {1}" -f "$($d.FriendlyName)".Trim(), $fsName)
+    } catch {
+        Add-TaskError -Title "Le disque n'a pas pu être remis à neuf" -Cause ("Windows n'arrive pas à écrire dessus : {0}" -f $_.Exception.Message) -Effect "Le disque reste inutilisable." `
+            -Steps @("Essaie sur un autre port USB, directement sur le PC.", "Si ça échoue encore : la mémoire du disque est morte, il faut le remplacer. Ce n'est pas réparable par un logiciel.")
+    }
+}
+# Carte « Clé USB ou disque externe illisible » : tout ce qui est branché, ce qui cloche, et le bouton qui va avec
+function Get-ExternalDiskReport {
+    Step "Clés USB et disques externes : ce que Windows voit"
+    $null = Invoke-Native 'pnputil.exe' @('/scan-devices') -Quiet
+    Start-Sleep -Seconds 2
+    $disks = @(Get-ExternalDisks)
+    if (-not $disks.Count) {
+        Log "   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment."
+        Add-TaskError -Title "Aucun disque externe n'est vu par Windows" -Cause "Si ta clé ou ton disque est branché, il ne répond pas du tout : le port USB, le câble, l'alimentation du disque, ou le disque lui-même." -Effect "Rien n'apparaît dans l'Explorateur." `
+            -FixLabel "Relancer les ports USB" -FixAction 'Repair-Usb' `
+            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.")
+        return
+    }
+    $okAll = $true
+    foreach ($d in $disks) {
+        $nm = if ($d.Name) { $d.Name } else { "Disque $($d.Number)" }
+        $idL = ConvertTo-PsLiteral $d.Id
+        Log ("   {0} ({1}, {2})" -f $nm, (Format-Size $d.Size), $d.Bus)
+        foreach ($v in @($d.Parts)) { Log ("     • {0} {1} {2}" -f $(if ($v.Letter) { "$($v.Letter):" } else { 'sans lettre' }), $(if ($v.Fs -and $v.Fs -notmatch '(?i)^(RAW|Unknown)$') { $v.Fs } else { 'illisible' }), (Format-Size $v.Size)) }
+        $pb = @(Get-ExtDiskProblems $d)
+        if (-not $pb.Count) { Log "     ✔ Lisible, rien d'anormal"; continue }
+        $okAll = $false
+        $canFormat = Test-ExtDiskFormattable $d
+        $fmtConfirm = "TOUT ce qui est sur ce disque sera effacé définitivement :`n`n{0} ({1})`n`nSi des fichiers importants sont dessus, réponds Non et essaie d'abord de les récupérer (autre PC, logiciel de récupération).`n`nEffacer et remettre à neuf ?" -f $nm, (Format-Size $d.Size)
+        $fmtDone = $false
+        foreach ($x in $pb) {
+            switch ($x.Kind) {
+                'nomedia' { Log "     • Windows voit le lecteur mais aucune mémoire dedans : lecteur de cartes sans carte, ou clé USB dont la mémoire est morte (dans ce cas elle ne se répare pas)." }
+                'offline' { Add-TaskError -Title "« $nm » est hors ligne" -Cause "Windows a mis ce disque hors ligne (conflit avec un autre disque, ou réglage)." -Effect "Il n'apparaît pas dans l'Explorateur." -FixLabel "Le remettre en ligne" -FixAction "Set-ExtDiskOnline $($d.Number) $idL" }
+                'readonly' { Add-TaskError -Title "« $nm » est protégé en écriture" -Cause "Le disque est marqué « lecture seule » : par un réglage de Windows, un verrou physique, ou parce que sa mémoire fatigue." -Effect "Impossible d'y copier, d'effacer ou de formater." -FixLabel "Enlever la protection" -FixAction "Clear-ExtDiskReadOnly $($d.Number) $idL" }
+                'noletter' { Add-TaskError -Title "« $nm » n'a pas de lettre de lecteur" -Cause "Le disque est sain ($($x.Fs)) mais Windows ne lui a pas donné de lettre (E:, F:…)." -Effect "Il n'apparaît pas dans l'Explorateur alors que tes fichiers sont dessus." -FixLabel "Lui donner une lettre" -FixAction "Add-ExtDiskLetter $($d.Number) $($x.Part) $idL" }
+                'dirty' { Add-TaskError -Title "« $nm » ($($x.Letter):) a des erreurs de fichiers" -Cause "Le disque a été débranché sans « Éjecter », ou pendant une copie : son index de fichiers est abîmé." -Effect "Fichiers illisibles, message « Analyser et réparer », copies qui échouent." -FixLabel "Réparer (tes fichiers restent)" -FixAction "Repair-ExternalVolume $($x.Letter)" -Confirm "Réparer le disque $($x.Letter): ?`n`nC'est la réparation de Windows (chkdsk) : tes fichiers restent dessus. Ne débranche pas le disque pendant l'opération." }
+                'bitlocker' { Log "     • Cette partition est protégée par BitLocker : elle n'est pas en panne. Ouvre-la dans l'Explorateur et entre son mot de passe (ou sa clé de récupération). AEROX n'y touche pas." }
+                'foreign' {
+                    $os = if ($x.Sig -eq 'mac') { 'Mac' } else { 'Linux' }
+                    Add-TaskError -Title "« $nm » est formaté pour $os" -Cause "Ce disque n'est pas en panne : il a été préparé sur $os, dans un format que Windows ne sait pas lire." -Effect "Windows propose de le formater, ce qui effacerait tout." `
+                        -Steps @("Pour lire les fichiers : branche-le sur un $os.", "Pour t'en servir sur Windows : copie d'abord les fichiers ailleurs depuis un $os, puis remets-le à neuf ici.") `
+                        -FixLabel $(if ($canFormat -and -not $fmtDone) { "Effacer et remettre à neuf" } else { '' }) -FixAction $(if ($canFormat -and -not $fmtDone) { "Format-ExternalDisk $($d.Number) $idL" } else { '' }) -Confirm $fmtConfirm
+                    $fmtDone = $true
+                }
+                default {
+                    $t = switch ($x.Kind) { 'empty' { "« $nm » est vide : aucune partition" } 'unformatted' { "« $nm » n'est pas formaté" } 'damaged' { "« $nm » : le système de fichiers est abîmé" } default { "« $nm » est illisible" } }
+                    $c = switch ($x.Kind) {
+                        'empty' { if ($x.Blank) { "Le disque est complètement vierge : il n'a jamais été préparé, ou il a été effacé." } else { "Le disque n'a plus de table de partitions. Il a pu être effacé, abîmé, ou chiffré en entier par un logiciel (VeraCrypt…)." } }
+                        'unformatted' { "La partition existe mais elle est vierge : elle n'a jamais été formatée." }
+                        'damaged' { "Le début du disque est abîmé (souvent un débranchement pendant une écriture, ou une mémoire qui fatigue). Windows ne peut plus lire la liste des fichiers." }
+                        default { "Windows ne reconnaît pas ce qu'il y a dessus : format abîmé, disque chiffré, ou mémoire en fin de vie." }
+                    }
+                    $st = if ($x.Kind -in 'empty', 'unformatted' -and ($x.Kind -ne 'empty' -or $x.Blank)) { @("Il n'y a rien à perdre dessus : clique sur le bouton pour le préparer.") } else { @("Des fichiers importants dessus ? Ne formate pas : essaie d'abord un autre PC, puis un logiciel de récupération (PhotoRec, Recuva) qui lit le disque sans rien écrire.", "Rien d'important dessus ? Clique sur le bouton : le disque repart à neuf.", "Si la remise à neuf échoue, la mémoire du disque est morte : il faut le remplacer.") }
+                    if ($fmtDone -or -not $canFormat) { Log ("     • {0} : {1}" -f $t, $c) }
+                    else { Add-TaskError -Title $t -Cause $c -Effect "Le disque est inutilisable en l'état." -Steps $st -FixLabel "Effacer et remettre à neuf" -FixAction "Format-ExternalDisk $($d.Number) $idL" -Confirm $fmtConfirm; $fmtDone = $true }
+                }
+            }
+        }
+    }
+    if ($okAll) { Log "✅ Windows lit correctement tout ce qui est branché. Si un fichier précis ne s'ouvre pas, c'est ce fichier qui est abîmé, pas le disque." }
+}
 # ---------------------------------------------------------------- PC neuf / Windows réinstallé : liste guidée
 # Date de la première installation de Windows : une grosse mise à jour de Windows remet « InstallDate » à zéro et range
 # l'ancienne date dans HKLM\SYSTEM\Setup\Source OS…, donc on garde la plus ancienne des deux.

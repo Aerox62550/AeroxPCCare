@@ -129,6 +129,130 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- 3.4.0 : tests du matériel (stabilité, mémoire) et disques externes
+    Smoke 'Test de stabilité : règles du verdict' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        $base = @{ Seconds = 600; Errors = 0; MemErrors = 0; MemPasses = 9; Iter = 5000; Whea = 0; MaxTemp = 78; HeatStop = $false; Ryzen95 = $false; MinPerf = 100; Cancelled = $false }
+        function V($Over) { $r = $base.Clone(); foreach ($k in $Over.Keys) { $r[$k] = $Over[$k] }; return (Get-StabilityVerdict $r) }
+        Is 'tout va bien' (V @{}).Level 'ok'
+        Is 'une erreur de calcul' (V @{ Errors = 1 }).Level 'crit'
+        Is 'une erreur de mémoire' (V @{ MemErrors = 3 }).Level 'crit'
+        Is 'erreur matérielle notée par Windows' (V @{ Whea = 1 }).Level 'crit'
+        Is 'arrêt pour surchauffe' (V @{ HeatStop = $true; MaxTemp = 101 }).Level 'crit'
+        Is 'arrêté après 40 s : pas de conclusion' (V @{ Cancelled = $true; Seconds = 40 }).Level 'info'
+        Is 'arrêté après 5 min sans erreur' (V @{ Cancelled = $true; Seconds = 300 }).Level 'ok'
+        Is '96 °C' (V @{ MaxTemp = 96 }).Level 'warn'
+        Is '95 °C sur un Ryzen prévu pour' (V @{ MaxTemp = 95; Ryzen95 = $true }).Level 'ok'
+        Is 'processeur bridé' (V @{ MinPerf = 55 }).Level 'warn'
+        Is 'température non lue' (V @{ MaxTemp = $null }).Level 'ok'
+        Is 'une erreur passe avant la chaleur' (V @{ Errors = 2; MaxTemp = 97 }).Level 'crit'
+        $t = Get-Date
+        Is 'plantage pendant le test' (Get-StressCrashVerdict $t.AddHours(-2) $t.AddHours(-1) @($t.AddMinutes(-65))) $true
+        Is 'test jamais fini mais pas de plantage noté' (Get-StressCrashVerdict $t.AddHours(-2) $t.AddHours(-1) @()) $false
+        Is 'pas de redémarrage depuis' (Get-StressCrashVerdict $t.AddHours(-1) $t.AddHours(-5) @($t.AddMinutes(-30))) $false
+        Is 'plantage 3 jours après : sans rapport' (Get-StressCrashVerdict $t.AddDays(-4) $t.AddHours(-1) @($t.AddDays(-1))) $false
+        $ev = @([pscustomobject]@{ Id = 1201; TimeCreated = $t.AddDays(-9) }, [pscustomobject]@{ Id = 1202; TimeCreated = $t.AddHours(-1) })
+        Is 'mémoire : erreurs' (Get-MemTestVerdict $ev $t.AddDays(-1)).State 'errors'
+        Is 'mémoire : dernier test sans erreur' (Get-MemTestVerdict @($ev[0]) $t.AddDays(-30)).State 'ok'
+        Is 'mémoire : test pas encore passé' (Get-MemTestVerdict @($ev[0]) $t.AddDays(-1)).State 'none'
+        Is 'mémoire : rien' (Get-MemTestVerdict @() $t.AddDays(-1)).State 'none'
+    }
+    Smoke 'Test de stabilité : 14 secondes pour de vrai, puis arrêt tout seul' {
+        $sync.Errors.Clear(); $sync.StressResult = $null
+        Start-StabilityTest -Seconds 14
+        $r = $sync.StressResult
+        if (-not $r) { throw "pas de résultat" }
+        Write-Host ("        {0} calculs vérifiés, {1} passe(s) de mémoire, {2} erreur(s), {3:N0} s" -f $r.Iter, $r.MemPasses, ($r.Errors + $r.MemErrors), $r.Seconds)
+        if ($r.Iter -lt 1) { throw "aucun calcul fait" }
+        if ($r.Errors -ne 0 -or $r.MemErrors -ne 0) { throw "erreurs de calcul sur un PC sain : $($r.Errors) / $($r.MemErrors)" }
+        if ([AeroxStress]::Running) { throw "le test tourne encore après la fin" }
+        if (Test-Path -LiteralPath (Get-StressMarker)) { throw "marqueur pas retiré après un test terminé" }
+        # Sans nouvelles de la tâche pendant 20 secondes (fenêtre fermée, tâche tuée), la charge s'arrête toute seule
+        [AeroxStress]::Start(2, 64)
+        if (-not [AeroxStress]::Running) { throw "charge pas démarrée" }
+        Start-Sleep -Seconds 26
+        $still = [AeroxStress]::Running; [AeroxStress]::Stop()
+        if ($still) { throw "la charge continue alors que plus personne ne la surveille" }
+        $sync.Progress = 0
+    }
+    Smoke 'Test de mémoire : programmé puis annulé' {
+        $sync.Errors.Clear()
+        $bcd = Join-Path $env:SystemRoot 'System32\bcdedit.exe'
+        try {
+            Start-MemoryTest
+            if ($sync.Errors.Count) { Write-Host "        (outil de test absent sur ce serveur : message d'erreur affiché, rien de programmé)"; $sync.Errors.Clear() }
+            else {
+                if ("$(& $bcd /enum '{bootmgr}' 2>&1)" -notmatch '(?i)bootsequence') { throw "test pas programmé" }
+                if (-not (Test-Path -LiteralPath (Get-MemTestMarker))) { throw "heure du test pas notée" }
+                $st = Get-MemTestCardStatus
+                if (-not $st -or $st.A -ne 'Clear-MemoryTest') { throw "la carte ne propose pas d'annuler" }
+                if (-not (Test-SafeUndo 'Clear-MemoryTest')) { throw "annulation refusée" }
+                Clear-MemoryTest
+                if ("$(& $bcd /enum '{bootmgr}' 2>&1)" -match '(?i)bootsequence') { throw "test pas annulé" }
+                if (Test-Path -LiteralPath (Get-MemTestMarker)) { throw "marqueur pas retiré" }
+            }
+        } finally { $null = & $bcd /deletevalue '{bootmgr}' bootsequence 2>&1; Remove-Item -LiteralPath (Get-MemTestMarker) -Force -ErrorAction SilentlyContinue; $sync.NeedReboot = $false }
+        # Un test de stabilité jamais terminé, sans plantage noté depuis : rien n'est affiché, le marqueur est retiré
+        [IO.File]::WriteAllText((Get-StressMarker), (Get-Date).AddMinutes(-1).ToString('o'))
+        $p = @(Get-PendingTestResults)
+        if ($p.Count -or (Test-Path -LiteralPath (Get-StressMarker))) { throw "faux résultat de test en attente" }
+    }
+    Smoke 'Fenêtres : résultat des tests' {
+        Show-TestResultDialog @{ Kind = 'mem'; State = 'ok'; Time = (Get-Date).AddMinutes(-20) }
+        Show-TestResultDialog @{ Kind = 'mem'; State = 'errors'; Time = (Get-Date).AddMinutes(-20) }
+        Show-TestResultDialog @{ Kind = 'stress'; State = 'crash'; Time = (Get-Date).AddMinutes(-20) }
+    }
+    Smoke 'Disque externe : règles (signatures, problèmes, ce qui peut être formaté)' {
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        function Buf([int]$At, [string]$Text) { $b = New-Object byte[] 4096; [Text.Encoding]::ASCII.GetBytes($Text).CopyTo($b, $At); return ,$b }
+        Is 'BitLocker' (ConvertTo-FsSignature (Buf 3 '-FVE-FS-')) 'bitlocker'
+        Is 'NTFS' (ConvertTo-FsSignature (Buf 3 'NTFS    ')) 'ntfs'
+        Is 'exFAT' (ConvertTo-FsSignature (Buf 3 'EXFAT   ')) 'exfat'
+        Is 'FAT32' (ConvertTo-FsSignature (Buf 0x52 'FAT32   ')) 'fat'
+        $ext = New-Object byte[] 4096; $ext[0x438] = 0x53; $ext[0x439] = 0xEF
+        Is 'Linux (ext4)' (ConvertTo-FsSignature $ext) 'linux'
+        Is 'Linux chiffré' (ConvertTo-FsSignature (Buf 0 'LUKS')) 'linux'
+        Is 'Mac (APFS)' (ConvertTo-FsSignature (Buf 32 'NXSB')) 'mac'
+        Is 'vierge' (ConvertTo-FsSignature (New-Object byte[] 4096)) 'blank'
+        $rnd = New-Object byte[] 4096; (New-Object Random 3).NextBytes($rnd); $rnd[0x438] = 0; $rnd[3] = 0; $rnd[0] = 0; $rnd[32] = 0; $rnd[1024] = 0; $rnd[0x52] = 0; $rnd[0x36] = 0
+        Is 'inconnu' (ConvertTo-FsSignature $rnd) 'unknown'
+        Is 'trop court' (ConvertTo-FsSignature (New-Object byte[] 100)) ''
+        function D($Over) { $d = @{ Size = 32GB; IsOffline = $false; IsReadOnly = $false; Blank = $false; Parts = @() }; foreach ($k in $Over.Keys) { $d[$k] = $Over[$k] }; return $d }
+        function Kinds($d) { return ((@(Get-ExtDiskProblems $d) | ForEach-Object { $_.Kind }) -join ',') }
+        $good = @{ Number = 1; Letter = 'E'; Fs = 'FAT32'; Size = 30GB; Dirty = $false; Sig = '' }
+        Is 'clé saine' (Kinds (D @{ Parts = @($good) })) ''
+        Is 'lecteur sans carte' (Kinds (D @{ Size = 0 })) 'nomedia'
+        Is 'hors ligne' (Kinds (D @{ IsOffline = $true; Parts = @($good) })) 'offline'
+        Is 'protégée en écriture' (Kinds (D @{ IsReadOnly = $true; Parts = @($good) })) 'readonly'
+        Is 'sans lettre' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = ''; Fs = 'NTFS'; Dirty = $false; Sig = '' }) })) 'noletter'
+        Is 'fichiers abîmés' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'exFAT'; Dirty = $true; Sig = '' }) })) 'dirty'
+        Is 'aucune partition' (Kinds (D @{})) 'empty'
+        Is 'BitLocker : pas une panne' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = ''; Sig = 'bitlocker' }) })) 'bitlocker'
+        Is 'disque de Mac' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = ''; Fs = 'RAW'; Sig = 'mac' }) })) 'foreign'
+        Is 'partition vierge' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'blank' }) })) 'unformatted'
+        Is 'NTFS abîmé' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'ntfs' }) })) 'damaged'
+        Is 'illisible' (Kinds (D @{ Parts = @(@{ Number = 1; Letter = 'E'; Fs = 'RAW'; Sig = 'unknown' }) })) 'rawunknown'
+        Is 'formatable : illisible' (Test-ExtDiskFormattable (D @{ Parts = @(@{ Number = 1; Fs = 'RAW'; Sig = 'unknown' }) })) $true
+        Is 'formatable : aucune partition' (Test-ExtDiskFormattable (D @{})) $true
+        Is 'jamais : une partition lisible' (Test-ExtDiskFormattable (D @{ Parts = @($good) })) $false
+        Is 'jamais : une lisible + une illisible' (Test-ExtDiskFormattable (D @{ Parts = @($good, @{ Number = 2; Fs = 'RAW'; Sig = 'unknown' }) })) $false
+        Is 'jamais : BitLocker' (Test-ExtDiskFormattable (D @{ Parts = @(@{ Number = 1; Fs = ''; Sig = 'bitlocker' }) })) $false
+        Is 'jamais : hors ligne' (Test-ExtDiskFormattable (D @{ IsOffline = $true })) $false
+        Is 'jamais : lecteur sans carte' (Test-ExtDiskFormattable (D @{ Size = 0 })) $false
+    }
+    Smoke 'Disque externe : un disque interne est toujours refusé' {
+        $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
+        $n = [int]$sys.Number; $id = "$($sys.UniqueId)"; $before = @(Get-Partition -DiskNumber $n).Count
+        foreach ($t in @({ Format-ExternalDisk $n $id }, { Set-ExtDiskOnline $n $id }, { Clear-ExtDiskReadOnly $n $id }, { Add-ExtDiskLetter $n 1 $id }, { Repair-ExternalVolume ($env:SystemDrive.Substring(0, 1)) }, { Repair-ExternalVolume 'C:\' })) {
+            $refused = $false; try { & $t } catch { $refused = $true }
+            if (-not $refused) { throw "DISQUE INTERNE ACCEPTÉ : $t" }
+        }
+        if (@(Get-Partition -DiskNumber $n).Count -ne $before) { throw "LE DISQUE DE WINDOWS A ÉTÉ MODIFIÉ" }
+        if (@(Get-ExternalDisks | Where-Object { $_.Number -eq $n }).Count) { throw "le disque de Windows est listé comme externe" }
+        $sync.Errors.Clear(); Get-ExternalDiskReport
+        foreach ($e in @($sync.Errors)) { Write-Host ("        {0}" -f $e.Title) }
+        $sync.Errors.Clear()
+    }
     # ---------------- 3.4.0 : PC neuf / Windows réinstallé
     Smoke 'PC neuf : règles (âge de Windows, disque vide, mémoire)' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
