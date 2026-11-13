@@ -1641,6 +1641,17 @@ function Invoke-Smoke {
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
     Smoke 'Diagnostic complet' { Invoke-Diagnostic; $script:Diag = $sync.Diag; $script:OpenSteps = @{}; Update-Bilan }
+    Smoke 'Diagnostic : temps de chaque étape' {
+        foreach ($k in @($sync.DiagTimes.Keys | Sort-Object { - $sync.DiagTimes[$_] })) { Write-Host ("        temps {0,-14} {1,5:N1} s" -f $k, $sync.DiagTimes[$k]) }
+        # Détail : heure d'entrée dans chaque vérification « Test-… », pendant un deuxième diagnostic
+        $marks = New-Object System.Collections.ArrayList
+        $bp = Set-PSBreakpoint -Command 'Test-*' -Action { [void]$marks.Add(@{ T = [Diagnostics.Stopwatch]::GetTimestamp(); N = "$($_.InvocationInfo.MyCommand.Name)" }) }
+        try { Invoke-Diagnostic } finally { Remove-PSBreakpoint -Breakpoint $bp }
+        $f = [double][Diagnostics.Stopwatch]::Frequency; $end = [Diagnostics.Stopwatch]::GetTimestamp()
+        $sum = @{}
+        for ($i = 0; $i -lt $marks.Count; $i++) { $next = if ($i + 1 -lt $marks.Count) { $marks[$i + 1].T } else { $end }; $n = $marks[$i].N; $sum[$n] = [double]$sum[$n] + ($next - $marks[$i].T) / $f }
+        foreach ($k in @($sum.Keys | Sort-Object { - $sum[$_] } | Select-Object -First 18)) { Write-Host ("        détail {0,-32} {1,5:N1} s" -f $k, $sum[$k]) }
+    }
     if ($script:Diag) { foreach ($i in $script:Diag.Issues) { Write-Host ("        problème : [{0}] {1} — {2}" -f $i.Cat, $i.Title, $i.Detail) } }
     Smoke-Page 'diag'
     Smoke-Page 'home'

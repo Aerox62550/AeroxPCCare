@@ -5560,14 +5560,17 @@ function Invoke-Diagnostic {
     $sync.ScanOrder = @($checks.Keys)
     $sync.ScanVer++
     $script:CimCache = @{}
+    $sync.DiagTimes = [ordered]@{}
     foreach ($k in $checks.Keys) {
         if ($sync.Cancel) { $script:CimCache = $null; return }
         $script:CurrentCat = $k
         $sync.Scan[$k] = 'run'; $sync.ScanVer++
         $before = $script:Issues.Count
         $failed = $false
+        $swCat = [Diagnostics.Stopwatch]::StartNew()
         try { & $checks[$k] }
         catch { $failed = $true; Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » incomplète : {1}" -f $k, $_.Exception.Message); Add-StatsEvent ("erreur:" + (ConvertTo-StatsId $checks[$k])) }
+        $sync.DiagTimes[$k] = [math]::Round($swCat.Elapsed.TotalSeconds, 1)
         $new = @($script:Issues | Select-Object -Skip $before)
         $sync.Scan[$k] = if (@($new | Where-Object { $_.Sev -eq 'crit' }).Count) { 'bad' } elseif ($new.Count -or $failed) { 'warn' } else { 'ok' }
         $sync.ScanVer++
