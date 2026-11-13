@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.5.1 : « Quel est ton problème ? » renforcé (première vraie phrase de Sam ratée, 13/11)
+## Publié en 3.5.1 : « Quel est ton problème ? » renforcé (première vraie phrase de Sam ratée, 13/11)
 
 - Phrase de Sam : « DISQUE DUR plus reconnu besoin de recuperer des choses dessus et savoir ce quil a » → seulement « Ce qui prend de la place ». Causes : une règle réduite au seul mot « dessus » ; « disque dur » non reconnu (seulement « disque externe ») ; « récupérer des choses » non reconnu.
 - Mesure honnête sur une nouvelle série de 87 phrases longues : 64 %. Les séries suivantes, jamais vues avant mesure : 86 %, puis 82 %, avec presque uniquement des « rien reconnu ».
