@@ -2,6 +2,14 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## En cours pour la version d'après (pas dans la 3.4.0 de test) : « Quel est ton problème ? »
+
+- Demandé par Sam le 13/11 : « le fait d'écrire c'est pas mal, faut que l'algorithme soit bien fourni, un truc costaud béton ».
+- Accueil : une case où l'on décrit le problème avec ses mots ; AEROX propose jusqu'à 4 dépannages, du plus probable au moins probable, chacun avec le même bouton que sur sa page. Rien de reconnu : il le dit et propose le diagnostic complet. Tout est local, rien n'est envoyé.
+- Moteur (`Find-HelpIntents`, `src/2_lib.ps1`) : texte mis en minuscules sans accents, mots vides retirés, formes ramenées à une seule (ordi → pc, maj → mise à jour…), fautes de frappe corrigées vers le mot connu le plus proche (une faute à partir de 5 lettres, deux à partir de 9, jamais sur la première lettre ni sur un mot avec des chiffres). 60 sujets, environ 1 100 expressions pondérées ; négation reconnue avant ou après le verbe ; un sujet cité pour dire qu'il marche (« mon son marche mais pas le micro ») ne compte pas ; « son PC » n'est pas pris pour le son.
+- Mesure : 5 séries de phrases écrites comme les gens tapent (1 219 phrases, `tests/aide-phrases.txt`). Chaque série a d'abord été mesurée sans avoir servi à écrire les règles : 90 %, 91 %, 92 %, 97 %, 96 % de bonnes orientations du premier coup ; les ratés étaient surtout « rien reconnu », rarement une mauvaise orientation. Après correction, les 1 219 passent. Le test échoue sous 98,5 %, ou si une phrase hors sujet est orientée quand même, ou si une expression se réduit à un mot passe-partout.
+- Pour l'améliorer : toute phrase mal orientée chez un testeur s'ajoute au fichier de phrases, puis la règle est corrigée.
+
 ## Prêt pour 3.4.0 : écrans bleus expliqués, pile de la carte mère (validé par Sam le 10/11)
 
 ### Écrans bleus (« principale chose des testeurs, aucune idée de pourquoi »)

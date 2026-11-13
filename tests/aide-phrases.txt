@@ -1,0 +1,1222 @@
+# Phrases de test de « Quel est ton problème ? » : « sujet attendu|phrase ». Plusieurs sujets acceptés : a/b. « - » = rien ne doit sortir.
+# Écrites en cinq séries ; chaque série a d'abord été mesurée sans avoir servi à écrire les règles (91 %, 91 %, 92 %, 97 %, 96 % du premier coup),
+# puis ses ratés ont été corrigés. Toute phrase qui oriente mal chez un testeur s'ajoute ici.
+slow|mon pc rame
+slow|mon pc rame de fou
+slow|le pc est super lent
+slow|mon ordi est lent
+slow|ca rame
+slow|sa rame grave
+slow|mon pc lag
+slow|pc qui ram
+slow|mon ordinateur est devenu tres lent depuis quelques jours
+slow|tout est long a ouvrir
+slow|il met trois heures a ouvrir chrome
+slow|mon pc freeze
+slow|le pc se fige tout le temps
+slow|mon pc saccade
+slow|ordi qui rame comme pas possible
+slow|pk mon pc rame
+slow|pourquoi mon pc rame ?
+slow|mon pc est lennnnt
+slow|pc tres lent meme en ecrivant
+slow|processeur a 100%
+slow|disque a 100% dans le gestionnaire
+slow|mon pc repond plus
+slow|windows est lent
+slow|mon pc ralenti
+slow|ca met du temps pour tout
+slow|l'ordi rame une vraie bouze
+slow|pc de 15 ans d age on dirait
+slow|mon pc bug tout le temps
+slow|c'est lent
+slow|mon pc est mou
+slow|le pc rame quand jouvre plusieurs onglets
+slow|ordi trop lent
+slow|sa lag sur le bureau
+slow|mon pc galere a tout ouvrir
+startup|mon pc met 10 minutes a s'allumer
+startup|pc long a demarrer
+startup|demarrage tres lent
+startup|le pc est lent a demarrer
+startup|trop de programmes au demarrage
+startup|spotify se lance au demarrage tout seul
+startup|des trucs s'ouvrent tout seul au demarrage
+startup|mon ordi met du temps a s'allumer
+startup|boot lent
+startup|windows met longtemps a demarrer
+startup|il met 5 minutes a booter
+startup|discord s'ouvre tout seul au demarrage
+bsod|ecran bleu
+bsod|j'ai eu un ecran bleu
+bsod|ecran blue
+bsod|mon pc fait des ecrans bleus
+bsod|bsod en jeu
+bsod|ecran bleu de la mort
+bsod|mon pc redemarre tout seul
+bsod|le pc plante tout le temps
+bsod|mon pc crash
+bsod|ecrant bleu avec un smiley triste
+bsod|critical process died
+bsod|memory management ecran bleu
+bsod|mon ordi a plante avec un ecran bleu
+bsod|pc redemarre sans raison
+bsod|ecran bleu code arret
+bsod|blue screen
+bsod|le pc reboot tout seul
+bsod|ecran bleu quand je joue a gta
+bsod|whea uncorrectable error
+bsod|mon pc plante en jeu
+poweroff|mon pc s'eteint tout seul
+poweroff|le pc s'eteint d'un coup
+poweroff|pc se coupe tout seul en jeu
+poweroff|mon ordi s'eteint quand je joue
+poweroff|il s'eteint sans raison
+poweroff|le pc coupe net
+poweroff|mon pc s eteint brutalement
+poweroff|pc qui s'arrete tout seul
+poweroff|l'ordi s'eteint subitement
+autorepair|reparation automatique en boucle
+autorepair|preparation de la reparation automatique
+autorepair|srttrail.txt
+autorepair|windows n'a pas pu demarrer correctement
+sound|pas de son
+sound|j'ai plus de son
+sound|plus aucun son
+sound|le son marche pas
+sound|le son ne fonctionne plus
+sound|j'entends rien
+sound|j entend plus rien
+sound|son
+sound|probleme de son
+sound|mon casque n'a pas de son
+sound|les enceintes marchent plus
+sound|le son gresille
+sound|aucun son sur le pc
+sound|pa de son
+sound|pb audio
+sound|son qui sort pas du casque
+sound|le son sort de l'ecran au lieu du casque
+sound|haut parleurs muets
+sound|plus de son depuis la mise a jour
+sound|volume a fond mais j'entends rien
+sound|mes ecouteurs marchent pas
+sound|le son saute
+micro|mon micro marche pas
+micro|micro
+micro|le micro ne fonctionne plus
+micro|on m'entend pas
+micro|mes potes m'entendent pas
+micro|personne m'entend sur discord
+micro|probleme de micro
+micro|micro hs
+micro|mon son marche mais pas le micro
+micro|le microphone n'est pas detecte
+micro|on m entend plus en vocal
+micro|mirco marche pas
+micro|pas de micro
+micro|ma voix passe pas
+webcam|ma webcam marche pas
+webcam|camera noire
+webcam|webcam introuvable
+webcam|la cam ne fonctionne pas
+webcam|on me voit pas en visio
+webcam|webcam image noire sur teams
+webcam|probleme de camera
+printer|mon imprimante n'imprime plus
+printer|imprimante hors ligne
+printer|impossible d'imprimer
+printer|l'impression est bloquee
+printer|file d'attente bloquee
+printer|imprimante
+printer|ca imprime pas
+printer|probleme d'imprimante
+shell|la barre des taches est figee
+shell|barre des taches bloquee
+shell|ma barre de tache a disparu
+shell|le bureau est fige
+shell|l'explorateur plante
+shell|explorer.exe ne repond pas
+shell|clic droit marche plus
+shell|barre des taches bug
+shell/icons|les icones du bureau ont disparu
+discord|discord ecran noir
+discord|discord bug
+discord|discord ne s'ouvre plus
+discord|discord
+discord|mon discord beug ecran noir au demarrage
+discord|discord ecran gris
+discord|discord veut pas s'installer
+discord|discord update failed en boucle
+discord|discord se lance pas
+discord|discord plante
+discord|discord reste bloque sur le chargement
+discord|probleme discord
+discord|discord crash
+usbdisk|ma cle usb est illisible
+usbdisk|cle usb
+usbdisk|cle usb pas reconnue
+usbdisk|ma clef usb marche plus
+usbdisk|disque dur externe non reconnu
+usbdisk|mon disque externe n'apparait pas
+usbdisk|carte sd illisible
+usbdisk|windows me demande de formater la cle
+usbdisk|cle usb protegee en ecriture
+usbdisk|ma cle est morte
+usbdisk|le disque externe est en raw
+usbdisk|carte memoire pas detectee
+usbdisk|cle usb abimee
+usbdisk|il faut formater le disque avant de l'utiliser
+usbdisk|ma cle usb n'est plus lue
+usbdisk|ssd externe pas reconnu
+usbdev|peripherique usb non reconnu
+usbdev|mes ports usb marchent plus
+usbdev|ma souris se deconnecte
+usbdev|mon clavier ne repond plus
+usbdev|la manette n'est pas reconnue
+usbdev|usb non reconnu
+usbdev|ma souris marche plus
+usbdev|le clavier marche pas
+usbdev|les prises usb ne fonctionnent plus
+usbdev|ca fait le bruit de deconnexion usb tout le temps
+usbdev|probleme de souris
+bluetooth|le bluetooth marche pas
+bluetooth|bluetooth
+bluetooth|bleutooth marche plus
+bluetooth|mes airpods se connectent pas
+bluetooth|impossible d'appairer mon casque
+bluetooth|plus de bluetooth
+bluetooth/usbdev|ma manette ps5 se connecte plus
+bluetooth|bluetooth disparu
+bluetooth|casque sans fil ne se connecte pas
+bluetooth|probleme bluetooth
+gamelaunch|mon jeu se lance pas
+gamelaunch|gta se lance pas
+gamelaunch|fortnite ne demarre plus
+gamelaunch|le jeu ne s'ouvre pas
+gamelaunch|dll manquante
+gamelaunch|msvcp140.dll introuvable
+gamelaunch|vcruntime140 manquant
+gamelaunch|erreur directx
+gamelaunch|valorant vanguard erreur
+gamelaunch|easy anti cheat erreur
+gamelaunch|mon jeu crash au lancement
+gamelaunch|0xc000007b
+gamelaunch|impossible de lancer le jeu
+gamelaunch|warzone veut pas se lancer
+gamelaunch|le jeu se ferme direct
+gamelaunch|je lance le jeu et rien ne se passe
+apps|le microsoft store ne s'ouvre pas
+apps|microsoft store bug
+apps|le menu demarrer marche plus
+apps|menu demarrer bloque
+apps|la calculatrice ne s'ouvre pas
+apps|les parametres ne s'ouvrent plus
+apps|la touche windows marche pas
+apps|store bloque
+apps|les applis windows ne s'ouvrent plus
+sleep|mon pc se rallume tout seul
+sleep|le pc sort de veille tout seul
+sleep|probleme de veille
+sleep|veille
+sleep|le pc ne se met pas en veille
+sleep|mon ordi se reveille tout seul la nuit
+sleep|la mise en veille marche pas
+sleep|pc s'allume tout seul
+sleep|il ne se reveille pas de la veille
+icons|mes icones sont blanches
+icons|icones cassees
+icons|les miniatures ne s'affichent plus
+icons|plus d'apercu des photos
+icons|icones bizarres sur le bureau
+gamesettings|reglages pour les jeux
+gamesettings|comment avoir plus de fps
+gamesettings|mode jeu windows
+gamesettings|booster mes fps
+gamesettings|j'ai peu de fps
+gamesettings|optimiser windows pour les jeux
+gamesettings|gagner des fps
+repairsys|reparer windows
+repairsys|fichiers windows corrompus
+repairsys|sfc scannow
+repairsys|windows est corrompu
+repairsys|fichiers systeme abimes
+repairsys|windows est casse
+chkdsk|verifier mon disque
+chkdsk|chkdsk
+chkdsk|secteurs defectueux
+chkdsk|mon disque dur fait du bruit
+chkdsk|erreurs disque
+chkdsk|sante du ssd
+chkdsk|mon disque est abime
+wureset|windows update bloque
+wureset|les mises a jour ne s'installent pas
+wureset|mise a jour bloquee a 0
+wureset|erreur 0x80070002
+wureset|maj windows echoue
+wureset|windows update marche pas
+wureset|la mise a jour tourne en boucle
+wureset|echec de la mise a jour
+wureset|annulation des modifications en boucle
+winupdate|mettre a jour windows
+winupdate|est ce que windows est a jour
+winupdate|installer les mises a jour windows
+appupdates|mettre a jour mes logiciels
+appupdates|mises a jour des applis
+appupdates|mes logiciels sont pas a jour
+appupdates|tout mettre a jour
+drivers|mettre a jour ma carte graphique
+drivers|pilotes
+drivers|drivers pas a jour
+drivers|mise a jour nvidia
+drivers|pilote graphique
+drivers|mes drivers
+drivers|installer les pilotes
+drivers|ma cg est pas reconnue
+drivers|peripherique inconnu dans le gestionnaire
+net|j'ai plus internet
+net|pas d'internet
+net|internet marche pas
+net|le wifi marche plus
+net|plus de wifi
+net|pas de connexion
+net|wifi qui coupe tout le temps
+net|pas d'acces internet
+net|les sites s'ouvrent pas
+net|probleme dns
+net|connecte mais pas internet
+net|ma connexion saute
+net|ethernet marche pas
+net|internet coupe
+net|wi fi deconnecte
+net|plus de reseau
+net|g plus de co
+net|internet bug
+net|probleme wifi
+net|ma box marche mais pas internet sur le pc
+netrepair|reparer la connexion
+netrepair|reinitialiser le reseau
+netrepair|reset reseau
+speedtest|test de debit
+speedtest|speedtest
+net/speedtest|tester ma connexion
+speedtest|quelle est ma vitesse internet
+speedtest|mon debit
+speedtest|combien de mega j'ai
+lag|ca lag en ligne
+lag|j'ai du ping
+lag|ping eleve sur fortnite
+lag|lag sur warzone
+lag|discord coupe tout le temps
+lag|voix de robot sur discord
+lag|perte de paquets
+lag|je me fais deco en partie
+lag|ca lag quand je joue en ligne
+lag|latence en jeu
+lag|mes potes m'entendent hache
+lag|je me teleporte sur gta online
+lag|packet loss
+lag|discord lag en vocal
+lag|sa lag sur fortnite
+freespace|mon disque est plein
+freespace|plus de place
+freespace|liberer de la place
+freespace|disque c plein
+freespace|j'ai plus d'espace
+freespace|ssd plein
+freespace|comment faire de la place
+freespace|il me reste 500ko
+freespace|stockage sature
+freespace|espace disque insuffisant
+freespace|nettoyer le disque
+freespace|pas assez de place pour installer un jeu
+freespace|le 1to est plein
+freespace|mon c est rouge
+freespace|manque de place
+freespace|supprimer les fichiers inutiles
+freespace|fichiers temporaires
+space|qu'est ce qui prend de la place
+space|voir ce qui prend de la place
+space|le 1to est plein mais ya quoi dessus
+space|ou est passe mon espace disque
+space|trouver les gros fichiers
+dupes|fichiers en double
+dupes|doublons
+dupes|j'ai des photos en double
+dupes|supprimer les doublons
+recycle|vider la corbeille
+backup|sauvegarder mes fichiers
+backup|sauvegarde
+backup|faire un backup
+backup|je veux copier mes photos sur un disque externe
+backup|sauver mes photos avant de formater
+backup|je veux pas perdre mes fichiers
+backup|mettre mes fichiers a l'abri
+backup|sauvegarder avant de reinstaller windows
+recover|recuperer des fichiers supprimes
+recover|j'ai supprime des photos par erreur
+recover|fichiers effaces
+recover|j'ai vide la corbeille par erreur
+recover|retrouver des photos perdues
+recover|mes photos ont disparu
+recover|j'ai efface un dossier sans faire expres
+recover|recuperer mes donnees
+recover|j'ai formate par erreur
+recover|recuperation de fichiers
+recover/usbdisk|recuperer les photos de ma cle usb illisible
+security|j'ai un virus
+security|virus
+security|mon pc est pirate
+security|je crois que je suis hacke
+security|malware
+security|cheval de troie
+security|quelqu'un controle mon pc
+security|ma souris bouge toute seule
+security|analyse de securite
+security|j'ai telecharge un truc louche
+security|verifier si j'ai un virus
+security|mon pc est infecte
+security|logiciel espion
+security|des fenetres noires s'ouvrent toutes seules
+hacked|mon compte discord a ete pirate
+hacked|on m'a pirate mon compte
+hacked|compte hacke
+hacked|on m'a vole mon compte fortnite
+hacked|mon mot de passe a ete change
+hacked|j'ai clique sur un lien bizarre
+hacked|compte instagram pirate
+hacked|mon discord envoie des messages tout seul
+hacked|phishing
+hacked|je me suis fait arnaquer
+adware|j'ai des pubs partout
+adware|pop up tout le temps
+adware|fausses alertes de virus
+adware|notifications chrome en bas a droite
+adware|mon moteur de recherche a change tout seul
+adware|chrome me redirige vers des sites bizarres
+adware|des sites s'ouvrent tout seuls
+adware|pub mcafee qui s'affiche
+adware|ma page d'accueil a change
+adware|plein de notifications de virus
+quarantine|quarantaine
+quarantine|defender a supprime mon fichier
+quarantine|faux positif
+quarantine|l'antivirus a bloque mon jeu
+uninstall|desinstaller un logiciel
+uninstall|supprimer des programmes
+uninstall|enlever mcafee
+uninstall|j'ai trop de logiciels inutiles
+uninstall|virer les logiciels preinstalles
+uninstall|desinstaller
+bgitems|programmes en arriere plan
+bgitems|trop de trucs qui tournent en fond
+bgitems|taches de fond
+perfmode|mode performances maximales
+perfmode|plan d'alimentation
+perfmode|mettre en haute performance
+optimize|optimiser mon pc
+optimize|booster mon pc
+optimize|rendre mon pc plus rapide
+optimize|optimisation
+optimize|accelerer mon ordi
+optimize|entretien du pc
+newpc|j'ai un pc neuf
+newpc|je viens de reinstaller windows
+newpc|nouveau pc quoi installer
+newpc|j'ai formate mon pc
+newpc|mon nouveau ssd n'apparait pas
+newpc|je viens de monter mon pc
+newpc|configurer mon pc
+newpc|mon deuxieme disque n'apparait pas dans ce pc
+newpc|windows tout neuf
+newpc|il a reset son pc et a mis un new windows
+newpc|partitionner le disque d
+stability|test de stabilite
+stability|stress test
+stability|benchmark
+stability|tester mon pc
+stability|est ce que mon pc est stable
+stability|j'ai overclocke
+stability|tester mon processeur
+memtest|tester la ram
+memtest|test memoire
+memtest|ma ram est defectueuse
+memtest|memtest
+memtest|verifier mes barrettes
+memtest|probleme de ram
+memtest|barrette hs
+diskspeed|vitesse du ssd
+diskspeed|mon ssd est lent
+diskspeed|tester mon ssd
+diskspeed|crystaldiskmark
+diskspeed|debit de mon disque
+diskspeed|la copie de fichiers est lente
+temps|mon pc chauffe
+temps|surchauffe
+temps|temperature du processeur
+temps|les ventilateurs sont a fond
+temps|mon pc fait du bruit
+temps|ventilo bruyant
+temps|le pc est brulant
+temps|ma carte graphique chauffe trop
+temps|voir les temperatures
+temps|mon pc fait un bruit d'avion
+sysinfo|ma config
+sysinfo|quelle carte graphique j'ai
+sysinfo|combien de ram j'ai
+sysinfo|quel processeur
+sysinfo|les composants de mon pc
+sysinfo|bios
+sysinfo|ma carte mere
+display|mon ecran est en 60hz
+display|ecran 144hz bride
+display|ecran noir
+display|mon ecran scintille
+display|deuxieme ecran pas detecte
+display|pas de signal sur l'ecran
+display|ecran flou
+display|frequence de rafraichissement
+battery|ma batterie tient pas la charge
+battery|batterie
+battery|la batterie se decharge vite
+battery|autonomie nulle
+clock|l'heure est fausse
+clock|l'heure se deregle tout le temps
+clock|la date se remet en 2020
+clock|pile de carte mere
+clock|pile cm hs
+restore|creer un point de restauration
+restore|point de restauration
+restore|restauration du systeme
+history|annuler ce qu'aerox a fait
+history|revenir en arriere
+history|historique
+history|remettre comme avant
+remote|aide a distance
+remote|quelqu'un peut prendre la main sur mon pc
+report|signaler un bug
+report|aerox bug
+report|contacter le developpeur
+diag|diagnostic
+diag|faire un bilan de mon pc
+diag|verifier mon pc
+diag|mon pc a un probleme mais je sais pas quoi
+diag|analyser mon pc
+diag|mon pc deconne
+diag|check up complet
+-|bonjour
+-|merci
+-|salut ca va
+-|comment faire un gateau au chocolat
+-|test
+-|aaaa
+-|quel temps fait il demain
+-|je veux acheter une voiture
+-|
+-|ok
+-|tu es nul
+-|c'est quoi aerox
+-|qui a gagne le match
+-|lol
+discord|mon pote a son discord qui beug ecran noir au demarrage meme en redemarrant le pc
+slow|frero sur mon pc je telecharge gta sur le ssd C jamais eu de soucis la le pc rame de fou meme en ecrivant
+freespace|Mon frère a que 500ko de dispo sur son disque dur
+freespace/space|comment liberer de la place le 1to est plein mais ya quoi dessus
+newpc|mon petit frere a reset son pc et a mis un new windows faut le configurer
+slow|jai relancer ca recommence le pc rame je suis sur ssd dernier cri
+discord|discord fonctionnait nickel il a coupe dun coup et ecran noir grise
+slow|l'ordinateur de ma mere est devenu super lent on peut rien faire
+slow|bonjour mon pc portable rame enormement depuis une semaine
+slow|pc qui lague de ouf
+slow|mon pc est a la ramasse
+slow|tout met une plombe a s'ouvrir
+slow|l ordi freeze toutes les 2 minutes
+slow|ca rame quand je lance chrome
+slow|pc lent depuis la derniere mise a jour
+slow|mon ordinateur portable est tres tres lent
+slow|ca bug et ca rame
+slow|le pc se bloque sans arret
+slow|mon ordi est hyper lent au secours
+slow|windows 11 rame sur mon pc
+startup|l'ordi met un temps fou a s'allumer
+startup|ca prend 10 min pour demarrer
+startup|demarrage de windows super long
+startup|steam et discord se lancent tout seul quand j'allume le pc
+startup|trop de trucs au demarrage
+startup|comment enlever les programmes qui se lancent au demarrage
+bsod|j'ai un ecran bleu qui apparait de temps en temps
+bsod|ecran bleu a chaque fois que je lance un jeu
+bsod|mon pc affiche un ecran bleu puis redemarre
+bsod|le pc plante et redemarre
+bsod|ecrans bleus a repetition
+bsod|bluescreen
+bsod|j'ai eu ca : votre pc a rencontre un probleme et doit redemarrer
+bsod|ecran bleu avec ecrit irql not less or equal
+bsod|mon ordi crash en plein jeu
+bsod|ca plante tout le temps
+poweroff|mon pc se coupe d'un coup quand je joue
+poweroff|l'ordi s'eteint tout seul sans prevenir
+poweroff|le pc s'eteint au bout de 10 minutes de jeu
+poweroff|ecran noir et le pc s'eteint
+poweroff|mon pc s'eteint en plein jeu
+sound|j'ai plus de son sur mon pc depuis ce matin
+sound|y a plus de son
+sound|aucun son ne sort des enceintes
+sound|le son de mon pc ne marche plus
+sound|mon casque est branche mais j'entends rien
+sound|j'ai pas de son sur youtube
+sound|le son a disparu
+sound|plus de son dans mon casque
+sound|son coupe
+sound|le son sort pas des haut parleurs
+sound|probleme audio windows 11
+sound|g pu de son
+micro|mon micro n'est pas detecte par discord
+micro|personne ne m'entend quand je parle
+micro|le micro de mon casque marche pas
+micro|on m'entend plus sur discord
+micro|micro qui marche plus
+micro|mes amis ne m'entendent pas en jeu
+micro|micro pas reconnu
+micro|mon micro capte plus rien
+webcam|la webcam affiche un ecran noir
+webcam|ma camera n'est pas detectee
+webcam|camera marche plus sur teams
+webcam|webcam pas reconnue
+printer|l'imprimante veut pas imprimer
+printer|mon imprimante ne repond plus
+printer|les documents restent bloques dans la file d'attente
+printer|imprimante hp hors ligne
+shell|ma barre des taches ne repond plus
+shell|la barre des taches a disparu
+shell|le bureau est tout noir sans icones
+shell|l'explorateur de fichiers ne s'ouvre plus
+shell|barre des taches qui bug
+discord|discord reste sur un ecran gris
+discord|discord ne se lance plus
+discord|impossible d'ouvrir discord
+discord|discord tourne dans le vide au demarrage
+discord|discord s'installe pas
+discord|mon discord crash des que je l'ouvre
+usbdisk|ma cle usb n'apparait plus sur mon pc
+usbdisk|le pc ne detecte pas ma cle usb
+usbdisk|ma carte sd n'est pas lue
+usbdisk|mon disque dur externe ne s'affiche plus
+usbdisk|windows dit qu'il faut formater ma cle
+usbdisk|la cle usb est en lecture seule
+usbdisk|cle usb illisible
+usbdisk|mon disque externe est devenu illisible
+usbdisk|j'ai une cle usb abimee
+usbdisk|carte micro sd pas reconnue
+usbdev|ma manette n'est pas detectee
+usbdev|le pc reconnait pas mon clavier
+usbdev|mes ports usb ne fonctionnent plus
+usbdev|la souris se deconnecte toute seule
+usbdev|plus aucun port usb ne marche
+usbdev|mon clavier marche plus
+bluetooth|mon casque bluetooth se connecte pas
+bluetooth|le bluetooth a disparu de mon pc
+bluetooth|impossible de connecter mes airpods
+bluetooth|bluetooth ne trouve pas mon enceinte
+bluetooth|j'arrive pas a activer le bluetooth
+bluetooth|blutooth marche pas
+gamelaunch|mon jeu ne veut pas se lancer
+gamelaunch|fortnite se lance pas
+gamelaunch|quand je lance gta ca fait rien
+gamelaunch|il me manque une dll pour lancer mon jeu
+gamelaunch|erreur vcruntime140.dll
+gamelaunch|valorant se lance plus
+gamelaunch|le jeu crash au demarrage
+gamelaunch|minecraft ne s'ouvre pas
+gamelaunch|erreur anti cheat sur fortnite
+gamelaunch|mon jeu steam se lance pas
+apps|le store marche pas
+apps|impossible d'ouvrir le microsoft store
+apps|mon menu demarrer ne s'ouvre plus
+apps|les parametres windows ne s'ouvrent pas
+apps|l'appli photos ne s'ouvre plus
+sleep|mon pc se rallume tout seul la nuit
+sleep|le pc refuse de se mettre en veille
+sleep|l'ordi sort de veille sans raison
+sleep|mon pc s'allume tout seul
+sleep|probleme de mise en veille
+icons|les icones de mon bureau sont toutes blanches
+icons|j'ai plus les miniatures de mes photos
+icons|icones qui buggent
+gamesettings|comment optimiser mon pc pour les jeux
+gamesettings|je veux plus de fps
+gamesettings|j'ai des fps bas
+gamesettings|activer le mode jeu
+repairsys|comment reparer windows
+repairsys|mes fichiers systeme sont corrompus
+repairsys|windows est abime
+repairsys|faire un sfc
+chkdsk|je veux verifier mon disque dur
+chkdsk|mon disque dur claque
+chkdsk|verifier la sante de mon ssd
+chkdsk|j'ai des erreurs de disque
+wureset|windows update ne marche plus
+wureset|mes mises a jour windows echouent
+wureset|la mise a jour reste bloquee
+wureset|impossible d'installer les mises a jour
+wureset|erreur de mise a jour 0x800f081f
+winupdate|comment mettre windows a jour
+winupdate|faire les mises a jour de windows
+appupdates|comment mettre a jour mes applications
+appupdates|mes logiciels ne sont pas a jour
+drivers|comment mettre a jour mes pilotes
+drivers|mettre a jour les drivers nvidia
+drivers|mon pilote graphique est vieux
+drivers|ma carte graphique n'est pas reconnue
+drivers|j'ai un peripherique inconnu
+net|j'ai pas internet sur mon pc
+net|mon pc capte plus le wifi
+net|internet ne marche plus
+net|le wifi se deconnecte tout le temps
+net|j'ai plus de connexion internet
+net|pas de wifi
+net|internet saute toutes les 5 minutes
+net|mon pc est connecte mais internet marche pas
+net|les pages web ne chargent pas
+net|plus internet depuis hier
+net|wifi instable
+net|coupures internet
+netrepair|comment reparer ma connexion internet
+netrepair|reinitialiser les parametres reseau
+speedtest|faire un test de debit
+speedtest|je veux connaitre mon debit
+speedtest|tester la vitesse de ma fibre
+lag|j'ai du lag sur fortnite
+lag|mon ping est trop haut
+lag|ca lag en jeu
+lag|ma voix est hachee sur discord
+lag|je lag en ligne
+lag|j'ai des pertes de paquets
+lag|on m'entend en robot
+lag|deconnexion du serveur en pleine partie
+lag|ping a 200
+freespace|mon ssd est plein
+freespace|j'ai plus de place sur mon pc
+freespace|mon disque dur est sature
+freespace|il me reste 2go
+freespace|comment liberer de l'espace
+freespace|je veux faire de la place sur mon disque
+freespace|plus d'espace de stockage
+freespace|mon disque c est plein
+freespace|nettoyer mon disque dur
+freespace|j'ai pas assez de place
+space|c'est quoi qui prend toute la place
+space|je veux voir les gros fichiers
+space|ou est passe tout mon stockage
+dupes|j'ai plein de doublons
+dupes|trouver les fichiers en double
+backup|comment sauvegarder mes photos
+backup|je veux faire une sauvegarde de mes fichiers
+backup|sauvegarder mon pc avant de le formater
+backup|copier mes documents sur une cle
+backup|j'ai peur de perdre mes photos
+recover|j'ai supprime un fichier important par erreur
+recover|comment recuperer des photos supprimees
+recover|j'ai efface mes photos de vacances
+recover|recuperer un dossier efface
+recover|mes fichiers ont disparu
+recover|j'ai perdu tous mes documents
+recover|j'ai vide la corbeille et je veux recuperer un fichier
+recover|recuperer des donnees sur un disque dur
+security|je pense avoir un virus
+security|mon pc a un virus
+security|est ce que j'ai un virus
+security|j'ai peur d'avoir ete pirate
+security|on a pris le controle de mon pc
+security|je crois qu'on m'espionne
+security|faire une analyse antivirus
+security|j'ai installe un crack
+security|mon ordinateur est infecte
+hacked|on m'a hacke mon compte discord
+hacked|mon compte steam a ete vole
+hacked|quelqu'un s'est connecte a mon compte
+hacked|j'ai donne mon mot de passe sur un faux site
+hacked|mon compte instagram a ete pirate
+hacked|je me suis fait pirater mon compte
+adware|j'ai des pubs qui s'ouvrent toutes seules
+adware|des notifications bizarres en bas a droite de mon ecran
+adware|google chrome ouvre des sites tout seul
+adware|mon navigateur est rempli de pubs
+adware|j'ai des fausses alertes virus
+adware|des pop up partout
+quarantine|l'antivirus a supprime mon fichier
+quarantine|windows defender bloque mon jeu
+uninstall|comment desinstaller un programme
+uninstall|je veux supprimer un logiciel
+uninstall|enlever les logiciels inutiles
+uninstall|virer norton
+optimize|je veux optimiser mon ordi
+optimize|comment booster mon pc
+optimize|rendre mon ordinateur plus rapide
+newpc|je viens d'acheter un pc
+newpc|j'ai reinstalle windows quoi faire
+newpc|je viens de formater mon ordi
+newpc|mon nouveau disque dur n'apparait pas
+newpc|j'ai un nouveau pc
+newpc|mon ssd neuf n'est pas visible
+stability|je veux tester mon pc
+stability|faire un stress test
+stability|mon overclock est il stable
+stability|faire un benchmark
+memtest|je veux tester ma ram
+memtest|ma ram a un probleme
+memtest|tester mes barrettes de ram
+diskspeed|tester la vitesse de mon ssd
+diskspeed|mon nvme est lent
+temps|mon pc chauffe beaucoup
+temps|mon ordi est tres chaud
+temps|le ventilateur tourne a fond tout le temps
+temps|ma carte graphique monte a 90 degres
+temps|pc tres bruyant
+temps|mon pc portable surchauffe
+temps|comment voir la temperature de mon processeur
+sysinfo|c'est quoi ma carte graphique
+sysinfo|je veux savoir ce que j'ai comme processeur
+sysinfo|combien j'ai de ram
+sysinfo|voir ma config
+display|mon ecran est bloque a 60hz
+display|ecran noir au demarrage
+display|mon deuxieme ecran n'est pas detecte
+display|l'ecran clignote
+display|mon ecran 144hz n'affiche que 60
+battery|ma batterie se vide trop vite
+battery|la batterie de mon pc portable tient plus
+battery|mon pc ne charge plus
+clock|mon pc n'est jamais a l'heure
+clock|la date et l'heure se dereglent
+clock|l'horloge revient en arriere a chaque demarrage
+restore|faire un point de restauration
+history|annuler les changements d'aerox
+remote|j'ai besoin d'aide a distance
+report|j'ai trouve un bug dans aerox
+diag|faire un diagnostic complet
+diag|je sais pas ce qu'a mon pc
+diag|mon pc a un souci
+-|coucou
+-|ca va ?
+-|quelle heure est il
+-|je cherche un bon film
+-|rien
+-|azerty
+-|c'est super merci beaucoup
+-|tu peux me raconter une blague
+-|mon chat est malade
+-|j'ai faim
+slow|slt mon pc est devenu une vraie tortue
+slow|mon pc portable hp met 3 plombes pour ouvrir un dossier
+slow|c lent de ouf
+slow|l'ordi de mon pere rame a mort
+slow|pc qui bug et qui rame depuis que j'ai installe un jeu
+slow|mon pc ralentit quand je regarde une video
+slow|tout se fige pendant quelques secondes
+slow|mon windows est vraiment trop lent
+slow|le pc reagit plus quand je clique
+slow|pk mon ordi lag autant
+slow|mon pc saccade meme sur le bureau
+slow|ordi au ralenti
+startup|mon pc prend 5 bonnes minutes a demarrer
+startup|l'allumage est super long
+startup|y a plein de logiciels qui s'ouvrent quand j'allume
+startup|comment desactiver les programmes au demarrage
+startup|teams se lance a chaque demarrage
+bsod|mon pc a fait un ecran bleu hier soir
+bsod|ecran bleu puis ca redemarre
+bsod|g un ecran bleu des que je lance fortnite
+bsod|le pc a plante avec un message d'erreur bleu
+bsod|redemarrage tout seul en plein travail
+bsod|kernel security check failure
+bsod|ecran bleu avec un code qr
+bsod|mon pc crash tout le temps en jeu
+poweroff|le pc s'eteint tout seul apres 20 min
+poweroff|mon pc se coupe net sans ecran bleu
+poweroff|extinction brutale en jeu
+poweroff|l'ordinateur s'eteint d'un seul coup
+sound|plus de son du tout sur l'ordi
+sound|mon pc n'a plus de son
+sound|le son fonctionne pas sur mon casque
+sound|j'entends plus rien dans mes ecouteurs
+sound|y a pas de son quand je lance une video
+sound|le son est tout pourri il gresille
+sound|mes enceintes ne font plus de bruit
+sound|son hs
+sound|audio qui marche plus apres une mise a jour
+micro|mon micro fonctionne pas sur discord
+micro|les gens m'entendent pas
+micro|micro non detecte
+micro|j'ai un probleme avec mon micro
+micro|mon micro est mort
+micro|personne ne m'entend en vocal
+webcam|ma webcam n'est pas reconnue
+webcam|la camera de mon pc portable marche pas
+webcam|webcam noire sur discord
+printer|l'imprimante n'imprime rien
+printer|impression bloquee dans la file
+printer|mon imprimante canon ne marche plus
+shell|la barre des taches ne marche plus
+shell|ma barre des taches est bloquee je peux plus cliquer
+shell|le bureau ne repond plus
+shell|l'explorateur windows plante tout le temps
+discord|discord affiche un ecran noir
+discord|mon discord ne veut plus s'ouvrir
+discord|discord bloque sur starting
+discord|discord beug
+discord|j'arrive plus a lancer discord
+discord|discord ecran tout gris
+usbdisk|ma cle usb n'est pas reconnue par le pc
+usbdisk|la cle usb ne marche plus
+usbdisk|mon disque dur externe n'est plus detecte
+usbdisk|ma carte sd est illisible
+usbdisk|le pc me dit de formater ma cle usb
+usbdisk|cle usb en raw
+usbdisk|impossible d'ouvrir ma cle usb
+usbdisk|mon disque externe ne s'ouvre plus
+usbdev|ma souris n'est plus reconnue
+usbdev|mon clavier usb ne fonctionne pas
+usbdev|les ports usb de devant marchent pas
+usbdev|ma manette se deconnecte tout le temps
+usbdev|peripherique usb inconnu
+bluetooth|j'arrive pas a connecter mon casque en bluetooth
+bluetooth|le bluetooth ne s'active plus
+bluetooth|mon enceinte bluetooth se connecte pas
+bluetooth|bluetooth introuvable
+bluetooth|mes airpods marchent pas sur le pc
+gamelaunch|gta 5 ne se lance plus
+gamelaunch|mon jeu refuse de demarrer
+gamelaunch|j'ai une erreur dll quand je lance le jeu
+gamelaunch|le jeu se lance pas sur steam
+gamelaunch|cod crash au lancement
+gamelaunch|il manque directx
+gamelaunch|erreur vanguard sur valorant
+gamelaunch|roblox ne s'ouvre plus
+apps|le microsoft store ne marche plus
+apps|le menu demarrer ne s'ouvre pas
+apps|impossible d'ouvrir les parametres
+apps|les applications windows se ferment toutes seules
+sleep|mon pc ne se met plus en veille
+sleep|l'ordi se reveille tout seul
+sleep|le pc se rallume en pleine nuit
+sleep|la veille ne marche pas
+icons|mes icones sont devenues blanches
+icons|les miniatures des videos ne s'affichent pas
+gamesettings|comment gagner des fps
+gamesettings|optimiser mon pc pour jouer
+gamesettings|mes fps sont bas
+repairsys|reparer les fichiers de windows
+repairsys|windows est corrompu je crois
+repairsys|comment faire sfc scannow
+chkdsk|verifier l'etat de mon disque dur
+chkdsk|mon disque fait un bruit bizarre
+chkdsk|y a des erreurs sur mon disque
+wureset|windows update est bloque
+wureset|les mises a jour windows ne passent pas
+wureset|ma mise a jour echoue a chaque fois
+wureset|mise a jour bloquee a 30
+winupdate|je veux mettre a jour windows
+appupdates|mettre a jour tous mes logiciels
+drivers|mettre a jour les pilotes de ma carte graphique
+drivers|j'ai besoin d'installer mes drivers
+drivers|mes pilotes sont pas a jour
+drivers|driver nvidia
+net|internet marche plus sur mon ordi
+net|j'ai plus de wifi
+net|le wifi ne marche pas
+net|pas de connexion internet
+net|mon pc se deconnecte du wifi
+net|internet qui coupe
+net|je suis connecte au wifi mais pas d'internet
+net|plus de net
+net|aucun acces a internet
+net|ethernet non reconnu
+netrepair|reparer internet
+speedtest|test debit
+speedtest|mesurer ma connexion
+lag|ca lag sur valorant
+lag|j'ai trop de ping
+lag|discord lag
+lag|ma voix coupe sur discord
+lag|j'ai du lag en ligne
+lag|ping instable
+freespace|disque dur plein
+freespace|mon pc n'a plus de place
+freespace|il reste 1go sur mon ssd
+freespace|liberer de l'espace disque
+freespace|mon stockage est plein
+freespace|plus assez d'espace
+freespace|comment nettoyer mon pc
+freespace|faire du menage sur mon disque
+space|voir ce qui prend de la place sur mon disque
+space|quels fichiers prennent le plus de place
+dupes|supprimer les fichiers en double
+backup|faire une sauvegarde
+backup|sauvegarder mes donnees
+backup|comment copier mes fichiers sur un disque dur externe
+backup|je veux sauver mes photos
+recover|j'ai supprime mes photos par accident
+recover|recuperer des fichiers effaces
+recover|comment retrouver un fichier supprime
+recover|j'ai perdu mes photos
+recover|mes documents ont disparu
+recover|recuperer des videos supprimees
+security|j'ai peut etre un virus
+security|mon pc est il infecte
+security|je me suis fait pirater mon pc
+security|quelqu'un a acces a mon pc
+security|verifier que mon pc est pas pirate
+security|j'ai un trojan
+hacked|mon compte a ete pirate
+hacked|je me suis fait hacker mon discord
+hacked|on m'a vole mon compte steam
+hacked|quelqu'un utilise mon compte
+adware|j'ai plein de pubs
+adware|des notifications de virus en bas de l'ecran
+adware|mon navigateur ouvre des pubs tout seul
+adware|pop up qui s'ouvrent tout seul
+adware|mon moteur de recherche a ete change
+quarantine|defender a bloque un fichier
+uninstall|desinstaller des programmes
+uninstall|supprimer un jeu
+uninstall|enlever avast
+optimize|optimiser mon ordinateur
+optimize|je veux un pc plus rapide
+newpc|j'ai achete un nouveau pc
+newpc|je viens de reinstaller windows que dois je faire
+newpc|mon nouveau ssd n'est pas detecte
+newpc|pc tout neuf
+stability|tester la stabilite de mon pc
+stability|stress test processeur
+memtest|tester ma memoire ram
+memtest|je pense que ma ram est morte
+diskspeed|mon ssd est trop lent
+diskspeed|mesurer la vitesse de mon disque
+temps|mon pc surchauffe
+temps|le processeur chauffe trop
+temps|ventilateurs tres bruyants
+temps|mon pc souffle fort
+temps|voir la temperature
+sysinfo|quelle est ma carte graphique
+sysinfo|connaitre ma config
+sysinfo|quel est mon processeur
+display|mon ecran reste a 60 hz
+display|ecran noir au lancement de windows
+display|mon ecran saute
+display|second ecran non detecte
+battery|ma batterie tient plus
+battery|la batterie se decharge tres vite
+clock|l'heure de mon pc est fausse
+clock|mon pc perd l'heure
+restore|creer un point de restauration systeme
+history|annuler les modifications
+diag|lancer un diagnostic
+diag|verifier l'etat de mon pc
+diag|mon ordi a un probleme
+-|hello
+-|quoi de neuf
+diag|je sais pas
+-|bonsoir
+-|pizza
+-|j'aime bien cette appli
+-|comment ca marche
+-|c'est gratuit ?
+slow|mon ordinateur est d'une lenteur pas possible
+slow|pc qui met trois plombes a tout faire
+slow|ca rame sec sur mon pc
+slow|mon pc gamer rame alors qu'il est recent
+slow|l'ordi bloque quand j'ouvre trop de choses
+startup|mon pc demarre tres lentement
+startup|comment empecher spotify de se lancer au demarrage
+bsod|mon ordinateur fait des ecrans bleus
+bsod|j'ai des bsod depuis hier
+bsod|pc qui redemarre tout seul pendant que je joue
+poweroff|mon pc s'eteint tout seul quand je lance un jeu
+poweroff|coupure nette du pc en plein jeu
+sound|il n'y a plus de son sur mon ordinateur
+sound|mon ordi fait plus de son
+sound|je n'entends plus rien
+sound|le son de mon casque ne marche pas
+micro|mon micro ne capte pas ma voix
+micro|micro qui ne marche pas sur fortnite
+micro|on ne m'entend pas quand je parle
+webcam|ma cam marche plus
+printer|mon imprimante refuse d'imprimer
+shell|ma barre des taches est figee
+shell|la barre du bas a disparu
+discord|discord ne demarre pas
+discord|mon discord reste noir
+discord|discord qui bug
+usbdisk|ma cle usb est pas detectee
+usbdisk|mon pc ne lit plus ma cle usb
+usbdisk|disque dur externe illisible
+usbdisk|ma carte memoire n'est pas reconnue
+usbdev|mon pc detecte pas ma manette
+usbdev|souris qui se deconnecte
+usbdev|aucun port usb ne fonctionne
+bluetooth|mon bluetooth ne fonctionne plus
+bluetooth|impossible de jumeler mon casque
+gamelaunch|fortnite ne se lance pas
+gamelaunch|impossible de lancer gta
+gamelaunch|mon jeu ne s'ouvre plus
+gamelaunch|j'ai une erreur msvcp140
+apps|le store ne s'ouvre pas
+apps|mon menu demarrer est bloque
+sleep|mon pc sort de veille tout seul
+sleep|impossible de mettre le pc en veille
+icons|les icones sont cassees
+gamesettings|augmenter mes fps
+repairsys|j'ai des fichiers windows endommages
+chkdsk|verifier si mon disque dur est abime
+wureset|les mises a jour de windows sont bloquees
+wureset|windows update affiche une erreur
+drivers|mettre a jour mon pilote graphique
+drivers|installer les drivers de ma carte graphique
+net|mon pc n'a plus internet
+net|j'ai pas de wifi
+net|le wifi coupe sans arret
+net|internet ne fonctionne pas
+net|pas de reseau sur mon pc
+speedtest|quel est mon debit internet
+lag|j'ai du ping sur warzone
+lag|ca lag sur discord
+lag|ma connexion lag en jeu
+freespace|mon disque dur est plein
+freespace|plus de place sur le ssd
+freespace|je n'ai plus d'espace disque
+freespace|faire de la place sur mon pc
+space|qu'est ce qui prend autant de place
+dupes|j'ai des fichiers en double
+backup|sauvegarder mes photos sur un disque externe
+backup|je veux mettre mes fichiers en securite
+recover|j'ai supprime un dossier par erreur
+recover|recuperer mes photos effacees
+recover|mes photos ont ete supprimees
+security|est ce que mon pc a un virus
+security|j'ai un virus sur mon ordinateur
+security|mon pc s'est fait hacker
+hacked|mon compte fortnite a ete pirate
+hacked|on m'a pirate mon instagram
+adware|j'ai des pubs sur mon bureau
+adware|des fenetres de pub s'ouvrent toutes seules
+uninstall|comment supprimer un programme
+optimize|comment optimiser mon pc
+newpc|je viens d'avoir un pc neuf
+newpc|j'ai formate et reinstalle windows
+stability|comment tester si mon pc est stable
+memtest|comment tester ma ram
+diskspeed|tester la vitesse de mon disque dur
+temps|mon pc chauffe trop
+temps|mon ventilateur fait beaucoup de bruit
+temps|temperature trop elevee
+sysinfo|quelle carte graphique ai je
+display|mon ecran est limite a 60hz
+display|j'ai un ecran noir
+battery|ma batterie ne tient pas
+clock|mon horloge se deregle
+diag|faire un diagnostic de mon pc
+diag|j'ai un probleme avec mon pc
+-|yo
+-|trop bien
+-|a demain
+slow|Bonjour, mon ordinateur est devenu extremement lent ces derniers temps
+slow|mon pc mouline pendant des heures
+slow|wsh mon pc il rame trop
+slow|le pc de ma copine est super lent elle peut plus rien faire
+slow/bsod|ordi qui plante et qui rame
+slow|mon pc met 2 min a ouvrir google
+startup|Bonjour mon ordinateur met enormement de temps a demarrer
+startup|il y a trop de logiciels qui se lancent au demarrage de windows
+bsod|Mon ordinateur affiche un ecran bleu avec un message d'erreur
+bsod|wsh j'ai ecran bleu sur ecran bleu
+bsod|mon pc crash avec un ecran bleu quand je joue a warzone
+poweroff|Mon ordinateur s'eteint brusquement sans raison
+poweroff|le pc s'eteint tout seul c'est grave ?
+sound|Je n'ai plus de son sur mon ordinateur
+sound|ya plus de son frr
+sound|le son marche plus depuis que j'ai branche mon casque
+sound|aucun son ne sort
+micro|Mon microphone ne fonctionne plus
+micro|mon micro marche pas sur warzone
+micro|mes potes m'entendent plus
+webcam|Ma webcam ne fonctionne pas
+printer|Mon imprimante ne veut plus imprimer
+printer|imprimante bloquee
+shell|La barre des taches ne fonctionne plus
+shell|ma barre des taches a bug
+discord|Discord ne s'ouvre plus du tout
+discord|discord ecran noir quand je le lance
+discord|discord il s'ouvre pas
+usbdisk|Ma cle USB n'est plus reconnue par mon ordinateur
+usbdisk|ma cle usb elle marche plus
+usbdisk|Mon disque dur externe n'apparait plus
+usbdisk|carte sd pas detectee
+usbdev|Ma souris ne fonctionne plus
+usbdev|ma manette xbox est pas reconnue
+usbdev|les ports usb fonctionnent plus
+bluetooth|Le bluetooth ne fonctionne plus sur mon ordinateur
+bluetooth|mon casque bluetooth veut pas se connecter
+gamelaunch|Mon jeu ne se lance plus
+gamelaunch|gta veut pas se lancer
+gamelaunch|fortnite crash au lancement
+gamelaunch|j'ai un message dll manquante
+apps|Le microsoft store ne s'ouvre plus
+apps|le menu demarrer il marche plus
+sleep|Mon ordinateur se rallume tout seul
+sleep|le pc veut pas se mettre en veille
+icons|Mes icones sont toutes blanches
+gamesettings|comment avoir plus de fps sur fortnite
+repairsys|Je voudrais reparer windows
+chkdsk|Je voudrais verifier mon disque dur
+wureset|Les mises a jour de windows ne s'installent plus
+wureset|windows update bloque a 0%
+drivers|Je voudrais mettre a jour mes pilotes
+drivers|mettre a jour ma carte graphique nvidia
+net|Je n'ai plus internet sur mon ordinateur
+net|ya plus internet
+net|le wifi marche pas sur mon pc
+net|Mon ordinateur ne se connecte plus au wifi
+net|internet coupe tout le temps
+speedtest|Je voudrais tester mon debit
+lag|ca lag de ouf sur fortnite
+lag|j'ai 200 de ping
+lag|discord coupe quand je parle
+freespace|Mon disque dur est plein
+freespace|ya plus de place sur mon pc
+freespace|Je n'ai plus de place sur mon ordinateur
+freespace|je voudrais liberer de la place
+space|Je voudrais savoir ce qui prend de la place
+dupes|Je voudrais supprimer les doublons
+backup|Je voudrais sauvegarder mes photos
+backup|comment je sauvegarde mes fichiers
+recover|J'ai supprime des photos par erreur comment les recuperer
+recover|j'ai efface un fichier important
+recover|recuperer photos supprimees
+security|Je pense que mon ordinateur a un virus
+security|g un virus je crois
+security|mon pc est pirate je pense
+hacked|Mon compte a ete pirate que faire
+hacked|on m'a hack mon compte fortnite
+adware|J'ai plein de publicites qui s'affichent
+adware|ya des pubs partout sur mon pc
+uninstall|Je voudrais desinstaller un logiciel
+optimize|Je voudrais optimiser mon ordinateur
+optimize|comment rendre mon pc plus rapide
+newpc|Je viens d'acheter un nouvel ordinateur
+newpc|j'ai un pc neuf je fais quoi
+stability|Je voudrais tester mon ordinateur
+memtest|Je voudrais tester ma memoire
+diskspeed|Mon ssd est lent
+temps|Mon ordinateur chauffe beaucoup
+temps|mon pc il chauffe de ouf
+temps|le ventilo fait un bruit de malade
+sysinfo|Je voudrais connaitre ma carte graphique
+display|Mon ecran est en 60hz au lieu de 144
+battery|Ma batterie se decharge tres vite
+clock|L'heure de mon ordinateur est toujours fausse
+diag|Je voudrais faire un diagnostic
+diag|mon pc a un probleme
+-|Bonjour comment allez vous
+-|wsh
+-|merci beaucoup pour l'application
