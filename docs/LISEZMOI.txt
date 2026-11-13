@@ -203,9 +203,10 @@ VITESSE DES DISQUES ET BOÎTE NOIRE
   capteurs tournent). Après un écran bleu ou une coupure, le diagnostic montre la
   dernière minute avant. Les relevés restent sur le PC, une heure au plus.
 
-CLÉ USB OU DISQUE EXTERNE ILLISIBLE
------------------------------------
-Onglet Réparation > « Clé USB ou disque externe illisible » : hors ligne, sans lettre,
+DISQUE, CLÉ USB OU CARTE SD ILLISIBLE
+------------------------------------
+Onglet Réparation > « Disque, clé USB ou carte SD illisible » (disques internes compris,
+sauf celui de Windows, et jamais formatés) : hors ligne, sans lettre,
 protégé en écriture, fichiers abîmés (réparés sans rien effacer), formaté pour Mac ou
 Linux, protégé par BitLocker. La remise à neuf, qui efface tout, n'est proposée que si
 Windows ne peut plus rien lire dessus, et jamais sur un disque interne.

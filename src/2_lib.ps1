@@ -7397,7 +7397,7 @@ $script:HelpIntents = @(
        P = @('5:bureau {neg} repond*', '5:bureau repond* {neg}', '7:explorer|explorateur & repond*|plant*|bloque*|fige*', '6:bureau noir|vide', '6:bureau sans|plus icone*', '4:barre des|de|d taches|tache', '3:bureau fige*|bloque*|freez*|plant*', '3:bureau {neg} repond*', '3:explorateur {bug}', '3:explorateur {neg} repond*|marche*|s ouvre*', '5:explorer exe', '4:explorer|explorateur {neg} repond*', '4:explorer|explorateur repond* {neg}', '3:icones du bureau disparu*', '3:clic droit {neg} marche*|fonctionne*', '3:clic droit {bug}', '3:bureau noir', '3:barre du bas', '3:barre en bas {bug}|{neg}', '3:plus de bureau') },
     @{ Id = 'discord'; Also = @('lag', 'micro'); Go = 'A:Repair-Discord'; Pri = 55; N = 'discord|discorde'; Why = "Répare Discord étape par étape : caches, accélération graphique, modules, puis réinstallation propre."
        P = @('6:discord & ecran noir|gris|grise|blanc', '5:discord & {neg} lance*|ouvre*|demarr*', '4:discord ecran noir|gris|blanc', '4:discord {neg} s ouvre*|se lance*|demarr*|s installe*', '4:discord s ouvre*|se lance*|demarr* {neg}', '4:discord update failed', '4:discord mise a jour boucle|bloque*', '3:discord installation', '3:discord charge* infini*', '3:discord tourne dans le vide', '3:discord corrupt*', '4:discord javascript error') },
-    @{ Id = 'usbdisk'; Also = @('recover', 'chkdsk', 'backup'); Go = 'A:Get-ExternalDiskReport'; Pri = 75; Why = "Regarde chaque clé USB, carte mémoire et disque externe branché et dit ce qui cloche."
+    @{ Id = 'usbdisk'; Also = @('recover', 'chkdsk', 'backup'); Go = 'A:Get-ExternalDiskReport'; Pri = 75; Why = "Regarde chaque disque, clé USB et carte mémoire (sauf celui de Windows) et dit ce qui cloche : hors ligne, sans lettre, illisible…"
        P = @('7:{disk} & fait|repond {neg} rien|plus', '6:{disk} & {neg} & {stuff}', '11:{disk} {neg} {unseen} & {getback}', '11:{disk} illisible|morte|mort|hs & {getback}', '7:{disk} & {neg} {unseen}', '7:{disk} plus {unseen}', '6:{disk} {neg} {unseen}', '6:{disk} invisible|disparu*|illisible|mort|morte|hs|grille*', '5:voit|vois|trouve* {neg} {disk}', '5:demande* formate*|formater', '4:{disk} & clignote & {neg}', '5:{disk} & reconnu* & impossible ouvr*', '3:cle usb', '4:cle usb {neg}|{bug}|illisible|reconnu*|detect*', '3:=cle usb', '4:disque externe', '4:disque dur externe', '4:carte sd|memoire|microsd', '4:microsd', '4:illisible', '4:protege* en ecriture', '4:demande de formater', '4:il faut|vous devez formater', '3:formater le disque avant', '4:=usb raw', '3:disque|cle raw', '3:cle {neg} apparait*|reconnu*|detect*|lu*|s affiche*|visible', '3:disque externe {neg} apparait*|reconnu*|detect*', '3:cle {bug}', '3:usb stick', '3:cle abime*|morte|hs|corrompu*', '3:ssd externe', '3:volume ne contient pas de systeme de fichiers', '3:{neg} acces a la cle|au disque', '3:cle vide alors', '2:cle') },
     @{ Id = 'usbdev'; Also = @('usbdisk', 'bluetooth'); Go = 'A:Repair-Usb'; Pri = 54; N = 'souris|clavier|manette|joystick|volant|pedalier'; Why = "Relance les ports USB et empêche Windows de les couper pour économiser l'énergie."
        P = @('4:port* usb', '4:peripherique usb', '4:usb {neg} reconnu*|detect*', '4:usb non reconnu', '3:prise* usb', '3:usb {neg} marche*|fonctionne*', '3:usb {bug}', '3:se deconnecte* reconnecte*', '3:bruit de deconnexion', '3:deconnecte* tout seul usb', '3:souris|clavier|manette se deconnecte*', '3:souris|clavier|manette {neg} reconnu*|detect*|repond*', '3:hub usb', '2:usb') },
@@ -8013,6 +8013,10 @@ function Get-PendingTestResults {
 # ---------------------------------------------------------------- Clé USB / disque externe illisible
 # Seuls les disques branchés en USB ou les cartes mémoire sont concernés : jamais un disque interne.
 $script:ExtBusRx = '(?i)^(USB|SD|MMC)$'
+# Disques internes qui ne sont pas celui de Windows : diagnostiqués et réparés sans risque (en ligne, lettre, lecture
+# seule, réparation des fichiers), JAMAIS formatés. Les disques mis en commun (espaces de stockage, réseau) restent exclus.
+$script:IntExcludeBusRx = '(?i)^(iSCSI|Fibre Channel|Storage Spaces|Spaces|Unknown)$'
+function Test-DataDiskBus([string]$Bus, [bool]$External) { if ($External) { return ($Bus -match $script:ExtBusRx) }; return ($Bus -notmatch $script:ExtBusRx -and $Bus -notmatch $script:IntExcludeBusRx) }
 # Ce qu'il y a vraiment au début d'une partition que Windows dit « illisible » : chiffrée, d'un autre système, vide, abîmée
 function ConvertTo-FsSignature([byte[]]$B) {
     if (-not $B -or $B.Length -lt 2048) { return '' }
@@ -8062,11 +8066,11 @@ function Test-ExtDiskFormattable($D) {
     }
     return $true
 }
-function Get-ExternalDisks {
+function Get-ExternalDisks([switch]$Internal) {
     $out = New-Object System.Collections.ArrayList
-    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { "$($_.BusType)" -match $script:ExtBusRx -and -not $_.IsBoot -and -not $_.IsSystem })) {
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and ((Test-DataDiskBus "$($_.BusType)" $true) -or ($Internal -and (Test-DataDiskBus "$($_.BusType)" $false))) })) {
         $n = [int]$d.Number
-        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false }
+        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false; Internal = -not ("$($d.BusType)" -match $script:ExtBusRx) }
         if (-not $o.IsOffline -and $o.Size -gt 0) {
             $parts = New-Object System.Collections.ArrayList
             foreach ($pt in @(Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' })) {
@@ -8086,20 +8090,21 @@ function Get-ExternalDisks {
     return $out.ToArray()
 }
 # Garde-fou commun à toutes les réparations : c'est bien un disque externe, et bien celui affiché
-function Get-ExtDiskChecked([int]$Number, [string]$Id) {
+function Get-ExtDiskChecked([int]$Number, [string]$Id, [switch]$AllowInternal) {
     $d = Get-Disk -Number $Number -ErrorAction Stop
-    if ("$($d.BusType)" -notmatch $script:ExtBusRx) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    $okBus = (Test-DataDiskBus "$($d.BusType)" $true) -or ($AllowInternal -and (Test-DataDiskBus "$($d.BusType)" $false))
+    if (-not $okBus) { throw $(if ($AllowInternal) { "Ce type de disque n'est pas pris en charge : rien n'a été touché." } else { "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }) }
     if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
     if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché (débranché ?) : rien n'a été touché." }
     return $d
 }
 function Set-ExtDiskOnline([int]$Number, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     Set-Disk -Number $Number -IsOffline $false -ErrorAction Stop
     Log "   ✔ Disque remis en ligne : Windows peut de nouveau le lire."
 }
 function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {}
     if ((Get-Disk -Number $Number).IsReadOnly) {
         Add-TaskError -Title "La protection en écriture ne s'enlève pas" -Cause "Le disque refuse : soit il a un verrou physique (petit loquet sur le côté d'une carte SD ou d'un adaptateur), soit sa mémoire est en fin de vie et il s'est bloqué en lecture seule pour protéger ce qu'il contient." -Effect "Tu peux lire les fichiers mais plus rien écrire ni effacer." `
@@ -8107,7 +8112,7 @@ function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
     } else { Log "   ✔ Protection en écriture enlevée : tu peux de nouveau écrire sur le disque." }
 }
 function Add-ExtDiskLetter([int]$Number, [int]$Part, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     $pt = Get-Partition -DiskNumber $Number -PartitionNumber $Part -ErrorAction Stop
     try { Set-Partition -DiskNumber $Number -PartitionNumber $Part -NoDefaultDriveLetter $false -IsHidden $false -ErrorAction Stop } catch {}
     $pt | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
@@ -8118,7 +8123,8 @@ function Repair-ExternalVolume([string]$Letter) {
     if ($Letter -notmatch '^[A-Za-z]$') { throw "lettre de lecteur invalide" }
     $pt = Get-Partition -DriveLetter $Letter -ErrorAction Stop
     $d = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop
-    if ("$($d.BusType)" -notmatch $script:ExtBusRx -or $d.IsBoot -or $d.IsSystem) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
+    if (-not ((Test-DataDiskBus "$($d.BusType)" $true) -or (Test-DataDiskBus "$($d.BusType)" $false))) { throw "Ce type de disque n'est pas pris en charge : rien n'a été touché." }
     Step "Réparation des fichiers du disque ${Letter}:"
     Log "   Ne débranche pas le disque. Ferme les fenêtres de l'Explorateur ouvertes dessus."
     $ok = $false
@@ -8152,15 +8158,44 @@ function Format-ExternalDisk([int]$Number, [string]$Id) {
 }
 # Carte « Clé USB ou disque externe illisible » : tout ce qui est branché, ce qui cloche, et le bouton qui va avec
 function Get-ExternalDiskReport {
-    Step "Clés USB et disques externes : ce que Windows voit"
+    Step "Disques, clés USB et cartes mémoire : ce que Windows voit"
     $null = Invoke-Native 'pnputil.exe' @('/scan-devices') -Quiet
     Start-Sleep -Seconds 2
-    $disks = @(Get-ExternalDisks)
+    $all = @(Get-ExternalDisks -Internal)
+    $disks = @($all | Where-Object { -not $_.Internal })
+    $inner = @($all | Where-Object { $_.Internal })
+    # Disques internes (pas celui de Windows) : seulement s'ils ont un problème, et jamais de formatage
+    $innerBad = 0
+    foreach ($d in $inner) {
+        $nm = if ($d.Name) { $d.Name } else { "Disque $($d.Number)" }
+        $idL = ConvertTo-PsLiteral $d.Id
+        $pb = @(Get-ExtDiskProblems $d)
+        Log ("   {0} ({1}, interne){2}" -f $nm, (Format-Size $d.Size), $(if ($pb.Count) { '' } else { ' : lisible, rien d''anormal' }))
+        if (-not $pb.Count) { continue }
+        $innerBad++
+        foreach ($x in $pb) {
+            switch ($x.Kind) {
+                'offline' { Add-TaskError -Title "Le disque interne « $nm » est hors ligne" -Cause "Windows a mis ce disque hors ligne (souvent après un changement de carte mère, un clonage ou une réinstallation)." -Effect "Il n'apparaît pas dans l'Explorateur, mais ce qui est dessus n'est pas perdu." -FixLabel "Le remettre en ligne" -FixAction "Set-ExtDiskOnline $($d.Number) $idL" }
+                'readonly' { Add-TaskError -Title "Le disque interne « $nm » est en lecture seule" -Cause "Le disque est marqué « lecture seule » : par un réglage de Windows, ou parce qu'il fatigue (certains SSD se bloquent en lecture seule en fin de vie)." -Effect "Impossible d'y écrire ou d'y installer quelque chose." -FixLabel "Enlever la lecture seule" -FixAction "Clear-ExtDiskReadOnly $($d.Number) $idL" -Steps @("Clique sur le bouton.", "Si ça revient tout seul : copie tes fichiers ailleurs tout de suite et regarde la santé du disque dans le diagnostic.") }
+                'noletter' { Add-TaskError -Title "Le disque interne « $nm » n'a pas de lettre" -Cause "Le disque est sain ($($x.Fs)) mais Windows ne lui a pas donné de lettre (D:, E:…), souvent après une réinstallation de Windows." -Effect "Il n'apparaît pas dans l'Explorateur alors que tes fichiers sont dessus." -FixLabel "Lui donner une lettre" -FixAction "Add-ExtDiskLetter $($d.Number) $($x.Part) $idL" }
+                'dirty' { Add-TaskError -Title "Le disque interne « $nm » ($($x.Letter):) a des erreurs de fichiers" -Cause "Coupure de courant ou arrêt forcé pendant une écriture : l'index des fichiers est abîmé." -Effect "Fichiers illisibles, dossiers vides, copies qui échouent." -FixLabel "Réparer (tes fichiers restent)" -FixAction "Repair-ExternalVolume '$($x.Letter)'" -Confirm "Windows va vérifier et réparer le disque $($x.Letter): sans effacer tes fichiers.`n`nFerme ce qui utilise ce disque (jeux, dossiers ouverts). Continuer ?" }
+                'bitlocker' { Log "     • Partition protégée par BitLocker : elle n'est pas en panne. Ouvre-la dans l'Explorateur et entre son mot de passe ou sa clé de récupération (compte Microsoft > Appareils > Clés de récupération)." }
+                'foreign' { Log ("     • Partition {0} : formatée pour {1}, Windows ne sait pas la lire. Elle n'est pas en panne (double démarrage ?) : AEROX n'y touche pas." -f $x.Part, $(if ($x.Sig -eq 'mac') { 'Mac' } else { 'Linux' })) }
+                default {
+                    if ($x.Kind -eq 'empty' -and $x.Blank) { Log "     • Disque complètement vierge : pour qu'il apparaisse en D:, utilise « PC neuf ou Windows réinstallé » (Accueil), qui le prépare sans risque."; continue }
+                    $t = switch ($x.Kind) { 'empty' { "Le disque interne « $nm » n'a plus de partition" } 'unformatted' { "Une partition du disque interne « $nm » n'est pas formatée" } 'damaged' { "Le disque interne « $nm » : système de fichiers abîmé" } default { "Le disque interne « $nm » est illisible" } }
+                    Add-TaskError -Title $t -Cause "Windows ne peut plus lire la liste des fichiers : coupure pendant une écriture, disque qui fatigue, ou partition effacée par erreur." -Effect "Le disque n'apparaît pas, ou Windows propose de le formater. Ne formate pas : ça effacerait ce qui est encore récupérable." `
+                        -Steps @("Ne formate pas et n'écris rien dessus.", "Récupère d'abord tes fichiers : carte « Récupérer des fichiers effacés » (elle lit le disque sans rien écrire), ou un service de récupération si c'est très important.", "Regarde la santé du disque dans le diagnostic : un disque qui fatigue se remplace.", "AEROX ne formate jamais un disque interne.")
+                }
+            }
+        }
+    }
     if (-not $disks.Count) {
-        Log "   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment."
+        if ($innerBad) { return }
+        Log ("   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment{0}." -f $(if ($inner.Count) { ", et tes disques internes sont lisibles" } else { '' }))
         Add-TaskError -Title "Aucun disque externe n'est vu par Windows" -Cause "Si ta clé ou ton disque est branché, il ne répond pas du tout : le port USB, le câble, l'alimentation du disque, ou le disque lui-même." -Effect "Rien n'apparaît dans l'Explorateur." `
             -FixLabel "Relancer les ports USB" -FixAction 'Repair-Usb' `
-            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.")
+            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.", "Disque dur ou SSD INTERNE qui a disparu : PC éteint et débranché, vérifie que ses deux câbles (données et alimentation) sont bien enfoncés, puis regarde s'il apparaît dans le BIOS. S'il n'y est pas, il est en panne ou mal branché.")
         return
     }
     $okAll = $true

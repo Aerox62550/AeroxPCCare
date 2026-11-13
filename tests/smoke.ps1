@@ -560,6 +560,58 @@ function Invoke-Smoke {
         Is 'jamais : hors ligne' (Test-ExtDiskFormattable (D @{ IsOffline = $true })) $false
         Is 'jamais : lecteur sans carte' (Test-ExtDiskFormattable (D @{ Size = 0 })) $false
     }
+    Smoke 'Disque interne (pas celui de Windows) : sans lettre, hors ligne, réparé ; jamais formaté' {
+        $vhd = 'C:\aerox\test-interne.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        try {
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk-int.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=4096 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            $id = "$((Get-Disk -Number $n).UniqueId)"
+            Initialize-EmptyDisk $n $id
+            $pt = @(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0]
+            [IO.File]::WriteAllText("$($pt.DriveLetter):\a-garder.txt", 'mes fichiers')
+            if (@(Get-ExternalDisks | Where-Object { $_.Number -eq $n }).Count) { throw "disque interne listé sans -Internal" }
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            if (-not $me -or -not $me.Internal) { throw "disque interne non listé avec -Internal (bus $((Get-Disk -Number $n).BusType))" }
+            if (@(Get-ExtDiskProblems $me).Count) { throw "disque sain vu en panne : $(@(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind }) -join ', ')" }
+            # Sans lettre (comme après une réinstallation)
+            $letter = "$($pt.DriveLetter)"
+            Remove-PartitionAccessPath -DiskNumber $n -PartitionNumber $pt.PartitionNumber -AccessPath "${letter}:\" -ErrorAction Stop
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            $k = @(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind })
+            if ($k -notcontains 'noletter') { throw "disque sans lettre pas vu : $($k -join ', ')" }
+            $sync.Errors.Clear(); Get-ExternalDiskReport
+            $e = @($sync.Errors | Where-Object { $_.Title -match "interne" -and $_.Title -match 'lettre' })
+            if (-not $e.Count) { throw "le rapport ne propose pas de donner une lettre : $(@($sync.Errors | ForEach-Object { $_.Title }) -join ' | ')" }
+            Write-Host ("        rapport : {0} → bouton « {1} »" -f $e[0].Title, $e[0].FixLabel)
+            if (@($sync.Errors | Where-Object { "$($_.FixAction)" -like 'Format-*' }).Count) { throw "formatage proposé pour un disque interne" }
+            Add-ExtDiskLetter $n $pt.PartitionNumber $id
+            $nl = "$((Get-Partition -DiskNumber $n -PartitionNumber $pt.PartitionNumber).DriveLetter)"
+            if ($nl -notmatch '^[A-Z]$' -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "lettre pas rendue ou fichier perdu" }
+            # Hors ligne
+            Set-Disk -Number $n -IsOffline $true
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            if (@(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind }) -notcontains 'offline') { throw "disque hors ligne pas vu" }
+            Set-ExtDiskOnline $n $id
+            if ((Get-Disk -Number $n).IsOffline) { throw "pas remis en ligne" }
+            Start-Sleep -Seconds 2
+            # Réparation des fichiers (sans rien effacer)
+            $nl = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            $sync.Errors.Clear(); Repair-ExternalVolume $nl
+            if ($sync.Errors.Count -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "réparation échouée ou fichier perdu" }
+            # Jamais de formatage d'un disque interne, même illisible
+            $before = @(Get-Partition -DiskNumber $n).Count
+            $refused = $false; try { Format-ExternalDisk $n $id } catch { $refused = $true }
+            if (-not $refused -or @(Get-Partition -DiskNumber $n).Count -ne $before -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "UN DISQUE INTERNE A PU ÊTRE FORMATÉ" }
+        } finally {
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
+    }
     Smoke 'Disque externe : un disque interne est toujours refusé' {
         $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
         $n = [int]$sys.Number; $id = "$($sys.UniqueId)"; $before = @(Get-Partition -DiskNumber $n).Count
