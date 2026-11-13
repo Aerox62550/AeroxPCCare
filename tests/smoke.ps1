@@ -129,6 +129,15 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    Smoke 'Pings rapides : réponse lue, ping perdu abandonné au bout d une seconde' {
+        $r = @(Send-Pings '127.0.0.1' 3 1000)
+        if ($r.Count -ne 3) { throw "ping local : $($r.Count) réponse(s) sur 3" }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = @(Send-Pings '192.0.2.1' 2 500)
+        if ($r.Count -or $sw.Elapsed.TotalSeconds -gt 3) { throw ("adresse injoignable : {0} réponse(s) en {1:N1} s" -f $r.Count, $sw.Elapsed.TotalSeconds) }
+        $n = Get-NetworkStatus
+        Write-Host ("        réseau : box {0}, Internet {1} ({2} ms), DNS {3}" -f $n.GwOk, $n.Internet, $n.Avg, $n.Dns)
+    }
     Smoke 'Attente limitée (Windows Update lent) et anciens pilotes gardés après un écran bleu' {
         $r = Invoke-WithTimeout { 40 + 2 } 10
         if (-not $r.Done -or @($r.Out)[-1] -ne 42) { throw "résultat pas rendu" }

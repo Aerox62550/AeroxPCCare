@@ -585,18 +585,39 @@ function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
 function Request-Reboot { $sync.NeedReboot = $true; Log "   → Un redémarrage va t'être proposé." }
 
 # ---------------------------------------------------------------- Réseau (utilisé par le diagnostic et l'action)
+# Pings envoyés par .NET : 1 seconde au plus par ping perdu (la commande standard attend bien plus longtemps, ce qui
+# coûtait jusqu'à 30 secondes au diagnostic sur une connexion qui perd des paquets). Renvoie les temps de réponse.
+function Send-Pings([string]$Target, [int]$Count = 4, [int]$TimeoutMs = 1000, [switch]$StopOnFirst) {
+    $out = New-Object System.Collections.ArrayList
+    if (-not $Target) { return @() }
+    $p = New-Object System.Net.NetworkInformation.Ping
+    try {
+        for ($i = 0; $i -lt $Count; $i++) {
+            try { $r = $p.Send($Target, $TimeoutMs); if ($r.Status -eq 'Success') { [void]$out.Add([int]$r.RoundtripTime); if ($StopOnFirst) { break } } } catch {}
+        }
+    } finally { $p.Dispose() }
+    return $out.ToArray()
+}
+# Chronomètre une partie du diagnostic (temps visibles dans les tests, pour repérer ce qui ralentit)
+function Measure-DiagPart([string]$Name, [scriptblock]$Block) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    # Le résultat du bloc est renvoyé tel quel (une variable affectée DANS le bloc ne ressort pas : utiliser le résultat)
+    try { & $Block } finally { if ($sync.DiagTimes -is [Collections.IDictionary]) { $sync.DiagTimes[$Name] = [math]::Round($sw.Elapsed.TotalSeconds, 1) } }
+}
 function Get-NetworkStatus {
     $st = @{ Route = $false; Gw = ''; GwOk = $false; Internet = $false; Avg = 0; Dns = $false; Signal = -1 }
     $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
     if (-not $route) { return $st }
     $st.Route = $true; $st.Gw = $route.NextHop
-    $st.GwOk = [bool](Test-Connection -ComputerName $route.NextHop -Count 2 -Quiet -ErrorAction SilentlyContinue)
-    $net = Test-Connection -ComputerName 1.1.1.1 -Count 4 -ErrorAction SilentlyContinue
-    if (-not $net) { $net = Test-Connection -ComputerName 8.8.8.8 -Count 2 -ErrorAction SilentlyContinue }
-    if ($net) { $st.Internet = $true; $st.Avg = [math]::Round(($net | Measure-Object -Property ResponseTime -Average).Average) }
-    try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $st.Dns = $true } catch {}
-    $wlan = (netsh.exe wlan show interfaces 2>$null) | Out-String
-    if ($wlan -match 'Signal\s*:\s*(\d+)\s*%') { $st.Signal = [int]$matches[1] }
+    $null = Measure-DiagPart 'Réseau · ping box' { $st.GwOk = [bool]@(Send-Pings $route.NextHop 2 1000 -StopOnFirst).Count }
+    $null = Measure-DiagPart 'Réseau · ping Internet' {
+        $rt = @(Send-Pings '1.1.1.1' 4 1000)
+        if (-not $rt.Count) { $rt = @(Send-Pings '8.8.8.8' 2 1000) }
+        if ($rt.Count) { $st.Internet = $true; $st.Avg = [math]::Round(($rt | Measure-Object -Average).Average) }
+    }
+    $null = Measure-DiagPart 'Réseau · DNS' { try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $st.Dns = $true } catch {} }
+    $wlan = Measure-DiagPart 'Réseau · Wi-Fi' { (netsh.exe wlan show interfaces 2>$null) | Out-String }
+    if ("$wlan" -match 'Signal\s*:\s*(\d+)\s*%') { $st.Signal = [int]$matches[1] }
     return $st
 }
 
@@ -4163,8 +4184,8 @@ function Test-ConnectionStability {
     try {
         $srv = @((Get-DnsClientServerAddress -InterfaceIndex $a.Index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object { $_ })
         if (-not $srv.Count -or $srv[0] -in '1.1.1.1', '1.0.0.1') { throw 'pas de mesure' }
-        $mine = Measure-Dns $srv[0]
-        $cf = Measure-Dns '1.1.1.1'
+        $dm = @(Measure-DiagPart 'Réseau · vitesse DNS' { Measure-Dns $srv[0]; Measure-Dns '1.1.1.1' })
+        $mine = $dm[0]; $cf = $dm[1]
         if ($mine -ge 2000 -or $cf -ge 2000) { throw 'mesure impossible' }
         if ($mine -ge 80 -and $mine -ge 2 * $cf) {
             Add-Issue -Id 'dnsslow' -Sev 'warn' -Title ("Les DNS de ta connexion sont lents ({0} ms)" -f $mine) -Detail ("Cloudflare (1.1.1.1) répond en {0} ms" -f $cf) `
@@ -4606,7 +4627,7 @@ function Test-Network {
                 -Steps @("Le mieux : branche un câble Ethernet entre le PC et la box.", "Sinon : rapproche la box ou ajoute un répéteur Wi-Fi / CPL.", "Évite de poser la box dans un meuble fermé.")
         } else { Add-Ok "Signal Wi-Fi correct ($($n.Signal) %)" }
     }
-    if ($n.Internet -or $n.Dns) { Test-ConnectionStability; Test-NetBlockers }
+    if ($n.Internet -or $n.Dns) { $null = Measure-DiagPart 'Réseau · stabilité' { Test-ConnectionStability }; $null = Measure-DiagPart 'Réseau · blocages' { Test-NetBlockers } }
 }
 
 # ---------------------------------------------------------------- Ce qui empêche des sites ou des téléchargements de passer
@@ -4668,7 +4689,7 @@ function Test-NetBlockers {
             -Steps @("Le bouton retire seulement les lignes de ces sites (copie de sauvegarde gardée).", "Puis fais une analyse antivirus complète (Windows Defender > Analyse complète).")
     } else { Add-Ok "Aucun site important détourné (fichier hosts)" }
     # 3. Heure du PC
-    $sk = Get-ClockSkew
+    $sk = Measure-DiagPart 'Réseau · heure' { Get-ClockSkew }
     if ($null -ne $sk -and [math]::Abs($sk) -ge 300) {
         $mins = [math]::Round([math]::Abs($sk) / 60)
         $txt = if ($mins -ge 120) { "{0} h" -f [math]::Round($mins / 60) } else { "$mins min" }
