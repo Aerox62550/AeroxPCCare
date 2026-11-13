@@ -582,7 +582,7 @@ function Invoke-Smoke {
         try {
             if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
             $sc = Join-Path $env:TEMP 'aerox-vdisk-int.txt'
-            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=4096 type=expandable", 'attach vdisk') -Encoding ASCII
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
             $null = & diskpart.exe /s $sc
             $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
             if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
