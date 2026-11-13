@@ -611,8 +611,9 @@ function Get-NetworkStatus {
     $st.Route = $true; $st.Gw = $route.NextHop
     $null = Measure-DiagPart 'Réseau · ping box' { $st.GwOk = [bool]@(Send-Pings $route.NextHop 2 1000 -StopOnFirst).Count }
     $null = Measure-DiagPart 'Réseau · ping Internet' {
-        $rt = @(Send-Pings '1.1.1.1' 4 1000)
-        if (-not $rt.Count) { $rt = @(Send-Pings '8.8.8.8' 2 1000) }
+        # 2 essais d'abord : si l'un répond, 2 de plus pour la moyenne ; sinon un autre serveur (ping bloqué sur ce réseau ?)
+        $rt = @(Send-Pings '1.1.1.1' 2 1000)
+        if ($rt.Count) { $rt = @($rt) + @(Send-Pings '1.1.1.1' 2 1000) } else { $rt = @(Send-Pings '8.8.8.8' 2 1000) }
         if ($rt.Count) { $st.Internet = $true; $st.Avg = [math]::Round(($rt | Measure-Object -Average).Average) }
     }
     $null = Measure-DiagPart 'Réseau · DNS' { try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $st.Dns = $true } catch {} }

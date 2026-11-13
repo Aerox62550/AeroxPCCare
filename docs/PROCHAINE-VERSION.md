@@ -2,6 +2,14 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.6.0 : disques internes, anciens pilotes, PC neuf plus rapide, diagnostic 3 fois plus rapide (« améliore à fond », Sam le 13/11)
+
+- **Disque, clé USB ou carte SD illisible** (ex « Clé USB ou disque externe illisible ») : les disques internes qui ne sont pas celui de Windows sont aussi regardés (`Get-ExternalDisks -Internal`) : hors ligne, sans lettre, lecture seule, fichiers abîmés, avec les mêmes boutons. Jamais de formatage d'un disque interne (`Format-ExternalDisk` exige toujours un bus USB / SD / MMC) ; disque interne vierge → renvoyé vers « PC neuf ». Exclus : espaces de stockage, iSCSI, Fibre Channel. Vérifié sur Windows avec un disque virtuel : lettre retirée puis rendue, hors ligne puis en ligne, réparation, formatage refusé, fichier toujours là.
+- **Anciens pilotes gardés après un écran bleu** (30 derniers jours, `Test-RecentBsod`) : la version juste précédente de chaque pilote n'est plus proposée à la suppression, et le Nettoyage de disque de Windows est lancé sans « Device Driver Packages » : « Restaurer le pilote » reste possible.
+- **PC neuf** : recherche Windows Update dans un bloc à part, abandonnée au bout de 2 minutes (`Invoke-WithTimeout`) : « Windows Update est lent à répondre » + bouton « Chercher ».
+- **Diagnostic** : 57 s → 16 à 21 s sur la machine de test. Le réseau prenait 39 s (pings perdus attendus longtemps) : pings par .NET, 1 s au plus par ping perdu (`Send-Pings`), même logique (une réponse suffit, moyenne sur les réponses). Temps de chaque étape et de chaque partie du réseau mesurés (`$sync.DiagTimes`, `Measure-DiagPart`), affichés par les tests.
+- **Quel est ton problème ?** : série 9 (77 phrases orales, jamais vues : 87 %), règles réduites à un mot vide corrigées (« erreur », « exprès ») et bloquées par le test, liste de mots courants jamais « corrigés » (« regarde » n'est pas « retarde »). 1 509 phrases de test.
+
 ## Publié en 3.5.1 : « Quel est ton problème ? » renforcé (première vraie phrase de Sam ratée, 13/11)
 
 - Phrase de Sam : « DISQUE DUR plus reconnu besoin de recuperer des choses dessus et savoir ce quil a » → seulement « Ce qui prend de la place ». Causes : une règle réduite au seul mot « dessus » ; « disque dur » non reconnu (seulement « disque externe ») ; « récupérer des choses » non reconnu.
