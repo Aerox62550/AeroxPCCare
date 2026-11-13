@@ -7095,18 +7095,22 @@ function ConvertTo-HelpTokens([string]$Text, [switch]$NoFix) {
 function Get-EditDistance([string]$A, [string]$B) {
     $n = $A.Length; $m = $B.Length
     if ([math]::Abs($n - $m) -gt 2) { return 3 }
-    $d = New-Object 'int[,]' ($n + 1), ($m + 1)
-    for ($i = 0; $i -le $n; $i++) { $d[$i, 0] = $i }
-    for ($j = 0; $j -le $m; $j++) { $d[0, $j] = $j }
+    # Trois lignes d'un tableau à une dimension (la ligne d'avant-avant sert aux deux lettres inversées)
+    $pp = New-Object 'int[]' ($m + 1); $pr = New-Object 'int[]' ($m + 1); $cu = New-Object 'int[]' ($m + 1)
+    for ($j = 0; $j -le $m; $j++) { $pr[$j] = $j }
     for ($i = 1; $i -le $n; $i++) {
+        $cu[0] = $i
         for ($j = 1; $j -le $m; $j++) {
             $c = if ($A[$i - 1] -ceq $B[$j - 1]) { 0 } else { 1 }
-            $v = [math]::Min([math]::Min($d[($i - 1), $j] + 1, $d[$i, ($j - 1)] + 1), $d[($i - 1), ($j - 1)] + $c)
-            if ($i -gt 1 -and $j -gt 1 -and $A[$i - 1] -ceq $B[$j - 2] -and $A[$i - 2] -ceq $B[$j - 1]) { $v = [math]::Min($v, $d[($i - 2), ($j - 2)] + 1) }
-            $d[$i, $j] = $v
+            $v = $pr[$j] + 1
+            $x = $cu[$j - 1] + 1; if ($x -lt $v) { $v = $x }
+            $x = $pr[$j - 1] + $c; if ($x -lt $v) { $v = $x }
+            if ($i -gt 1 -and $j -gt 1 -and $A[$i - 1] -ceq $B[$j - 2] -and $A[$i - 2] -ceq $B[$j - 1]) { $x = $pp[$j - 2] + 1; if ($x -lt $v) { $v = $x } }
+            $cu[$j] = $v
         }
+        $t = $pp; $pp = $pr; $pr = $cu; $cu = $t
     }
-    return $d[$n, $m]
+    return $pr[$m]
 }
 # Faute de frappe : un mot inconnu est ramené au mot connu le plus proche (même première lettre ; une faute pour un mot
 # de 5 lettres et plus, deux à partir de 9). Jamais sur un mot avec des chiffres, ni vers un mot marqué « ! ».
