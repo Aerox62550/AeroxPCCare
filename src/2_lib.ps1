@@ -7033,6 +7033,343 @@ function Reset-WindowsUpdate {
     } else { Log "✅ Windows Update remis à zéro." }
 }
 
+# ---------------------------------------------------------------- « Quel est ton problème ? » : du texte libre vers la bonne carte
+# Tout se passe sur le PC : le texte est découpé en mots (sans accents, fautes courantes tolérées) et comparé à des
+# expressions écrites à l'avance pour chaque dépannage. Rien n'est envoyé, rien n'est deviné : sans expression reconnue,
+# AEROX le dit et propose le diagnostic complet.
+#
+# Écriture d'une expression : des mots séparés par des espaces, à retrouver dans cet ordre avec au plus 3 mots entre
+# deux (« pas son » reconnaît « pas de son », « plus aucun son »). « a|b » = l'un ou l'autre, « plant* » = commence par,
+# « =c plein » = mots collés. {neg} {bug} {ok} = listes ci-dessous.
+$script:HelpSets = @{
+    neg = 'pas|plus|aucun|aucune|rien|sans|jamais|impossible|ni|non|refuse|refusent'
+    bug = 'bug*|beug*|bogue*|probleme|plant*|crash*|hs|mort|morte|foutu*|casse*|nul|nulle|merd*|galer*|deconn*|saut*|coup*|gresill*|grezill*|bizarre*|chelou|defaill*|panne|erreur*|bloque*|fige*|freez*|disparu*'
+    ok  = 'marche|fonctionne|ok|nickel|niquel|bien|impec*|parfait*|normal*'
+    game = 'jeu|gta|fortnite|valorant|warzone|cod|minecraft|roblox|lol|apex|fifa|fc25|cs2|rocket|forza|cyberpunk|overwatch|rust|pubg|league|sims|fivem|elden|palworld|helldivers'
+}
+# Mots ramenés à une seule forme avant la comparaison
+# Petits mots sans valeur pour reconnaître un sujet : retirés du texte comme des expressions
+$script:HelpFill = @{}
+foreach ($w in 'le la les l un une des du de d a au aux en mon ma mes ton ta tes sa ses ce cet cette ces je j tu il elle on ils elles nous vous me m te t se s y que qu ne n est sont ai as ont suis es etait sur dans pour avec chez vers par tres super vraiment hyper grave carrement completement totalement vachement juste aussi encore deja bon ben bah euh alors voila svp stp merci bonjour salut sonposs'.Split(' ')) { $script:HelpFill[$w] = $true }
+# « son » : le son du PC, ou « son PC » (le sien) ? Possessif quand il n'est pas précédé d'un article et qu'un nom le suit.
+$script:HelpSonBefore = @{}; foreach ($w in 'le du de d aucun pas plus sans mon un probleme ce quel niveau volume avec ni ton bug souci'.Split(' ')) { $script:HelpSonBefore[$w] = $true }
+$script:HelpSonAfter = '^(marche|fonctionne|ne|n|est|qui|sort|gresill|grezill|saut|coup|crach|satur|a|du|de|pas|plus|hs|mort|nul|bug|beug|bizarre|faible|fort|bas|trop|tres|se|s|deconn|audio|windows|sur|dans|en|au|par|quand|depuis|apres|\|)'
+$script:HelpAlias = @{
+    ordi = 'pc'; ordinateur = 'pc'; ordinateurs = 'pc'; ordis = 'pc'; machine = 'pc'; laptop = 'pc'; tour = 'pc'; computer = 'pc'; becane = 'pc'
+    pb = 'probleme'; pbm = 'probleme'; pbs = 'probleme'; prblm = 'probleme'; problemes = 'probleme'; souci = 'probleme'; soucis = 'probleme'; soucie = 'probleme'; soucy = 'probleme'; blem = 'probleme'
+    pa = 'pas'; po = 'pas'; plu = 'plus'; tro = 'trop'; tjr = 'toujours'; tjrs = 'toujours'; mn = 'mon'; mo = 'mon'
+    marchent = 'marche'; marchait = 'marche'; marches = 'marche'; march = 'marche'; fonctionnent = 'fonctionne'; fonctionnait = 'fonctionne'; fonctione = 'fonctionne'; fonctionn = 'fonctionne'; fct = 'fonctionne'
+    wi = 'wifi'; internete = 'internet'; inter = 'internet'; co = 'connexion'; conexion = 'connexion'; connection = 'connexion'; connex = 'connexion'
+    windaube = 'windows'; win = 'windows'; window = 'windows'; windos = 'windows'; windobe = 'windows'
+    cg = 'carte graphique'; gpu = 'carte graphique'; proc = 'processeur'; cpu = 'processeur'; processor = 'processeur'
+    dd = 'disque dur'; hdd = 'disque dur'; maj = 'mise a jour'; majs = 'mise a jour'; mises = 'mise'
+    appli = 'application'; applis = 'application'; app = 'application'; apps = 'application'; applications = 'application'; logiciels = 'logiciel'; programmes = 'logiciel'; programme = 'logiciel'; soft = 'logiciel'; softs = 'logiciel'
+    jeux = 'jeu'; game = 'jeu'; games = 'jeu'; clef = 'cle'; clefs = 'cle'; cles = 'cle'
+    ecrans = 'ecran'; ecrant = 'ecran'; ecren = 'ecran'; blue = 'bleu'; bleue = 'bleu'; bleus = 'bleu'; bleux = 'bleu'
+}
+function ConvertTo-HelpTokens([string]$Text, [switch]$NoFix) {
+    $t = "$Text".ToLowerInvariant().Replace('œ', 'oe').Replace('æ', 'ae')
+    $sb = New-Object Text.StringBuilder
+    foreach ($ch in $t.Normalize([Text.NormalizationForm]::FormD).ToCharArray()) { if ([Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [Globalization.UnicodeCategory]::NonSpacingMark) { [void]$sb.Append($ch) } }
+    $t = $sb.ToString()
+    $t = $t -replace 'micro[- ]?sd', 'microsd' -replace 'blue ?screen', 'ecran bleu' -replace 'ecranbleu', 'ecran bleu'
+    $t = $t -replace ':\(', ' smileytriste ' -replace '100\s*%', ' centpourcent ' -replace '&', ' et '
+    # Les coupures de phrase deviennent une borne « | » : une expression ne les enjambe presque pas
+    $t = $t -replace '[.!?;,:\r\n()]+', ' | ' -replace '\b(et|mais|puis|ensuite|sinon|pourtant|donc|car|parce que|par contre|en plus|alors que|sauf que)\b', ' | '
+    $t = $t -replace "[^a-z0-9|+]", ' ' -replace '([a-z])\1{2,}', '$1'
+    $t = $t -replace '(\d)(ko|mo|go|to|gb|mb|tb|hz|fps|ms)\b', '$1 $2'
+    $raw = New-Object System.Collections.ArrayList
+    foreach ($w in $t.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) {
+        if ($script:HelpAlias.ContainsKey($w)) { foreach ($x in $script:HelpAlias[$w].Split(' ')) { [void]$raw.Add($x) } } else { [void]$raw.Add($w) }
+    }
+    for ($i = 0; $i -lt $raw.Count; $i++) {
+        if ($raw[$i] -ne 'son') { continue }
+        $prev = if ($i -gt 0) { $raw[$i - 1] } else { '' }; $next = if ($i + 1 -lt $raw.Count) { $raw[$i + 1] } else { '' }
+        if ($next -and -not $script:HelpSonBefore.ContainsKey($prev) -and $next -notmatch $script:HelpSonAfter) { $raw[$i] = 'sonposs' }
+    }
+    $out = New-Object System.Collections.ArrayList
+    foreach ($w in $raw) { if (-not $script:HelpFill.ContainsKey($w)) { [void]$out.Add($(if ($NoFix) { $w } else { Repair-HelpWord $w })) } }
+    return $out.ToArray()
+}
+# La distance entre deux mots (une faute = 1) est celle de Get-EditDistance, plus bas (déjà utilisée par l'analyse de sécurité)
+# Faute de frappe : un mot inconnu est ramené au mot connu le plus proche (même première lettre ; une faute pour un mot
+# de 5 lettres et plus, deux à partir de 9). Jamais sur un mot avec des chiffres, ni vers un mot marqué « ! ».
+function Repair-HelpWord([string]$W) {
+    if ($W.Length -lt 4 -or $W -notmatch '^[a-z]+$' -or -not $script:HelpVocab) { return $W }
+    if ($script:HelpVocab.Exact.ContainsKey($W)) { return $W }
+    $c = "$($W[0])"
+    foreach ($p in @($script:HelpVocab.Prefix[$c])) { if ($W.StartsWith($p)) { return $W } }
+    if ($script:HelpFixCache.ContainsKey($W)) { return $script:HelpFixCache[$W] }
+    $best = $W; $bd = 9
+    foreach ($v in @($script:HelpVocab.Fuzzy[$c])) {
+        if ([math]::Abs($v.Length - $W.Length) -gt 2) { continue }
+        $d = Get-EditDistance $W $v
+        if ($d -lt $bd -and $d -le $(if ($v.Length -ge 9) { 2 } else { 1 })) { $bd = $d; $best = $v }
+    }
+    if ($bd -eq 9) {
+        foreach ($p in @($script:HelpVocab.Stem[$c])) {
+            if ($W.Length -lt $p.Length - 1) { continue }
+            $d = Get-EditDistance $W.Substring(0, [math]::Min($W.Length, $p.Length)) $p
+            if ($d -le 1 -and $d -lt $bd) { $bd = $d; $best = $p }
+        }
+    }
+    $script:HelpFixCache[$W] = $best
+    return $best
+}
+# Une expression devient une seule recherche sur le texte remis en mots séparés par des espaces
+function ConvertTo-HelpRegex([string]$P, [int]$Gap = 3, [switch]$NoSwap) {
+    $strict = $P.StartsWith('=')
+    $p = $P.TrimStart('=')
+    foreach ($k in $script:HelpSets.Keys) { $p = $p.Replace("{$k}", $script:HelpSets[$k]) }
+    # Mots vides retirés. Une liste qui finit par un mot vide (« lancer|s ouvrir ») continue sur le mot suivant.
+    $groups = New-Object System.Collections.ArrayList; $carry = $null
+    foreach ($tok in $p.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)) {
+        $alts = @($tok.Split('|'))
+        $endsFill = ($alts.Count -gt 1 -and $script:HelpFill.ContainsKey($alts[$alts.Count - 1]))
+        $real = @($alts | Where-Object { -not $script:HelpFill.ContainsKey($_) })
+        if ($null -ne $carry) { $real = @($carry) + @($real); $carry = $null }
+        if ($endsFill) { $carry = $real; continue }
+        if ($real.Count) { [void]$groups.Add($real) }
+    }
+    if ($null -ne $carry -and @($carry).Count) { [void]$groups.Add(@($carry)) }
+    if (-not $groups.Count) { return $null }
+    # « ne marche pas » se dit aussi « marche pas », « pas moyen de lancer » : la négation peut être avant ou après son verbe
+    $negKey = $script:HelpSets.neg
+    $orders = New-Object System.Collections.ArrayList; [void]$orders.Add($groups.ToArray())
+    for ($i = 0; $i -lt $groups.Count; $i++) {
+        if ((@($groups[$i]) -join '|') -ne $negKey) { continue }
+        $j = if ($i + 1 -lt $groups.Count) { $i + 1 } else { $i - 1 }
+        if ($j -lt 0 -or $NoSwap) { continue }
+        $alt = $groups.ToArray(); $tmp = $alt[$i]; $alt[$i] = $alt[$j]; $alt[$j] = $tmp; [void]$orders.Add($alt)
+        break
+    }
+    $gapRx = if ($strict) { ' ' } else { "(?:(?: [^ |]+){0,$Gap}| \|) " }
+    $rxAll = foreach ($ord in $orders) {
+    $parts = foreach ($g in $ord) {
+        $alts = foreach ($a in $g) {
+            $words = foreach ($w in $a.Split('_')) {
+                $w = $w.TrimStart('!')
+                if ($w.EndsWith('*')) { [regex]::Escape($w.Substring(0, $w.Length - 1)) + '[^ |]*' } else { [regex]::Escape($w) }
+            }
+            ($words -join ' ')
+        }
+        '(?:' + ($alts -join '|') + ')'
+    }
+    ($parts -join $gapRx)
+    }
+    return (New-Object regex ('(?<![^ ])(?:' + (@($rxAll) -join '|') + ')(?![^ ])'))
+}
+# « A & B » = les deux morceaux doivent être dans le texte, n'importe où ; « ^… » = un seul mot d'écart au plus
+function ConvertTo-HelpMatcher([string]$P) {
+    $list = New-Object System.Collections.ArrayList
+    foreach ($part in ($P -split ' & ')) {
+        $q = $part.Trim(); $gap = 3
+        if ($q.StartsWith('^')) { $gap = 1; $q = $q.Substring(1) }
+        $rx = ConvertTo-HelpRegex $q $gap
+        if (-not $rx) { return $null }
+        [void]$list.Add($rx)
+    }
+    return $list.ToArray()
+}
+function Initialize-HelpIntents {
+    if ($script:HelpCompiled) { return }
+    $script:HelpFixCache = @{}; $script:HelpVocab = $null
+    $exact = @{}; $prefix = @{}; $fuzzy = @{}; $stem = @{}
+    $addTo = { param($Map, $Word) $c = "$($Word[0])"; if (-not $Map.ContainsKey($c)) { $Map[$c] = New-Object System.Collections.ArrayList }; if (-not $Map[$c].Contains($Word)) { [void]$Map[$c].Add($Word) } }
+    $learn = {
+        param($Pattern)
+        $p = $Pattern; foreach ($k in $script:HelpSets.Keys) { $p = $p.Replace("{$k}", $script:HelpSets[$k]) }
+        foreach ($w in ($p -split '[ |_&^=]')) {
+            if (-not $w -or $script:HelpFill.ContainsKey($w)) { continue }
+            $noFix = $w.StartsWith('!'); $w = $w.TrimStart('!')
+            if ($w.EndsWith('*')) { $s = $w.Substring(0, $w.Length - 1); if ($s) { & $addTo $prefix $s; if (-not $noFix -and $s.Length -ge 6 -and $s -match '^[a-z]+$') { & $addTo $stem $s } } }
+            else { $exact[$w] = $true; if (-not $noFix -and $w.Length -ge 5 -and $w -match '^[a-z]+$') { & $addTo $fuzzy $w } }
+        }
+    }
+    $list = New-Object System.Collections.ArrayList
+    foreach ($it in $script:HelpIntents) {
+        $pats = New-Object System.Collections.ArrayList
+        $seen = @{}
+        foreach ($p in @($it.P)) {
+            $i = $p.IndexOf(':'); $src = $p.Substring($i + 1); & $learn $src
+            $rx = ConvertTo-HelpMatcher $src
+            if (-not $rx) { continue }
+            $key = (@($rx | ForEach-Object { $_.ToString() }) -join ' & ')
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+            [void]$pats.Add(@{ W = [double]$p.Substring(0, $i); Rx = $rx; Alone = $false; Src = $src })
+        }
+        if ($it.N) {
+            & $learn $it.N
+            [void]$pats.Add(@{ W = 3.0; Rx = @((ConvertTo-HelpRegex "{neg} $($it.N)" 2 -NoSwap)); Alone = $false })
+            [void]$pats.Add(@{ W = 3.0; Rx = @((ConvertTo-HelpRegex "$($it.N) {neg}|{bug}" 3 -NoSwap)); Alone = $false })
+            [void]$pats.Add(@{ W = 3.0; Rx = @((ConvertTo-HelpRegex "{bug} $($it.N)" 2)); Alone = $false })
+            [void]$pats.Add(@{ W = 2.0; Rx = @((ConvertTo-HelpRegex $it.N 0)); Alone = $true })
+        }
+        [void]$list.Add(@{ Id = $it.Id; Go = $it.Go; Pri = [int]$it.Pri; Why = $it.Why; Pats = $pats.ToArray() })
+    }
+    foreach ($k in $script:HelpSets.Keys) { & $learn $script:HelpSets[$k] }
+    $script:HelpVocab = @{ Exact = $exact; Prefix = $prefix; Fuzzy = $fuzzy; Stem = $stem }
+    $script:HelpOkRx = New-Object regex ('^(?:' + (($script:HelpSets.ok.Split('|') | ForEach-Object { if ($_.EndsWith('*')) { [regex]::Escape($_.TrimEnd('*')) + '.*' } else { [regex]::Escape($_) } }) -join '|') + ')$')
+    $script:HelpNeg = @{}; foreach ($w in $script:HelpSets.neg.Split('|')) { $script:HelpNeg[$w] = $true }
+    $script:HelpCompiled = $list.ToArray()
+}
+# « mon son marche » : le sujet est cité pour dire qu'il va bien (mot rassurant juste après, aucune négation autour)
+function Test-HelpSaidOk($Tokens, [int]$At) {
+    $ok = $false
+    for ($j = $At + 1; $j -le $At + 3 -and $j -lt $Tokens.Count; $j++) { if ($Tokens[$j] -eq '|') { break }; if ($script:HelpOkRx.IsMatch($Tokens[$j])) { $ok = $true } }
+    if (-not $ok) { return $false }
+    for ($j = $At - 1; $j -ge $At - 3 -and $j -ge 0; $j--) { if ($Tokens[$j] -eq '|') { break }; if ($script:HelpNeg.ContainsKey($Tokens[$j])) { return $false } }
+    for ($j = $At + 1; $j -le $At + 4 -and $j -lt $Tokens.Count; $j++) { if ($Tokens[$j] -eq '|') { break }; if ($script:HelpNeg.ContainsKey($Tokens[$j])) { return $false } }
+    return $true
+}
+# Les dépannages qui correspondent à un texte libre, du plus probable au moins probable. Vide si rien n'est reconnu.
+function Find-HelpIntents([string]$Text, [int]$Max = 4) {
+    Initialize-HelpIntents
+    if ($script:HelpFixCache.Count -gt 5000) { $script:HelpFixCache = @{} }
+    $tok = @(ConvertTo-HelpTokens $Text)
+    if (-not @($tok | Where-Object { $_ -ne '|' }).Count) { return @() }
+    $line = $tok -join ' '
+    $res = New-Object System.Collections.ArrayList
+    foreach ($it in $script:HelpCompiled) {
+        $w1 = 0.0; $w2 = 0.0; $w3 = 0.0; $any = $false
+        foreach ($p in $it.Pats) {
+            $m = $null; $all = $true
+            foreach ($rx in $p.Rx) { $m = $rx.Match($line); if (-not $m.Success) { $all = $false; break } }
+            if (-not $all) { continue }
+            if ($p.Alone) { $at = 0; if ($m.Index -gt 0) { $at = $line.Substring(0, $m.Index).Split(' ').Count - 1 }; if (Test-HelpSaidOk $tok $at) { continue } }
+            $any = $true; $w = $p.W
+            if ($w -gt $w1) { $w3 = $w2; $w2 = $w1; $w1 = $w } elseif ($w -gt $w2) { $w3 = $w2; $w2 = $w } elseif ($w -gt $w3) { $w3 = $w }
+        }
+        if (-not $any) { continue }
+        $score = $w1 + $w2 + $w3
+        if ($score -ge 2) { [void]$res.Add(@{ Id = $it.Id; Go = $it.Go; Pri = $it.Pri; Why = $it.Why; Score = $score }) }
+    }
+    if (-not $res.Count) { return @() }
+    $sorted = @($res | Sort-Object @{ E = { $_.Score }; Descending = $true }, @{ E = { $_.Pri }; Descending = $true })
+    $best = $sorted[0].Score
+    return @($sorted | Where-Object { $_.Score -ge [math]::Max(2, $best * 0.45) } | Select-Object -First $Max)
+}
+# Les dépannages connus. Go = la carte ou la page à ouvrir (« A:fonction », « UI:commande », « go:page », « diag »).
+# N = les noms du sujet : AEROX fabrique tout seul « pas de N », « N marche pas », « problème de N », et N seul.
+# P = expressions en plus, « poids:expression » (4 = sans ambiguïté, 3 = fort, 2 = suffisant seul, 1 = indice).
+# Pri départage deux sujets à égalité (le plus grave d'abord).
+$script:HelpIntents = @(
+    @{ Id = 'bsod'; Go = 'A:Get-BsodReport'; Pri = 95; Why = "Lit les écrans bleus notés par Windows : le code, le pilote en cause, ce qui a changé avant."
+       P = @('6:rencontre probleme', '6:doit redemarrer', '4:bluescreen', '4:ecran bleu', '4:bsod', '4:bleu screen', '4:ecran bleu mort', '4:smileytriste', '3:pc|windows redemarre tout seul', '3:redemarre* tout seul', '3:redemarre* sans raison', '3:pc|windows plant*', '3:plant* tout_temps|souvent|sans_arret|toujours', '3:pc|windows crash*', '2:crash*', '3:collecte informations', '3:pc rencontre probleme doit redemarrer', '4:critical process died', '4:memory management', '4:irql', '4:kernel security', '4:whea', '3:0x000*', '3:code arret', '3:stop code', '3:ecran erreur bleu', '3:reboot* seul', '3:plant* en jeu', '2:pc plant*') },
+    @{ Id = 'poweroff'; Go = 'diag'; Pri = 94; Why = "Le diagnostic retrouve les extinctions brutales et dit si c'est le courant, l'alimentation ou la chaleur."
+       P = @('4:coupure* nette*|brutale*|pc', '3:coupe* nette*', '4:extinction*', '4:s eteint tout seul', '4:eteint* tout seul', '4:s eteint d un coup', '3:eteint* d un coup', '4:se coupe tout seul', '3:coupe* d un coup', '3:eteint* en jeu', '3:eteint* quand je joue', '3:eteint* sans raison', '3:pc s eteint', '3:s arrete tout seul', '3:pc coupe net', '2:coupure* courant', '3:eteint* brutal*', '3:ecran noir puis redemarre', '2:eteint* subitement|brusquement', '3:pc se coupe') },
+    @{ Id = 'autorepair'; Go = 'diag'; Pri = 93; Why = "Le diagnostic lit pourquoi Windows a lancé sa réparation automatique."
+       P = @('4:reparation automatique', '4:preparation reparation automatique', '4:srttrail', '3:windows demarre* mal', '3:windows n a pas pu demarrer', '3:diagnostic de votre pc', '3:boucle reparation', '3:demarre* une fois sur deux') },
+    @{ Id = 'slow'; Go = 'UI:slow'; Pri = 80; Why = "Mesure ce qui occupe le PC en ce moment (processeur, mémoire, disque) et nomme le coupable."
+       P = @('3:mouline*', '3:met|prend min|mn|minute*|sec|seconde*|heure* ouvr*|charg*|lanc*|affich*', '3:tortue', '3:limace', '3:ramasse', '3:plombe*', '3:met|prend temps|plombe*|heure*|minute*|longtemps|fou ouvr*|charg*|lanc*', '3:rame* & pc|windows', '3:pc|windows|ca|tout lent|lente|lents', '3:pc|windows|ca|tout rame*', '3:=ca ram', '3:=pc ram', '3:=qui ram', '2:rame*', '2:lent|lente|lenteur*', '3:ralenti*', '3:tourne au ralenti', '3:met|prend du temps', '3:met trois|des|10|5|2 heures|minutes|plombes', '3:trop long', '3:a la traine', '3:pc|windows fige*|freez*|bloque*|gele*', '2:freez*', '2:fige*', '3:saccad*', '3:pas reactif', '3:reagit plus|pas', '3:repond* plus|pas', '3:pc mou', '3:processeur centpourcent', '3:disque centpourcent', '3:memoire|ram centpourcent', '3:centpourcent', '3:lag* sur le bureau', '3:pc|windows lag*', '2:ca lag*', '3:tout est long', '3:long a ouvrir|charger', '3:met longtemps', '3:pc pourri|naze|poussif', '3:pc de 15 ans', '2:ca traine', '3:ne repond* pas', '3:pc bug* tout le temps', '2:pc bug*', '3:pourquoi mon pc rame', '3:pc galere', '3:escargot', '3:lourd|lourdingue') },
+    @{ Id = 'startup'; Go = 'UI:startup'; Pri = 70; Why = "Montre ce qui se lance tout seul avec Windows et laisse choisir ce qu'on garde."
+       P = @('5:logiciel|truc*|chose*|application|fenetre* ouvre*|lance* & allume*|demarr*', '6:prend|met min|mn|minute*|heure*|temps|longtemps|plombe*|fou demarre*|allume*|boot*', '5:lance*|ouvre* seul|seuls|seule|seules & allume*|demarr*', '5:trop logiciel|truc*|chose*|application demarrage', '4:logiciel|truc*|chose*|application lance* demarrage|allumage', '4:enlever|retirer|virer|desactiver demarrage', '6:long|lent|lente|longue demarre*|allume*|boot*|lance*', '4:demarrage lent|long|interminable', '4:met|prend minutes|temps|heures|longtemps a demarrer|s allumer|booter', '3:met minutes a s allumer', '4:logiciel|application au demarrage', '4:se lance* au demarrage', '4:s ouvre* tout seul au demarrage', '3:s ouvre* a l allumage', '3:boot lent|long', '3:demarre* lentement', '3:trop de logiciel au demarrage', '3:lance* tout seul au demarrage', '3:allumage lent|long', '3:met du temps a s allumer|demarrer', '3:demarrage windows long|lent') },
+    @{ Id = 'sound'; Go = 'A:Repair-Sound'; Pri = 60; N = 'son|audio|enceinte*|ecouteur*|baffle*'; Why = "Relance le son de Windows et te laisse choisir la bonne sortie (casque, enceintes, écran)."
+       P = @('4:entend* rien', '4:entend* plus rien', '4:j entend* pas|plus', '3:pas de bruit', '3:haut parleur*', '3:{neg} haut parleur*', '3:muet', '3:casque {neg} son', '3:son casque', '3:son sort pas', '3:son sort de l ecran|des enceintes|du casque', '3:mauvaise sortie', '3:sortie audio', '3:{neg} son', '3:son gresill*|crach*|sature*', '2:casque marche* {neg}', '3:realtek', '3:pas de musique') },
+    @{ Id = 'micro'; Go = 'A:Repair-Microphone'; Pri = 59; N = 'micro|microphone|mic'; Why = "Vérifie les autorisations du micro, le bon micro par défaut et son niveau."
+       P = @('4:on m entend {neg}', '4:m entend* {neg}', '4:personne m entend*', '4:potes|amis|gens m entend* {neg}', '3:ma voix passe {neg}', '3:voix {neg} entendu*', '3:on entend {neg} ma voix', '3:micro casque', '3:m entend* mal') },
+    @{ Id = 'webcam'; Go = 'A:Repair-Webcam'; Pri = 58; N = 'webcam|camera|cam|visio'; Why = "Vérifie les autorisations de la caméra et relance son pilote."
+       P = @('6:webcam|camera|cam & ecran_noir|noir|noire', '4:webcam|camera|cam {neg} detect*|reconnu*|marche*', '3:image noire camera|webcam|teams|zoom', '3:camera ecran noir', '3:on me voit {neg}', '3:{neg} image en visio') },
+    @{ Id = 'printer'; Go = 'A:Repair-Printing'; Pri = 57; N = 'imprimante*|impression*|imprim*|spouleur'; Why = "Vide la file d'attente bloquée et relance le service d'impression."
+       P = @('3:file d attente', '3:imprime* {neg}', '3:{neg} imprimer', '3:document* bloque* impression', '3:hors ligne imprimante', '3:imprimante hors ligne') },
+    @{ Id = 'shell'; Go = 'A:Restart-Shell'; Pri = 56; Why = "Relance le bureau et la barre des tâches de Windows sans redémarrer le PC."
+       P = @('5:bureau {neg} repond*', '5:bureau repond* {neg}', '7:explorer|explorateur & repond*|plant*|bloque*|fige*', '6:bureau noir|vide', '6:bureau sans|plus icone*', '4:barre des|de|d taches|tache', '3:bureau fige*|bloque*|freez*|plant*', '3:bureau {neg} repond*', '3:explorateur {bug}', '3:explorateur {neg} repond*|marche*|s ouvre*', '5:explorer exe', '4:explorer|explorateur {neg} repond*', '4:explorer|explorateur repond* {neg}', '3:icones du bureau disparu*', '3:clic droit {neg} marche*|fonctionne*', '3:clic droit {bug}', '3:bureau noir', '3:barre du bas', '3:barre en bas {bug}|{neg}', '3:plus de bureau') },
+    @{ Id = 'discord'; Go = 'A:Repair-Discord'; Pri = 55; N = 'discord|discorde'; Why = "Répare Discord étape par étape : caches, accélération graphique, modules, puis réinstallation propre."
+       P = @('6:discord & ecran noir|gris|grise|blanc', '5:discord & {neg} lance*|ouvre*|demarre*', '4:discord ecran noir|gris|blanc', '4:discord {neg} s ouvre*|se lance*|demarre*|s installe*', '4:discord s ouvre*|se lance*|demarre* {neg}', '4:discord update failed', '4:discord mise a jour boucle|bloque*', '3:discord installation', '3:discord charge* infini*', '3:discord tourne dans le vide', '3:discord corrupt*', '4:discord javascript error') },
+    @{ Id = 'usbdisk'; Go = 'A:Get-ExternalDiskReport'; Pri = 75; Why = "Regarde chaque clé USB, carte mémoire et disque externe branché et dit ce qui cloche."
+       P = @('3:cle usb', '4:cle usb {neg}|{bug}|illisible|reconnu*|detect*', '3:=cle usb', '4:disque externe', '4:disque dur externe', '4:carte sd|memoire|microsd', '4:microsd', '4:illisible', '4:protege* en ecriture', '4:demande de formater', '4:il faut|vous devez formater', '3:formater le disque avant', '4:=usb raw', '3:disque|cle raw', '3:cle {neg} apparait*|reconnu*|detect*|lu*|s affiche*|visible', '3:disque externe {neg} apparait*|reconnu*|detect*', '3:cle {bug}', '3:usb stick', '3:cle abime*|morte|hs|corrompu*', '3:ssd externe', '3:volume ne contient pas de systeme de fichiers', '3:{neg} acces a la cle|au disque', '3:cle vide alors', '2:cle') },
+    @{ Id = 'usbdev'; Go = 'A:Repair-Usb'; Pri = 54; N = 'souris|clavier|manette|joystick|volant|pedalier'; Why = "Relance les ports USB et empêche Windows de les couper pour économiser l'énergie."
+       P = @('4:port* usb', '4:peripherique usb', '4:usb {neg} reconnu*|detect*', '4:usb non reconnu', '3:prise* usb', '3:usb {neg} marche*|fonctionne*', '3:usb {bug}', '3:se deconnecte* reconnecte*', '3:bruit de deconnexion', '3:deconnecte* tout seul usb', '3:souris|clavier|manette se deconnecte*', '3:souris|clavier|manette {neg} reconnu*|detect*|repond*', '3:hub usb', '2:usb') },
+    @{ Id = 'bluetooth'; Go = 'A:Repair-Bluetooth'; Pri = 61; N = 'bluetooth|bleutooth|blutooth|bluethooth|bluetooh'; Why = "Relance le Bluetooth de Windows et son pilote pour que les appareils se reconnectent."
+       P = @('4:airpods', '4:appair*', '4:jumel*', '3:sans fil {neg} se connecte*', '3:casque|manette|enceinte|souris sans fil', '3:casque|manette|enceinte {neg} se connecte*', '4:ps4|ps5|xbox|switch connecte* {neg}', '4:ps4|ps5|xbox|switch {neg} connecte*', '3:=bt {neg}', '3:dualsense|dualshock') },
+    @{ Id = 'gamelaunch'; Go = 'A:Repair-GameLaunch'; Pri = 62; Why = "Vérifie les composants que les jeux réclament (Visual C++, DirectX) et les anti-triche."
+       P = @('4:{game} & refuse|impossible & lance*|demarre*|ouvr*', '4:lance* {game} & rien', '4:{game} crash* demarrage|lancement', '4:manque dll', '4:{game} & {neg} lance*|demarre*|ouvre*', '4:jeu {neg} se lance*|demarre*|s ouvre*|s allume*', '4:jeu se lance*|demarre*|s ouvre* {neg}', '4:jeu veut {neg} se lancer|demarrer', '4:{game} {neg} lance*|demarre*|ouvre*|allume*', '4:lance* {game} rien|{neg}', '4:dll manquant*|introuvable', '4:dll', '4:msvcp*', '4:vcruntime*', '4:d3dx*', '4:directx', '4:visual c++', '4:anti cheat|triche', '4:anticheat|easyanticheat|battleye|vanguard', '4:0xc000007b', '3:jeu crash* au lancement|demarrage', '3:jeu se ferme tout seul au lancement', '3:jeu se ferme direct', '3:impossible de lancer jeu', '3:steam jeu {neg} se lance*', '3:jeu plant* au lancement', '3:erreur au lancement jeu', '3:lance* le jeu rien ne se passe') },
+    @{ Id = 'apps'; Go = 'A:Repair-WindowsApps'; Pri = 53; Why = "Répare le Microsoft Store et les applis de Windows qui ne s'ouvrent plus."
+       P = @('5:parametres|calculatrice|photos|store|meteo|courrier & {neg} & ouvr*|lance*|marche*', '4:application windows ferme* seul*', '4:application ferme* seul|seule|seules|toutes', '4:microsoft store', '4:windows store', '3:store {neg}|{bug}', '4:menu demarrer {neg}|{bug}', '3:menu demarrer', '3:application windows {neg} s ouvre*', '3:calculatrice|photos|parametres|meteo {neg} s ouvre*', '3:parametres {neg} s ouvre*|marche*', '3:application se ferme* direct|aussitot', '3:touche windows {neg} marche*|fonctionne*', '3:recherche windows {neg} marche*|fonctionne*', '3:application {neg} s ouvre*') },
+    @{ Id = 'sleep'; Go = 'A:Get-SleepReport'; Pri = 52; N = '!veille|hibernation'; Why = "Dit ce qui réveille le PC ou l'empêche de dormir, et propose de le couper."
+       P = @('4:mise en veille', '4:se rallume tout seul', '4:s allume* tout seul', '4:se reveille tout seul', '4:sort de veille', '4:reveil* tout seul', '3:ne se reveille {neg}', '3:{neg} se met en veille', '3:ecran s eteint {neg}', '3:rallume la nuit', '3:reste allume*') },
+    @{ Id = 'icons'; Go = 'A:Repair-ExplorerCache'; Pri = 40; N = 'icone*|miniature*|vignette*'; Why = "Reconstruit les icônes et les miniatures abîmées de l'Explorateur."
+       P = @('3:icone* blanche*|vide*|noire*|cassee*', '3:apercu des photos|images|videos', '3:{neg} apercu', '3:raccourci* blanc*') },
+    @{ Id = 'gamesettings'; Go = 'A:Get-GameSettingsReport'; Pri = 41; Why = "Lit tes réglages de Windows pour les jeux et dit lesquels changer."
+       P = @('4:mode jeu', '4:game bar', '4:reglage* jeu', '4:reglage* windows jeu', '3:plus de fps', '3:gagner des fps', '3:booster|augmenter|ameliorer fps', '7:optimis* jeu|jouer|gaming|fps', '3:planification gpu|graphique', '3:peu de fps', '3:fps bas', '3:{neg} assez de fps', '3:fps faible*', '2:fps') },
+    @{ Id = 'repairsys'; Go = 'A:Repair-System'; Pri = 65; Why = "Fait vérifier et réparer les fichiers de Windows par ses propres outils (SFC et DISM)."
+       P = @('4:fichier* windows corrompu*|abime*|endommage*|manquant*', '4:fichier* systeme*', '4:sfc', '4:dism', '4:scannow', '4:reparer windows', '4:windows corrompu*|abime*|casse*|endommage*', '3:windows bug* partout', '3:erreur* windows partout', '3:windows deconne', '3:reparation windows', '3:windows instable', '3:reparer le systeme') },
+    @{ Id = 'chkdsk'; Go = 'A:Test-Disk'; Pri = 66; Why = "Fait vérifier le disque par Windows (erreurs de fichiers, secteurs abîmés)."
+       P = @('4:verifier le|mon disque', '4:chkdsk', '4:secteur* defectueu*|abime*', '4:erreur* disque|disques', '4:disque abime*|defectueu*|endommage*|fatigue*', '4:disque claque*|gratte*|bruit*|clic*|cliquetis', '3:smart', '3:sante du|des disque*|ssd', '3:disque va lacher|mourir', '3:etat du disque|ssd', '3:reparer le|mon disque') },
+    @{ Id = 'wureset'; Go = 'A:Reset-WindowsUpdate'; Pri = 67; Why = "Remet Windows Update à zéro quand les mises à jour restent bloquées ou échouent."
+       P = @('4:windows update {neg}|{bug}|echoue*|boucle', '4:mise a jour windows {neg}|{bug}|echoue*|boucle|bloquee*', '4:mise a jour bloquee*|echoue*|plantee*', '4:mise a jour {neg} s installe*|passe*|veut', '4:mise a jour tourne en boucle', '4:mise a jour echec', '4:echec mise a jour', '4:0x800*', '3:mise a jour 0 pourcent|reste a', '3:annulation des modifications', '3:impossible d installer mise a jour', '3:mise a jour {bug}', '3:erreur mise a jour', '3:windows update') },
+    @{ Id = 'winupdate'; Go = 'A:Update-Windows'; Pri = 45; Why = "Cherche et installe les mises à jour de Windows."
+       P = @('3:mettre a jour windows', '3:mise a jour windows', '3:windows a jour', '3:installer mise a jour windows', '3:mettre windows a jour', '2:mise a jour de windows') },
+    @{ Id = 'appupdates'; Go = 'UI:appupdates'; Pri = 44; Why = "Liste les logiciels qui ont une mise à jour et te laisse choisir lesquels."
+       P = @('4:mettre a jour logiciel|application', '4:mise a jour logiciel|application|des logiciel', '3:logiciel|application a jour', '3:mise a jour chrome|firefox|discord|steam|vlc', '3:logiciel perime*|pas a jour|obsolete*', '3:tout mettre a jour', '2:mise a jour') },
+    @{ Id = 'drivers'; Go = 'UI:drivers'; Pri = 68; N = 'pilote*|driver*|drivers'; Why = "Vérifie les pilotes (carte graphique, Wi-Fi, son) et ouvre l'outil officiel du fabricant."
+       P = @('5:mettre jour carte_graphique|nvidia|amd|geforce|radeon', '5:mise jour carte_graphique|nvidia|amd|geforce|radeon', '4:pilote* graphique|nvidia|amd|wifi|son|reseau', '3:geforce experience', '3:nvidia app', '3:carte graphique a jour', '3:carte graphique {neg} reconnu*|detect*', '3:carte graphique {bug}', '3:gestionnaire de peripherique*', '3:point d exclamation jaune', '3:peripherique inconnu', '3:installer pilote*') },
+    @{ Id = 'net'; Go = 'A:Test-Internet'; Pri = 85; N = 'internet|wifi|connexion|reseau|ethernet|rj45|livebox|freebox|bbox'; Why = "Teste la connexion maillon par maillon (carte réseau, box, Internet, DNS) et dit lequel lâche."
+       P = @('3:{neg} net', '4:{neg} internet', '4:{neg} acces internet', '4:internet {neg}|{bug}', '4:wifi {neg}|{bug}', '4:{neg} wifi', '3:connexion limitee', '3:site* {neg} s ouvre*|charge*', '3:page* {neg} charge*|s ouvre*', '4:dns', '3:globe', '3:{neg} connecte*', '3:wifi se deconnecte', '3:wifi instable', '3:internet instable', '3:coupure* internet|wifi|connexion', '3:micro coupure*', '3:hors connexion', '3:pas connecte* a internet', '3:navigateur {neg} charge*', '3:{neg} reseau', '3:cable ethernet {neg}', '3:connecte* mais {neg} internet', '3:internet rame|lent', '3:connexion lente|pourrie|nulle') },
+    @{ Id = 'netrepair'; Go = 'A:Repair-Network'; Pri = 50; Why = "Remet à zéro les réglages réseau de Windows (annulable) quand la connexion reste cassée."
+       P = @('4:reparer connexion|internet|reseau|wifi', '4:reinitialiser reseau|connexion|wifi|internet', '4:reset reseau|internet|wifi', '4:remettre a zero reseau|internet', '3:vider cache dns', '3:flush dns', '3:winsock') },
+    @{ Id = 'speedtest'; Go = 'UI:speedtest'; Pri = 43; Why = "Mesure ton débit Internet réel (descendant, montant, ping)."
+       P = @('4:test de debit', '4:speedtest|speed_test', '4:tester mon debit|ma connexion|ma fibre', '3:vitesse internet|connexion|fibre|wifi', '3:debit internet|fibre|wifi', '3:combien de mega|megas|mbps', '3:mesurer connexion|internet|debit', '2:debit') },
+    @{ Id = 'lag'; Go = 'UI:lag'; Pri = 84; Why = "Surveille la connexion pendant que tu joues ou parles et dit si le lag vient du Wi-Fi, de la box ou d'Internet."
+       P = @('7:voix coupe*|hache*|robot*|saccade*|sacade*', '4:entend* robot*|hache*', '3:robot*', '4:ping eleve|haut|enorme|200|300|500|999', '4:lag* en ligne|jeu|partie|game', '4:lag* sur fortnite|warzone|valorant|cod|gta|lol|apex|fifa|cs2|rocket|minecraft|roblox|discord', '4:lag* quand je joue', '4:ping', '4:perte* de paquet*', '4:packet loss', '4:voix robot*|hachee*|coupe*', '9:^discord coupe*|hache*|lag*|robot*|grezill*|gresill*|sacade*|saccade*', '4:discord voix', '3:deco* en jeu|partie', '3:deconnecte* en jeu|partie|du serveur', '4:latence', '3:teleporte*', '3:rollback', '3:jeu en ligne lag*|sacade*|saccade*', '3:jeu lag*', '3:ca lag* en vocal', '3:vocal coupe*|lag*|hache*', '3:=lag online', '3:lag* multi|multijoueur', '3:perd la connexion en jeu', '3:stream coupe*|lag*', '3:potes entend* hache|coupe|robot') },
+    @{ Id = 'freespace'; Go = 'UI:freespace'; Pri = 78; Why = "Trouve ce qui peut partir sans risque et te laisse choisir : fichiers inutiles, gros dossiers, jeux pas lancés."
+       P = @('3:menage', '4:ko|mo dispo*|libre*|restant*', '4:que ko|mo', '4:disque|ssd|stockage|c|to|go plein*|sature*|rempli*', '3:presque plein*', '4:plus de place|d espace', '4:{neg} assez de place|d espace', '4:liberer place|espace', '4:faire de la place', '4:manque de place|d espace', '4:espace disque insuffisant|faible', '3:espace insuffisant', '3:=c plein', '3:disque rouge', '3:barre rouge', '3:stockage', '3:nettoy*', '3:vider disque|ssd', '3:fichier* inutile*', '3:fichier* temporaire*', '3:memoire pleine|saturee', '3:reste ko|mo|go', '3:plus ko|mo|go', '3:c rouge', '3:disque rouge', '3:supprimer pour gagner place', '2:place', '3:peu de place|d espace', '3:ccleaner') },
+    @{ Id = 'space'; Go = 'UI:space'; Pri = 46; Why = "Montre quels dossiers et quels fichiers prennent le plus de place."
+       P = @('7:prenn*|prend|prennent place|espace|stockage', '5:quel* fichier* place', '4:ce qui prend de la place', '4:qu est ce qui prend', '4:quoi prend place', '4:gros fichier*|dossier*', '4:ou est passe* espace|place|stockage', '3:voir ce qui prend', '3:ce qu il y a dessus', '3:ya quoi dessus', '3:qu est ce qui remplit', '3:prend toute la place', '3:taille des dossier*') },
+    @{ Id = 'dupes'; Go = 'UI:dupes'; Pri = 39; N = 'doublon*'; Why = "Cherche les fichiers présents plusieurs fois et te laisse choisir lesquels partent à la corbeille."
+       P = @('4:fichier*|photo*|video*|image*|musique* double', '3:copie* identique*', '3:plusieurs fois le meme fichier') },
+    @{ Id = 'recycle'; Go = 'A:Clear-RecycleBinAll'; Pri = 30; Why = "Vide la corbeille de tous les disques."
+       P = @('3:vider la|ma corbeille', '2:corbeille') },
+    @{ Id = 'backup'; Go = 'UI:backup'; Pri = 72; N = 'sauvegard*|backup'; Why = "Copie tes dossiers sur un autre disque et vérifie la copie."
+       P = @('4:fichier*|photo*|donnee*|document* securite|abri', '4:mettre securite', '9:copier|mettre|transferer|sauvegarder fichier*|photo*|dossier*|video*|document*|donnee* externe|cle|disque', '4:peur perdre', '3:perdre fichier*|photo*|donnee*|document*', '6:copier fichier*|photo*|dossier*|video*|document*|donnee*|musique* disque|cle', '4:avant de formater|reinstaller|reset', '4:mettre a l abri', '4:sauver mes fichier*|photo*|donnee*', '3:garder mes fichier*|photo*|donnee*', '3:{neg} perdre mes fichier*|photo*|donnee*', '3:copie de securite', '3:transferer mes fichier* nouveau pc', '3:mettre mes fichier* sur disque externe') },
+    @{ Id = 'recover'; Go = 'UI:recover'; Pri = 90; Why = "Lance l'outil de Microsoft qui fouille le disque pour retrouver des fichiers effacés, sans rien écrire dessus."
+       P = @('7:recuper* fichier*|photo*|video*|donnee*|document*|dossier*|image*', '4:fichier*|photo*|video*|document*|dossier*|image* supprime|supprimes|supprimee|supprimees|efface|effaces|effacee|effacees|perdu*|disparu*', '4:supprime* par erreur|accident|megarde', '4:efface* par erreur|accident|megarde', '4:retrouver fichier*|photo*|video*|document*|dossier*', '7:vide* corbeille erreur|accident|megarde|expres', '7:vide* corbeille recuper*|retrouver', '3:=par erreur', '3:=sans faire expres', '4:supprime|efface fichier*|photo*|video*|dossier*|document*', '3:j ai tout perdu', '4:perdu fichier*|photo*|donnee*|document*|dossier*|video*', '3:formate par erreur', '3:recuperation de donnee*|fichier*', '3:recuva|photorec|testdisk', '3:supprime|efface sans_faire_expres|expres', '3:restaurer fichier* supprime*') },
+    @{ Id = 'security'; Go = 'UI:secscan'; Pri = 92; N = 'virus|malware*|trojan*|spyware*|keylogger*|ransomware*'; Why = "Cherche les traces d'intrusion : programmes cachés, accès à distance, démarrages suspects."
+       P = @('4:pirat*|hack* pc', '4:pc pirat*|hack*', '3:crack*', '4:installe*|telecharge* crack*|cheat*|hack*|keygen', '4:pris controle', '4:espionne*', '4:cheval de troie', '4:logiciel espion|malveillant', '4:pc pirate|hack*|infecte*|verole*', '4:je suis pirate|hack*|infecte*', '4:on controle mon pc', '4:quelqu un controle|utilise|a acces mon pc', '7:souris bouge* toute_seule|seule', '4:analyse* de securite', '4:analyse* antivirus|virus', '3:infecte*', '3:intrusion*', '3:pc espionne*', '3:on m espionne', '3:acces a distance suspect', '3:fichier* crypte*|chiffre*', '3:rancon', '3:mineur crypto', '3:crack telecharge', '3:telecharge* un truc louche|bizarre|douteux', '3:fenetre* cmd|noire* s ouvre* toute* seule*', '3:scanner mon pc', '3:verifier si j ai un virus', '3:pc verole') },
+    @{ Id = 'hacked'; Go = 'UI:hacked'; Pri = 91; Why = "Te guide pour reprendre un compte piraté et vérifier que le PC n'est plus surveillé."
+       P = @('6:hack*|pirat*|vol* & compte|discord|steam|insta*|snap*|facebook|gmail|epic|tiktok|twitch|mail', '4:utilise compte', '4:acces compte', '4:compte* pirate*|hack*|vole*|usurpe*', '4:pirate* mon compte', '4:hack* mon compte', '4:vole* mon compte', '4:on m a pirate|hack*|vole', '4:mot de passe change tout seul', '4:mot de passe a ete change', '4:connexion suspecte', '4:discord|insta|instagram|steam|fortnite|snap|snapchat|facebook|gmail|epic|tiktok|twitch pirate*|hack*|vole*', '4:phishing|hameconnage', '4:clique sur un lien', '3:arnaque*', '3:faux site', '3:donne mon mot de passe', '3:envoie des messages tout seul', '3:token vole*', '3:nitro gratuit', '3:on s est connecte* a mon compte', '3:recuperer mon compte') },
+    @{ Id = 'adware'; Go = 'UI:browser'; Pri = 73; N = 'pub|pubs|publicite*|popup*|adware*'; Why = "Vérifie les navigateurs : notifications piégées, extensions douteuses, page d'accueil détournée."
+       P = @('4:moteur recherche change*|modifie*|remplace*', '4:chrome|edge|firefox|navigateur|google ouvre* site*|onglet*|page*|pub*', '4:ouvre* site*|onglet*|fenetre*|pub* seul|seuls|seule|seules', '4:navigateur rempli|plein pub*', '4:pop up*', '4:fausse* alerte*', '4:fenetre* pub*', '4:notification* chrome|edge|firefox|navigateur|bas_droite', '4:notification* virus|mcafee|norton', '4:votre pc est infecte', '4:moteur de recherche a change|change tout seul|modifie', '4:page d accueil a change|change|modifiee', '4:redirige*', '4:site* s ouvre* tout* seul*', '4:onglet* s ouvre* tout* seul*', '3:mcafee s affiche*|apparait*', '3:extension* bizarre*|louche*|inconnue*', '3:chrome|edge|firefox|navigateur {bug}', '3:chrome|edge|firefox|navigateur rame|lent', '3:yahoo a la place de google', '3:alerte* virus en bas', '3:plein de notification*') },
+    @{ Id = 'quarantine'; Go = 'UI:quarantine'; Pri = 42; N = 'quarantaine'; Why = "Montre ce que l'antivirus a mis de côté."
+       P = @('4:faux positif', '9:defender|antivirus bloque|supprime|efface|vire', '6:windows supprime|bloque fichier|jeu|logiciel', '3:fichier bloque par antivirus|defender', '3:menace* detectee*|bloquee*', '3:windows a supprime mon fichier') },
+    @{ Id = 'uninstall'; Go = 'UI:uninstall'; Pri = 47; N = 'desinstall*|bloatware*'; Why = "Liste les logiciels installés, les inutiles en premier, et les désinstalle proprement."
+       P = @('4:supprimer|enlever|virer|retirer un|des|ce|les logiciel|application|jeu', '4:logiciel* inutile*', '4:logiciel {neg} veut partir|se desinstalle', '3:logiciel preinstalle*', '3:mcafee|norton|avast enlever|virer|supprimer|desinstall*', '3:enlever|virer|supprimer mcafee|norton|avast', '3:trop de logiciel') },
+    @{ Id = 'bgitems'; Go = 'UI:bgitems'; Pri = 38; Why = "Montre les programmes qui tournent en cachette et laisse couper ceux qui ne servent pas."
+       P = @('4:tourne* fond', '4:logiciel|application|truc*|processus fond', '4:arriere plan', '4:tache* fond', '3:tourne* en cachette', '3:logiciel cache*', '3:processus inutile*', '3:trop de processus', '3:service* inutile*') },
+    @{ Id = 'perfmode'; Go = 'A:Set-HighPerformance'; Pri = 37; Why = "Passe Windows sur le mode d'alimentation « performances maximales »."
+       P = @('4:performance* maximale*|max|elevee*', '4:mode performance*', '4:plan|mode d alimentation', '4:haute performance', '3:mode economie', '3:pc bride') },
+    @{ Id = 'optimize'; Go = 'UI:optimize'; Pri = 35; N = 'optimis*'; Why = "Enchaîne nettoyage, démarrage allégé et réglages, avec ton accord à chaque étape."
+       P = @('4:optimis* pc|windows', '3:booster mon|le pc', '3:accelerer mon|le pc', '3:pc plus rapide', '3:entretien du|de mon pc', '3:entretenir mon pc', '3:rendre mon pc plus rapide|fluide', '3:ameliorer les performance*|mon pc', '3:remettre a neuf mon pc', '3:coup de jeune', '3:nettoyer mon|le pc') },
+    @{ Id = 'newpc'; Go = 'UI:newpc'; Pri = 71; Why = "La liste guidée après une installation : mises à jour, pilotes, disque vide à préparer, logiciels utiles."
+       P = @('5:neuf|nouveau & disque|ssd|nvme & {neg} visible|apparait*|detect*|reconnu*|affiche*', '4:achete* pc', '4:recu pc', '4:pc neuf', '4:nouveau|nouvelle pc|config', '4:viens d acheter|de monter|de recevoir pc', '4:windows reinstalle', '4:reinstalle* windows', '4:viens formater|reinstaller|reset', '4:formate* pc|windows', '4:reset pc|windows', '4:new|nouveau windows', '4:apres formatage|reinstallation|reset', '4:pc reset', '4:configurer mon|le pc', '4:quoi installer', '4:windows tout neuf|propre', '4:nouveau disque|ssd {neg} apparait*|visible|detect*|reconnu*|s affiche*', '4:disque|ssd {neg} apparait* dans|sur ce pc|l explorateur', '4:deuxieme disque|ssd {neg} apparait*|visible|s affiche*', '3:disque d {neg} apparait*|visible', '3:initialiser disque|ssd', '3:partitionner', '3:disque non alloue', '3:premiere installation', '3:que faire apres installation', '3:installer mes logiciel', '3:monte mon pc') },
+    @{ Id = 'stability'; Go = 'UI:stability'; Pri = 48; Why = "Met le processeur et la mémoire à 100 % pendant 10 minutes et vérifie chaque calcul."
+       P = @('4:test de stabilite', '4:stress test', '4:benchmark', '4:tester mon pc|ma config|mon processeur', '4:pc stable', '4:overclock*', '4:occt|prime95|cinebench|aida64', '3:tester le materiel', '3:test du materiel', '3:pc fiable', '3:undervolt*', '3:xmp stable', '3:verifier mon montage', '3:tester si mon pc tient') },
+    @{ Id = 'memtest'; Go = 'A:Start-MemoryTest'; Pri = 49; Why = "Programme le test de mémoire de Windows au prochain redémarrage et lit son résultat."
+       P = @('4:tester la|ma|les ram|memoire|barrette*', '4:test de la|de|ram|memoire', '4:test ram|memoire', '4:memtest', '4:barrette* {bug}|defectueu*|morte*', '4:ram {bug}|defectueu*|morte*', '4:diagnostic de memoire', '3:verifier ram|memoire|barrette*', '3:=ram hs', '3:probleme de ram|barrette*', '3:mdsched') },
+    @{ Id = 'diskspeed'; Go = 'A:Test-DiskSpeed'; Pri = 36; Why = "Mesure la vitesse réelle de chaque disque et la compare à ce qu'il doit donner."
+       P = @('4:vitesse du|des|de mon disque*|ssd|nvme', '4:crystaldiskmark|crystal_disk', '4:ssd|disque|nvme lent|ralenti', '4:debit du|de mon ssd|disque', '4:tester mon|le ssd|disque|nvme', '3:ssd rapide', '3:vitesse ecriture|lecture', '3:ssd bride', '3:copie lente', '3:transfert lent', '3:copie* fichier* lent*') },
+    @{ Id = 'temps'; Go = 'go:monitor'; Pri = 74; N = 'surchauff*|temperature*|ventilo*|ventilateur*|ventirad|degres'; Why = "Affiche les températures et la charge en direct, avec une alerte de surchauffe."
+       P = @('3:souffle*', '3:pc bruit*', '4:pc|processeur|carte_graphique chaud|chaude|bouillant*', '4:monte degres', '4:pc|processeur|carte chauffe*', '3:chauffe*', '4:trop chaud|chaude', '4:brulant*', '4:ventilateur* a fond|bruyant*|bruit|hurle*|souffle*', '4:ventilo* a fond|bruyant*|bruit|hurle*|souffle*', '4:pc fait du bruit', '4:pc bruyant', '3:avion', '3:decolle', '3:pate thermique', '3:watercooling {bug}', '3:combien de degres', '3:voir les fps', '3:afficher fps|temperature*', '3:overlay') },
+    @{ Id = 'sysinfo'; Go = 'go:system'; Pri = 34; Why = "Montre ce qu'il y a dans ton PC : processeur, carte graphique, mémoire, disques, carte mère, BIOS."
+       P = @('4:connaitre carte_graphique|processeur|config|ram|carte_mere|composant*', '4:quoi carte_graphique|processeur|ram|carte_mere|config', '4:comme processeur|carte_graphique|ram|carte_mere', '4:savoir processeur|carte_graphique|ram|config', '4:ma config', '4:quelle carte_graphique|carte_mere|ram|processeur|config', '4:quel processeur|pc|modele', '4:combien de ram|memoire|go', '4:caracteristique*', '4:composant*', '4:bios', '4:fiche technique', '3:modele carte_mere|carte_graphique|pc', '3:specs', '3:ma carte mere', '3:mettre a jour le bios', '3:version de windows', '3:ajouter de la ram', '3:compatible') },
+    @{ Id = 'display'; Go = 'diag'; Pri = 63; Why = "Le diagnostic vérifie l'écran : fréquence bridée, résolution, pilote graphique, câble."
+       P = @('4:hz', '4:hertz', '4:frequence ecran|rafraichissement', '4:taux de rafraichissement', '3:ecran flou', '3:resolution', '3:ecran {neg} fluide', '3:ecran noir', '3:ecran scintille|clignote|saute', '3:ecran bride', '3:deuxieme ecran {neg}', '3:ecran {neg} detect*|reconnu*', '3:hdmi {neg}', '3:displayport {neg}', '3:image* saccade*', '3:ecran s eteint tout seul', '3:pas de signal', '3:ecran gris') },
+    @{ Id = 'battery'; Go = 'diag'; Pri = 51; N = 'batterie*|autonomie'; Why = "Le diagnostic lit l'usure réelle de la batterie et ce qui la vide."
+       P = @('4:tient {neg} la charge*', '4:se decharge', '4:pc|portable|batterie {neg} charge*', '3:chargeur', '3:batterie use*|morte|gonfle*', '3:tient heure|min|minutes') },
+    @{ Id = 'clock'; Go = 'diag'; Pri = 33; Why = "Le diagnostic repère une horloge qui se dérègle (souvent la pile de la carte mère)."
+       P = @('4:perd heure', '4:{neg} bonne heure', '4:jamais|pas heure', '4:heure date deregle*', '4:heure fausse|mauvaise|deregle*|decale*', '4:l heure se deregle|change|remet', '4:date fausse|mauvaise|se remet', '4:horloge', '4:pile carte_mere|bios|cmos|cm', '4:pile', '3:mauvaise heure|date', '3:revient en 2000|2010|2015|2020', '3:bios se remet a zero', '3:reglage* bios saute*|perdu*') },
+    @{ Id = 'restore'; Go = 'A:New-RestorePoint'; Pri = 32; Why = "Crée un point de restauration pour pouvoir revenir en arrière."
+       P = @('4:point de restauration', '4:restauration systeme|du systeme', '3:creer un point', '3:revenir a une date') },
+    @{ Id = 'history'; Go = 'UI:history'; Pri = 31; Why = "Liste ce qu'AEROX a changé sur ce PC et permet d'annuler."
+       P = @('4:annuler ce qu aerox a fait|change', '4:revenir en arriere', '4:annuler les changement*|modification*|reglage*', '3:defaire', '3:historique', '3:remettre comme avant', '3:depuis qu aerox', '3:annuler') },
+    @{ Id = 'remote'; Go = 'UI:remotehelp'; Pri = 29; Why = "Explique comment un proche peut t'aider à distance avec l'outil de Windows."
+       P = @('4:aide a distance', '4:prendre la main', '4:assistance a distance', '3:quelqu un m aide|peut m aider', '3:controle a distance', '3:depanner un ami|pote a distance') },
+    @{ Id = 'report'; Go = 'UI:report'; Pri = 28; Why = "Envoie un rapport au développeur."
+       P = @('4:signaler un bug|probleme', '4:aerox {bug}', '4:bug dans|d aerox', '4:contacter le developpeur', '3:rapport de bug', '3:l appli {bug}', '3:logiciel aerox {neg} marche*') },
+    @{ Id = 'diag'; Go = 'diag'; Pri = 20; Why = "Le diagnostic complet passe tout le PC en revue et classe les problèmes par gravité."
+       P = @('3:probleme pc', '3:pc probleme', '4:diagnostic', '4:bilan', '4:check up|checkup', '4:verifier mon pc', '4:etat de mon pc', '4:tout verifier|analyser', '4:analyse complete', '3:sante du pc', '3:mon pc va bien', '3:probleme mais je sais pas', '3:je sais pas ce qu il a', '3:je sais pas quoi', '3:analyser mon pc', '2:pc {bug}', '2:pc marche* {neg}', '2:pc deconne|deconne', '2:pc bizarre') }
+)
 # ---------------------------------------------------------------- Vitesse des disques
 # Type du disque derrière une lettre : nvme | ssd | hdd | '' (USB, virtuel, RAID : pas de valeur attendue fiable)
 function Get-DiskKindName([string]$MediaType, [string]$BusType) {

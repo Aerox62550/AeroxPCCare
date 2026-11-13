@@ -129,6 +129,83 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    # ---------------- « Quel est ton problème ? » : du texte libre vers la bonne carte
+    Smoke 'Quel est ton problème : les 1 200 phrases de test' {
+        $file = 'C:\aerox\aide-phrases.txt'
+        if (-not (Test-Path -LiteralPath $file)) { throw "phrases de test introuvables" }
+        $n = 0; $top1 = 0; $top3 = 0; $offBad = New-Object System.Collections.ArrayList; $miss = New-Object System.Collections.ArrayList
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        foreach ($l in [IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8)) {
+            if (-not $l.Trim() -or $l.StartsWith('#')) { continue }
+            $i = $l.IndexOf('|'); if ($i -lt 0) { continue }
+            $want = @($l.Substring(0, $i).Split('/')); $text = $l.Substring($i + 1)
+            $r = @(Find-HelpIntents $text); $ids = @($r | ForEach-Object { $_.Id }); $n++
+            if ($want[0] -eq '-') { if ($ids.Count) { [void]$offBad.Add("« $text » → $($ids -join ', ')") } else { $top1++; $top3++ }; continue }
+            if ($ids.Count -and $want -contains $ids[0]) { $top1++ } else { [void]$miss.Add("$($want -join '/') « $text » → $($ids -join ', ')") }
+            if (@($ids | Select-Object -First 3 | Where-Object { $want -contains $_ }).Count) { $top3++ }
+        }
+        Write-Host ("        {0} phrases : bon du premier coup {1:P1}, dans les 3 premiers {2:P1}, {3:N0} ms par phrase" -f $n, ($top1 / $n), ($top3 / $n), ($sw.ElapsedMilliseconds / $n))
+        foreach ($m in ($miss | Select-Object -First 15)) { Write-Host "        raté : $m" }
+        if ($n -lt 1100) { throw "il manque des phrases de test : $n" }
+        if ($offBad.Count) { throw "phrase hors sujet orientée quand même : $($offBad[0])" }
+        if ($top1 / $n -lt 0.985) { throw ("trop de phrases mal orientées : {0:P1} du premier coup" -f ($top1 / $n)) }
+        if ($sw.ElapsedMilliseconds / $n -gt 150) { throw "trop lent" }
+    }
+    Smoke 'Quel est ton problème : règles (fautes, négation, sujets cités sans problème, cibles)' {
+        function First([string]$T) { return "$(@(Find-HelpIntents $T | ForEach-Object { $_.Id }) | Select-Object -First 1)" }
+        function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }
+        Is 'faute de frappe' (First 'ecran blue') 'bsod'
+        Is 'faute de frappe 2' (First 'bleutooth marche plus') 'bluetooth'
+        Is 'lettres en trop' (First 'mon pc est lennnnnt') 'slow'
+        Is 'accents et majuscules' (First 'MON PC N''A PLUS DE SON !!!') 'sound'
+        Is 'sujet cité sans problème' (First 'mon son marche mais pas le micro') 'micro'
+        Is '« son » possessif' (First 'il a reset son pc') 'newpc'
+        Is 'négation après le verbe' (First 'le jeu se lance pas') 'gamelaunch'
+        Is 'négation avant le verbe' (First 'impossible de lancer le jeu') 'gamelaunch'
+        Is 'corbeille vidée par erreur' (First 'j''ai vide la corbeille par erreur') 'recover'
+        Is 'vider la corbeille' (First 'vider la corbeille') 'recycle'
+        Is 'discord qui coupe = connexion' (First 'discord coupe tout le temps') 'lag'
+        Is 'discord écran noir = Discord' (First 'discord ecran noir') 'discord'
+        Is 'rien' (@(Find-HelpIntents '').Count) 0
+        Is 'hors sujet' (@(Find-HelpIntents 'comment faire un gateau au chocolat').Count) 0
+        Is 'que des signes' (@(Find-HelpIntents '?!... ,,,').Count) 0
+        $two = @(Find-HelpIntents 'j''ai plus de son et mon pc rame' | ForEach-Object { $_.Id })
+        if ($two -notcontains 'sound' -or $two -notcontains 'slow') { throw "deux problèmes dans une phrase : $($two -join ', ')" }
+        # Chaque sujet connu mène à une vraie carte ou une vraie page
+        Initialize-HelpIntents
+        foreach ($it in $script:HelpIntents) {
+            $t = Get-HelpTarget @{ Go = $it.Go }
+            if (-not $t -or -not $t.Title -or -not $t.Tag.Kind) { throw "sujet sans carte : $($it.Id) → $($it.Go)" }
+            if ($t.Tag.Kind -eq 'go' -and -not $NavMap.ContainsKey("$($t.Tag.Def.Go)")) { throw "page inconnue : $($it.Go)" }
+            if (-not $it.Why) { throw "sujet sans explication : $($it.Id)" }
+        }
+        # Aucune expression ne se réduit à un mot passe-partout (elle sortirait pour n'importe quelle phrase)
+        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?)$'
+        foreach ($it in $script:HelpIntents) {
+            foreach ($p in @($it.P)) {
+                $src = $p.Substring($p.IndexOf(':') + 1); if ($src -match ' & ') { continue }
+                $q = $src.TrimStart('^', '='); foreach ($k in $script:HelpSets.Keys) { $q = $q.Replace("{$k}", "<$k>") }
+                $toks = @($q.Split(' ') | Where-Object { $_ -and @($_.Split('|') | Where-Object { -not $script:HelpFill.ContainsKey($_) }).Count })
+                if (-not $toks.Count) { throw "expression vide : [$($it.Id)] $p" }
+                if ($toks.Count -eq 1 -and @($toks[0].Split('|') | Where-Object { $_ -match $generic }).Count) { throw "expression trop vague : [$($it.Id)] $p" }
+            }
+        }
+    }
+    Smoke 'Quel est ton problème : la carte de l accueil' {
+        $keepQ = $script:HelpQuery; $keepR = $script:HelpResults
+        try {
+            Show-Page 'home'
+            Invoke-HelpSearch 'mon pc rame et j''ai plus de son'
+            if (-not @($script:HelpResults).Count -or $script:HelpResults[0].Target.Title -notmatch 'rame|son') { throw "résultats absents : $(@($script:HelpResults | ForEach-Object { $_.Target.Title }) -join ', ')" }
+            Write-Host ("        « mon pc rame et j'ai plus de son » → {0}" -f ((@($script:HelpResults | ForEach-Object { $_.Target.Title })) -join ' · '))
+            Invoke-HelpSearch 'comment faire un gateau'
+            if (@($script:HelpResults).Count -or $null -eq $script:HelpResults) { throw "phrase hors sujet : la carte doit dire qu'elle n'a rien reconnu" }
+            Invoke-HelpSearch 'ecran bleu en jeu'
+            if ($script:HelpResults[0].Target.Tag.Def.A -ne 'Get-BsodReport') { throw "écran bleu mal orienté" }
+            Invoke-HelpSearch ''
+            if ($null -ne $script:HelpResults) { throw "champ vidé : les résultats devraient disparaître" }
+        } finally { $script:HelpQuery = $keepQ; $script:HelpResults = $keepR; Show-Page 'home' }
+    }
     # ---------------- 3.4.0 : vitesse des disques, sauvegarde, boîte noire, récupération
     Smoke 'Vitesse des disques : règles et mesure réelle' {
         function Is([string]$N, $G, $W) { if ("$G" -ne "$W") { throw ("{0} : obtenu « {1} », attendu « {2} »" -f $N, $G, $W) } }

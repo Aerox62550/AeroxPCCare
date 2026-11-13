@@ -1013,6 +1013,81 @@ function Build-Header($Sp, [string]$Title, [string]$Sub) {
     $s = New-Text $Sub $Typo.Body $Pal.Muted; $s.Margin = Th 0 6 0 20; $s.MaxWidth = 760; $s.HorizontalAlignment = 'Left'; Add-Child $Sp $s
 }
 
+# ---------------------------------------------------------------- « Quel est ton problème ? » (accueil)
+# La carte ou la page vers laquelle un sujet reconnu envoie : le même bouton que sur sa page d'origine
+function Get-HelpTarget($R) {
+    $go = "$($R.Go)"
+    if ($go -eq 'diag') { return @{ Title = 'Diagnostic complet'; Btn = 'Lancer le diagnostic'; Tag = @{ Kind = 'startdiag' }; Busy = $true } }
+    if ($go -like 'go:*') {
+        $pg = $go.Substring(3)
+        $title = switch ($pg) { 'monitor' { 'Températures et charge en direct' } 'system' { 'Mon PC : ce qu''il y a dedans' } default { 'Ouvrir la page' } }
+        return @{ Title = $title; Btn = 'Ouvrir'; Tag = @{ Kind = 'go'; Def = @{ Go = $pg } }; Busy = $false }
+    }
+    $key = $go.Substring($go.IndexOf(':') + 1); $isUi = $go.StartsWith('UI:')
+    $defs = @(); foreach ($k in $PageDefs.Keys) { $defs += @($PageDefs[$k].Cards) }
+    # Les deux cartes qui n'existent que sur l'accueil
+    $defs += @(@{ T = 'Optimisation complète'; B = 'Commencer'; UI = 'optimize'; UiBusy = $true }, @{ T = 'PC neuf ou Windows réinstallé'; B = 'Préparer'; UI = 'newpc'; UiBusy = $true })
+    $def = @($defs | Where-Object { $_ -and $(if ($isUi) { $_.UI -eq $key } else { $_.A -eq $key }) }) | Select-Object -First 1
+    if (-not $def) { return $null }
+    return @{ Title = "$($def.T)"; Btn = $(if ($def.B) { "$($def.B)" } else { 'Lancer' }); Tag = @{ Kind = $(if ($def.UI) { 'ui' } else { 'action' }); Def = $def }; Busy = [bool](-not $def.UI -or $def.UiBusy) }
+}
+function Invoke-HelpSearch([string]$Text) {
+    $script:HelpQuery = "$Text".Trim()
+    $script:HelpResults = $null
+    if ($script:HelpQuery) {
+        $found = @(); try { $found = @(Find-HelpIntents $script:HelpQuery) } catch { Write-Bug -Context 'Quel est ton problème' -ErrorRecord $_ }
+        $script:HelpResults = @($found | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { @{ Target = $t; Why = "$($_.Why)"; Id = $_.Id } } })
+    }
+    $script:HelpFocus = $true
+    Refresh-Page
+}
+function New-HelpSearchCard {
+    $c = New-CardBorder $Pal.Card
+    $st = New-Object System.Windows.Controls.StackPanel
+    Add-Child $st (New-Text 'QUEL EST TON PROBLÈME ?' $Typo.Caption $Pal.AccentText 'Bold')
+    $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = Th 0 8 0 0
+    $go = New-Object System.Windows.Controls.Button; $go.Style = $window.FindResource('PrimaryBtn'); $go.Content = 'Trouver'; $go.Margin = Th 10 0 0 0
+    [System.Windows.Controls.DockPanel]::SetDock($go, 'Right'); Add-Child $row $go
+    $tb = New-Object System.Windows.Controls.TextBox; $tb.FontSize = $Typo.Body; $tb.Padding = Th 10 8 10 8; $tb.MaxLength = 300; $tb.VerticalContentAlignment = 'Center'
+    $tb.Text = "$($script:HelpQuery)"; $script:HelpBox = $tb
+    $tb.ToolTip = "Décris ce qui ne va pas avec tes mots : « mon pc rame », « plus de son », « écran bleu », « ma clé USB est illisible »…"
+    $tb.Add_KeyDown({ param($s, $e) if ($e.Key -eq 'Return') { $e.Handled = $true; Invoke-HelpSearch $script:HelpBox.Text } })
+    $go.Add_Click({ Invoke-HelpSearch $script:HelpBox.Text })
+    Add-Child $row $tb; Add-Child $st $row
+    if ($null -eq $script:HelpResults) {
+        $hint = New-Text "Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible ») et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé." $Typo.Small $Pal.Muted
+        $hint.Margin = Th 0 8 0 0; Add-Child $st $hint
+    } elseif (-not @($script:HelpResults).Count) {
+        $no = New-Text "Je n'ai pas reconnu de problème dans cette phrase. Essaie avec d'autres mots, plus courts (« pas de son », « pc lent », « wifi coupe »), ou lance le diagnostic complet : il passe tout le PC en revue." $Typo.Body $Pal.Warn
+        $no.Margin = Th 0 10 0 8; Add-Child $st $no
+        $b = New-Button 'Lancer le diagnostic' 'PrimaryBtn' @{ Kind = 'startdiag' }; $b.HorizontalAlignment = 'Left'; Add-Child $st $b
+    } else {
+        $n = @($script:HelpResults).Count
+        $hd = New-Text $(if ($n -eq 1) { "Je pense à ça :" } else { "Je pense à ça, du plus probable au moins probable :" }) $Typo.Body $Pal.Text3
+        $hd.Margin = Th 0 10 0 6; Add-Child $st $hd
+        $i = 0
+        foreach ($r in @($script:HelpResults)) {
+            $i++
+            $line = New-Object System.Windows.Controls.Border; $line.Background = Brush $Pal.Bg; $line.CornerRadius = Corner 10; $line.Padding = Th 12 8 12 8; $line.Margin = Th 0 0 0 6
+            $dp = New-Object System.Windows.Controls.DockPanel
+            $b = New-Button $r.Target.Btn $(if ($i -eq 1) { 'PrimaryBtn' } else { 'ActionBtn' }) $r.Target.Tag $r.Target.Busy
+            $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+            $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
+            Add-Child $tx (New-Text $r.Target.Title $Typo.Strong $Pal.White 'SemiBold')
+            if ($r.Why) { Add-Child $tx (New-Text $r.Why $Typo.Small $Pal.Muted) }
+            Add-Child $dp $tx; $line.Child = $dp; Add-Child $st $line
+        }
+        if (-not @($script:HelpResults | Where-Object { $_.Target.Tag.Kind -eq 'startdiag' }).Count) {
+            $alt = New-Object System.Windows.Controls.DockPanel; $alt.Margin = Th 0 2 0 0
+            $b = New-Button 'Lancer le diagnostic' 'TextBtn' @{ Kind = 'startdiag' }; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $alt $b
+            $tt = New-Text "Rien de tout ça ? Le diagnostic complet passe tout le PC en revue." $Typo.Small $Pal.Muted; $tt.VerticalAlignment = 'Center'; Add-Child $alt $tt
+            Add-Child $st $alt
+        }
+    }
+    $c.Child = $st
+    if ($script:HelpFocus) { $script:HelpFocus = $false; $tb.Add_Loaded({ try { $script:HelpBox.Focus() | Out-Null; $script:HelpBox.CaretIndex = $script:HelpBox.Text.Length } catch {} }) }
+    return $c
+}
 function Build-HomePage {
     $sp = New-Object System.Windows.Controls.StackPanel
     $hr = (Get-Date).Hour
@@ -1066,6 +1141,7 @@ function Build-HomePage {
         Add-Child $dp $t
     }
     $h.Child = $dp; Add-Child $sp $h
+    Add-Child $sp (New-HelpSearchCard)
     # Disque de Windows presque plein : l'assistant « Libérer de la place » mis en avant
     $dFree = 0.0; $dSize = 0.0; try { $di = New-Object IO.DriveInfo $env:SystemDrive; $dFree = [double]$di.TotalFreeSpace; $dSize = [double]$di.TotalSize } catch {}
     $dLvl = Get-SystemDiskLevel $dFree $dSize
@@ -2889,6 +2965,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.5.0' = @("Nouveau : « Quel est ton problème ? » sur l'accueil. Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible »), fautes de frappe comprises, et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé.",
+        "Si une phrase n'est pas comprise ou oriente mal, signale-la (onglet Aide) : elle sera ajoutée.")
     '3.4.0' = @("Nouveau : « Sauvegarder mes fichiers » (onglet Réparation). Bureau, Documents, Images, Vidéos, Musique et Téléchargements copiés sur un autre disque puis vérifiés, avant une réinstallation de Windows par exemple.",
         "Nouveau : « Récupérer des fichiers effacés ». AEROX lance l'outil officiel de Microsoft, qui fouille le disque (ou la clé USB illisible) sans rien écrire dessus.",
         "Nouveau : « Vitesse des disques » : écriture, lecture et petits fichiers mesurés en 30 secondes et comparés à ce que le disque doit donner.",

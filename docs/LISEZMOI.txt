@@ -1,4 +1,4 @@
-﻿AEROX PC Care - v3.4.0
+﻿AEROX PC Care - v3.5.0
 Diagnostic, nettoyage, mises à jour, réparation et optimisation de Windows 10 / 11
 ==================================================================================
 
@@ -148,6 +148,14 @@ HISTORIQUE ET ANNULATION
 Accueil ou onglet Aide > « Historique des changements » : tout ce qu'AEROX PC Care a
 modifié sur le PC. Chaque réglage (programmes au démarrage, mode d'alimentation,
 nettoyage automatique, veille prolongée) se remet comme avant avec « Annuler ».
+
+QUEL EST TON PROBLÈME ?
+-----------------------
+Sur l'accueil, écris ce qui ne va pas avec tes mots : « mon pc rame », « plus de son »,
+« écran bleu en jeu », « ma clé USB est illisible ». AEROX PC Care propose le bon
+dépannage, du plus probable au moins probable. Les fautes de frappe sont tolérées.
+Tout se passe sur ton PC : rien n'est envoyé. S'il ne reconnaît rien, il le dit et
+propose le diagnostic complet.
 
 ÉCRANS BLEUS
 ------------
