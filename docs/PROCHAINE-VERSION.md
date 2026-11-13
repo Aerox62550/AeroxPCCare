@@ -2,6 +2,16 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour 3.5.1 : « Quel est ton problème ? » renforcé (première vraie phrase de Sam ratée, 13/11)
+
+- Phrase de Sam : « DISQUE DUR plus reconnu besoin de recuperer des choses dessus et savoir ce quil a » → seulement « Ce qui prend de la place ». Causes : une règle réduite au seul mot « dessus » ; « disque dur » non reconnu (seulement « disque externe ») ; « récupérer des choses » non reconnu.
+- Mesure honnête sur une nouvelle série de 87 phrases longues : 64 %. Les séries suivantes, jamais vues avant mesure : 86 %, puis 82 %, avec presque uniquement des « rien reconnu ».
+- Moteur : ensembles de mots ({disk} disque/ssd/clé/carte SD…, {unseen} reconnu/détecté/apparaît/illisible…, {getback} récupérer/retrouver…, {stuff} fichiers/photos/choses/travail…) pour couvrir toutes les combinaisons ; formes SMS (jai, quil, ya, pk, jsp…) ; jusqu'à 5 résultats (un sujet est gardé s'il a sa propre preuve solide) ; « disque qui ne s'affiche plus » (perdu) distingué de « nouveau disque qui ne s'affiche pas » (à préparer).
+- « Ça peut aussi t'aider » : chaque sujet a ses voisins (disque perdu → récupérer, vérifier, sauvegarder).
+- Moteur de secours quand aucune règle ne répond : les mots de la phrase cherchés dans les titres, descriptions et vocabulaire des règles de tous les dépannages (poids selon la rareté du mot, deux mots communs au moins). Affiché « Je ne suis pas sûr d'avoir compris ».
+- « Ce n'est pas ça ? Choisir moi-même » : toutes les cartes avec un filtre ; le choix est retenu sur ce PC pour les phrases proches (`aide-appris.txt`, 300 au plus, cible vérifiée) ; « Envoyer ma phrase au développeur » ouvre le rapport de bug prérempli (la personne voit tout avant d'envoyer).
+- Phrases de test : 1 432 (séries 6 à 8 ajoutées, avec les sujets secondaires attendus).
+
 ## Publié en 3.5.0 : « Quel est ton problème ? » (publication ouverte demandée par Sam le 13/11, avec tout le contenu de la 3.4.0 de test)
 
 - Demandé par Sam le 13/11 : « le fait d'écrire c'est pas mal, faut que l'algorithme soit bien fourni, un truc costaud béton ».

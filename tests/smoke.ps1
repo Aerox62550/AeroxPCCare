@@ -130,7 +130,7 @@ function Invoke-Smoke {
         finally { $script:Issues = $keep }
     }
     # ---------------- « Quel est ton problème ? » : du texte libre vers la bonne carte
-    Smoke 'Quel est ton problème : les 1 200 phrases de test' {
+    Smoke 'Quel est ton problème : les 1 400 phrases de test' {
         $file = 'C:\aerox\aide-phrases.txt'
         if (-not (Test-Path -LiteralPath $file)) { throw "phrases de test introuvables" }
         $n = 0; $top1 = 0; $top3 = 0; $offBad = New-Object System.Collections.ArrayList; $miss = New-Object System.Collections.ArrayList
@@ -138,15 +138,18 @@ function Invoke-Smoke {
         foreach ($l in [IO.File]::ReadAllLines($file, [Text.Encoding]::UTF8)) {
             if (-not $l.Trim() -or $l.StartsWith('#')) { continue }
             $i = $l.IndexOf('|'); if ($i -lt 0) { continue }
-            $want = @($l.Substring(0, $i).Split('/')); $text = $l.Substring($i + 1)
+            $spec = $l.Substring(0, $i); $text = $l.Substring($i + 1)
+            $parts = @($spec.Split('+')); $want = @($parts[0].Split('/')); $need = @($parts | Select-Object -Skip 1)
             $r = @(Find-HelpIntents $text); $ids = @($r | ForEach-Object { $_.Id }); $n++
+            if ($need.Count) { $shown = @($ids) + @(Get-HelpRelated $r | ForEach-Object { $_.Id }); foreach ($x in $need) { if ($shown -notcontains $x) { [void]$miss.Add("manque $x : « $text » → $($shown -join ', ')") } } }
             if ($want[0] -eq '-') { if ($ids.Count) { [void]$offBad.Add("« $text » → $($ids -join ', ')") } else { $top1++; $top3++ }; continue }
             if ($ids.Count -and $want -contains $ids[0]) { $top1++ } else { [void]$miss.Add("$($want -join '/') « $text » → $($ids -join ', ')") }
             if (@($ids | Select-Object -First 3 | Where-Object { $want -contains $_ }).Count) { $top3++ }
         }
         Write-Host ("        {0} phrases : bon du premier coup {1:P1}, dans les 3 premiers {2:P1}, {3:N0} ms par phrase" -f $n, ($top1 / $n), ($top3 / $n), ($sw.ElapsedMilliseconds / $n))
         foreach ($m in ($miss | Select-Object -First 15)) { Write-Host "        raté : $m" }
-        if ($n -lt 1100) { throw "il manque des phrases de test : $n" }
+        if ($n -lt 1400) { throw "il manque des phrases de test : $n" }
+        if (@($miss | Where-Object { $_ -like 'manque *' }).Count) { throw "sujet attendu absent : $(@($miss | Where-Object { $_ -like 'manque *' })[0])" }
         if ($offBad.Count) { throw "phrase hors sujet orientée quand même : $($offBad[0])" }
         if ($top1 / $n -lt 0.985) { throw ("trop de phrases mal orientées : {0:P1} du premier coup" -f ($top1 / $n)) }
         if ($sw.ElapsedMilliseconds / $n -gt 150) { throw "trop lent" }
@@ -180,7 +183,7 @@ function Invoke-Smoke {
             if (-not $it.Why) { throw "sujet sans explication : $($it.Id)" }
         }
         # Aucune expression ne se réduit à un mot passe-partout (elle sortirait pour n'importe quelle phrase)
-        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?)$'
+        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?|dessus|dessous|dedans|chose\*?|truc\*?|besoin|savoir|veux|voir|quoi|comment|faire|fait|tout|aide)$'
         foreach ($it in $script:HelpIntents) {
             foreach ($p in @($it.P)) {
                 $src = $p.Substring($p.IndexOf(':') + 1); if ($src -match ' & ') { continue }
@@ -191,6 +194,36 @@ function Invoke-Smoke {
             }
         }
     }
+    Smoke 'Quel est ton problème : moteur de secours, phrases sans rapport, apprentissage' {
+        Initialize-HelpCards @(Get-HelpCardList | ForEach-Object { @{ Go = (Get-HelpCardGo $_.Def); Title = "$($_.Def.T)"; Text = "$($_.Def.S) $($_.Def.D)" } })
+        Write-Host ("        {0} cartes et sujets indexés pour la recherche de secours" -f @($script:HelpCardIndex.Cards).Count)
+        if (@($script:HelpCardIndex.Cards).Count -lt 60) { throw "index de secours trop petit" }
+        foreach ($t in @('rendre windows plus fluide en general', 'l application parametres fait n importe quoi', 'mon antivirus a detecte des menaces hier')) {
+            $f = @(Find-HelpByCards $t); if (-not $f.Count) { throw "secours muet pour « $t »" }
+            Write-Host ("        secours « {0} » → {1}" -f $t, ((@($f | ForEach-Object { $_.Go })) -join ', '))
+        }
+        foreach ($t in @('quel temps fait il demain', 'merci beaucoup pour l application', 'je veux acheter une voiture', 'mon telephone est casse', 'ma voiture fait un bruit bizarre', 'test', 'quoi de neuf', 'qui a gagne le match', 'quelle heure est il', 'bonne nuit')) {
+            if (@(Find-HelpIntents $t).Count) { throw "phrase sans rapport orientée : « $t »" }
+            if (@(Find-HelpByCards $t).Count) { throw "secours déclenché par une phrase sans rapport : « $t »" }
+        }
+        $p = Get-HelpLearnedPath; $bak = $null; if (Test-Path -LiteralPath $p) { $bak = [IO.File]::ReadAllBytes($p) }
+        try {
+            Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue; $script:HelpLearned = $null
+            $q = 'mon truc bizarre fait des siennes avec le casque gamer'
+            Add-HelpLearned $q 'A:Repair-Bluetooth'
+            $script:HelpLearned = $null
+            $r = @(Find-HelpIntents 'mon truc bizarre fait des siennes avec mon casque gamer')
+            if (-not $r.Count -or $r[0].Go -ne 'A:Repair-Bluetooth') { throw "choix retenu pas proposé en premier : $(@($r | ForEach-Object { $_.Go }) -join ', ')" }
+            if (@(Find-HelpIntents 'mon pc rame' | Where-Object { $_.Go -eq 'A:Repair-Bluetooth' }).Count) { throw "choix retenu appliqué à une phrase sans rapport" }
+            Add-HelpLearned 'x' 'A:Remove-Item C:\'; $script:HelpLearned = $null
+            if (@(Read-HelpLearned | Where-Object { $_.Go -like '*Remove-Item*' }).Count) { throw "cible invalide retenue" }
+        } finally { if ($bak) { [IO.File]::WriteAllBytes($p, $bak) } else { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }; $script:HelpLearned = $null }
+        # Chaque carte de la liste « Choisir moi-même » se lance par une commande connue
+        foreach ($c in @(Get-HelpCardList)) { $tg = Get-HelpCardTag $c.Def; if (-not $tg.Kind -or -not $c.Def.T) { throw "carte sans commande : $($c.Def.T)" } }
+    }
+    Smoke 'Fenêtre : choisir le bon dépannage' {
+        Show-HelpBrowseDialog 'mon disque fait des trucs bizarres'
+    }
     Smoke 'Quel est ton problème : la carte de l accueil' {
         $keepQ = $script:HelpQuery; $keepR = $script:HelpResults
         try {
@@ -198,6 +231,13 @@ function Invoke-Smoke {
             Invoke-HelpSearch 'mon pc rame et j''ai plus de son'
             if (-not @($script:HelpResults).Count -or $script:HelpResults[0].Target.Title -notmatch 'rame|son') { throw "résultats absents : $(@($script:HelpResults | ForEach-Object { $_.Target.Title }) -join ', ')" }
             Write-Host ("        « mon pc rame et j'ai plus de son » → {0}" -f ((@($script:HelpResults | ForEach-Object { $_.Target.Title })) -join ' · '))
+            Invoke-HelpSearch 'DISQUE DUR plus reconnu besoin de recuperer des choses dessus et savoir ce quil a'
+            $ids = @($script:HelpResults | ForEach-Object { $_.Id }) + @($script:HelpRelated | ForEach-Object { $_.Id })
+            Write-Host ("        « DISQUE DUR plus reconnu… » → {0}" -f ((@($script:HelpResults | ForEach-Object { $_.Target.Title }) + @($script:HelpRelated | ForEach-Object { '+ ' + $_.Target.Title })) -join ' · '))
+            if ($ids[0] -ne 'usbdisk' -or $ids -notcontains 'recover') { throw "phrase du disque dur mal orientée : $($ids -join ', ')" }
+            Invoke-HelpSearch 'rendre windows plus fluide en general svp'
+            Write-Host ("        « rendre windows plus fluide… » → {0}{1}" -f ((@($script:HelpResults | ForEach-Object { $_.Target.Title })) -join ' · '), $(if ($script:HelpGuess) { ' (secours)' } else { '' }))
+            if (-not @($script:HelpResults).Count) { throw "aucune proposition" }
             Invoke-HelpSearch 'comment faire un gateau'
             if (@($script:HelpResults).Count -or $null -eq $script:HelpResults) { throw "phrase hors sujet : la carte doit dire qu'elle n'a rien reconnu" }
             Invoke-HelpSearch 'ecran bleu en jeu'

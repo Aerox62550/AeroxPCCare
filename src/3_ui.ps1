@@ -1029,17 +1029,122 @@ function Get-HelpTarget($R) {
     $defs += @(@{ T = 'Optimisation complète'; B = 'Commencer'; UI = 'optimize'; UiBusy = $true }, @{ T = 'PC neuf ou Windows réinstallé'; B = 'Préparer'; UI = 'newpc'; UiBusy = $true })
     $def = @($defs | Where-Object { $_ -and $(if ($isUi) { $_.UI -eq $key } else { $_.A -eq $key }) }) | Select-Object -First 1
     if (-not $def) { return $null }
-    return @{ Title = "$($def.T)"; Btn = $(if ($def.B) { "$($def.B)" } else { 'Lancer' }); Tag = @{ Kind = $(if ($def.UI) { 'ui' } else { 'action' }); Def = $def }; Busy = [bool](-not $def.UI -or $def.UiBusy) }
+    $desc = if ($def.S) { "$($def.S)" } else { ("$($def.D)" -split '(?<=[.!?])\s')[0] }
+    return @{ Title = "$($def.T)"; Desc = $desc; Btn = $(if ($def.B) { "$($def.B)" } else { 'Lancer' }); Tag = @{ Kind = $(if ($def.UI) { 'ui' } else { 'action' }); Def = $def }; Busy = [bool](-not $def.UI -or $def.UiBusy) }
+}
+# Toutes les cartes qui lancent quelque chose, avec leur page : pour le moteur de secours et pour « Ce n'est pas ça ? »
+function Get-HelpCardList {
+    $out = New-Object System.Collections.ArrayList
+    $extra = @(@{ T = 'Optimisation complète'; B = 'Commencer'; UI = 'optimize'; UiBusy = $true; D = "Nettoyage, démarrage allégé et réglages enchaînés, avec ton accord à chaque étape. Rendre le PC plus rapide et plus fluide." },
+               @{ T = 'PC neuf ou Windows réinstallé'; B = 'Préparer'; UI = 'newpc'; UiBusy = $true; D = "Liste guidée après une installation de Windows : mises à jour, pilotes, disque vide à préparer, logiciels utiles." },
+               @{ T = 'Diagnostic complet'; B = 'Lancer le diagnostic'; Diag = $true; D = "Passe tout le PC en revue et classe les problèmes par gravité." })
+    foreach ($c in $extra) { [void]$out.Add(@{ Page = 'Accueil'; Def = $c }) }
+    foreach ($k in $PageDefs.Keys) { foreach ($c in @($PageDefs[$k].Cards)) { if ($c -and ($c.A -or $c.UI)) { [void]$out.Add(@{ Page = "$($PageDefs[$k].Title)"; Def = $c }) } } }
+    return $out.ToArray()
+}
+function Get-HelpCardGo($Def) { if ($Def.Diag) { return 'diag' }; if ($Def.UI) { return "UI:$($Def.UI)" }; return "A:$($Def.A)" }
+function Get-HelpCardTag($Def) {
+    if ($Def.Diag) { return @{ Kind = 'startdiag'; Busy = $true } }
+    $t = @{ Kind = $(if ($Def.UI) { 'ui' } else { 'action' }); Def = $Def }
+    if (-not $Def.UI -or $Def.UiBusy) { $t.Busy = $true }
+    return $t
 }
 function Invoke-HelpSearch([string]$Text) {
     $script:HelpQuery = "$Text".Trim()
-    $script:HelpResults = $null
+    $script:HelpResults = $null; $script:HelpRelated = @(); $script:HelpGuess = $false
     if ($script:HelpQuery) {
-        $found = @(); try { $found = @(Find-HelpIntents $script:HelpQuery) } catch { Write-Bug -Context 'Quel est ton problème' -ErrorRecord $_ }
-        $script:HelpResults = @($found | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { @{ Target = $t; Why = "$($_.Why)"; Id = $_.Id } } })
+        $found = @()
+        try {
+            $found = @(Find-HelpIntents $script:HelpQuery)
+            if ($found.Count) { $script:HelpRelated = @(Get-HelpRelated $found | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { @{ Target = $t; Why = "$($_.Why)"; Id = $_.Id; Go = $_.Go } } }) }
+            else {
+                # Aucune règle ne reconnaît la phrase : recherche dans le titre et la description de toutes les cartes
+                if (-not $script:HelpCardIndex) { Initialize-HelpCards @(Get-HelpCardList | ForEach-Object { @{ Go = (Get-HelpCardGo $_.Def); Title = "$($_.Def.T)"; Text = "$($_.Def.S) $($_.Def.D)" } }) }
+                $found = @(Find-HelpByCards $script:HelpQuery)
+                $script:HelpGuess = [bool]$found.Count
+            }
+        } catch { Write-Bug -Context 'Quel est ton problème' -ErrorRecord $_ }
+        $script:HelpResults = @($found | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { @{ Target = $t; Why = "$($_.Why)"; Id = $_.Id; Go = $_.Go } } })
     }
     $script:HelpFocus = $true
     Refresh-Page
+}
+# Une ligne de résultat : titre, explication, bouton. Cliquer retient le choix pour cette phrase (sur ce PC).
+function New-HelpResultRow($R, [bool]$First) {
+    $line = New-Object System.Windows.Controls.Border; $line.Background = Brush $Pal.Bg; $line.CornerRadius = Corner 10; $line.Padding = Th 12 8 12 8; $line.Margin = Th 0 0 0 6
+    $dp = New-Object System.Windows.Controls.DockPanel
+    $b = New-Button $R.Target.Btn $(if ($First) { 'PrimaryBtn' } else { 'ActionBtn' }) $R.Target.Tag $R.Target.Busy
+    $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right')
+    $b.Add_PreviewMouseLeftButtonDown({ try { Add-HelpLearned $script:HelpQuery "$($this.Tag.HelpGo)" } catch {} })
+    $b.Tag.HelpGo = "$($R.Go)"
+    Add-Child $dp $b
+    $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
+    Add-Child $tx (New-Text $R.Target.Title $Typo.Strong $Pal.White 'SemiBold')
+    $why = if ($R.Why) { $R.Why } else { "$($R.Target.Desc)" }
+    if ($why) { Add-Child $tx (New-Text $why $Typo.Small $Pal.Muted) }
+    Add-Child $dp $tx; $line.Child = $dp
+    return $line
+}
+# « Ce n'est pas ça ? » : toutes les cartes, avec un filtre. Le choix est retenu pour cette phrase sur ce PC.
+function Show-HelpBrowseDialog([string]$Query) {
+    $w = New-Dialog "$AppName : choisir le bon dépannage" 720
+    $script:HbWin = $w; $script:HbPick = $null; $script:HbQuery = $Query
+    $script:HbAll = @(Get-HelpCardList)
+    $top = New-Object System.Windows.Controls.StackPanel; $top.Margin = Th 24 22 24 8
+    Add-Child $top (New-Text "Choisir le bon dépannage" $Typo.H2 $Pal.White 'Bold')
+    $intro = if ($Query) { "Pour « $Query » : choisis ce qui correspond à ton problème. AEROX retiendra ce choix sur ce PC pour les phrases proches." } else { "Toutes les cartes d'AEROX. Tape un mot pour filtrer." }
+    $p = New-Text $intro $Typo.Body $Pal.Text3; $p.Margin = Th 0 6 0 10; Add-Child $top $p
+    $script:HbFilter = New-Object System.Windows.Controls.TextBox; $script:HbFilter.FontSize = $Typo.Body; $script:HbFilter.Padding = Th 10 6 10 6
+    $script:HbFilter.ToolTip = "Filtrer : son, disque, wifi, jeu…"
+    Add-Child $top $script:HbFilter
+    $script:HbList = New-Object System.Windows.Controls.StackPanel
+    $sv = New-Object System.Windows.Controls.ScrollViewer; $sv.VerticalScrollBarVisibility = 'Auto'; $sv.Content = $script:HbList; $sv.Margin = Th 24 4 24 0
+    $script:HbFill = {
+        $script:HbList.Children.Clear()
+        $words = @(ConvertTo-HelpTokens $script:HbFilter.Text -NoFix | Where-Object { $_ -ne '|' -and $_.Length -ge 2 } | ForEach-Object { Get-HelpStem $_ })
+        $page = ''; $n = 0
+        foreach ($c in $script:HbAll) {
+            if ($words.Count) {
+                $hay = ' ' + ((@(ConvertTo-HelpTokens "$($c.Def.T) $($c.Def.S) $($c.Def.D) $($c.Page)" -NoFix) | ForEach-Object { Get-HelpStem $_ }) -join ' ') + ' '
+                $miss = @($words | Where-Object { $hay.IndexOf(" $_") -lt 0 }).Count
+                if ($miss) { continue }
+            }
+            $n++
+            if ($c.Page -ne $page) { $page = $c.Page; $h = New-Text $page.ToUpper() $Typo.Caption $Pal.AccentText 'Bold'; $h.Margin = Th 0 10 0 4; Add-Child $script:HbList $h }
+            $row = New-Object System.Windows.Controls.Border; $row.Background = Brush $Pal.Card; $row.CornerRadius = Corner 8; $row.Padding = Th 12 6 12 6; $row.Margin = Th 0 0 0 4
+            $dp = New-Object System.Windows.Controls.DockPanel
+            $b = New-DlgButton 'Choisir' 'ActionBtn'; $b.Tag = $c.Def; $b.VerticalAlignment = 'Center'; $b.Margin = Th 10 0 0 0
+            $b.Add_Click({ $script:HbPick = $this.Tag; $script:HbWin.Close() })
+            [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
+            $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
+            Add-Child $tx (New-Text "$($c.Def.T)" $Typo.Body $Pal.White 'SemiBold')
+            $d = if ($c.Def.S) { "$($c.Def.S)" } else { ("$($c.Def.D)" -split '(?<=[.!?])\s')[0] }
+            if ($d) { Add-Child $tx (New-Text $d $Typo.Small $Pal.Muted) }
+            Add-Child $dp $tx; $row.Child = $dp; Add-Child $script:HbList $row
+        }
+        if (-not $n) { $e = New-Text "Aucune carte ne contient ces mots." $Typo.Body $Pal.Muted; $e.Margin = Th 0 10 0 0; Add-Child $script:HbList $e }
+    }
+    $script:HbFilter.Add_TextChanged({ & $script:HbFill })
+    & $script:HbFill
+    $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 24 10 24 18
+    $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Add_Click({ $script:HbWin.Close() }); [System.Windows.Controls.DockPanel]::SetDock($bClose, 'Right'); Add-Child $bar $bClose
+    if ($Query) {
+        $bRep = New-DlgButton 'Envoyer ma phrase au développeur' 'TextBtn'; $bRep.HorizontalAlignment = 'Left'; $bRep.ToolTip = "Ouvre le rapport de bug avec ta phrase : tu vois tout avant d'envoyer, pour qu'elle soit comprise dans une prochaine version."
+        $bRep.Add_Click({ $script:HbPick = 'report'; $script:HbWin.Close() }); Add-Child $bar $bRep
+    }
+    $g = New-Object System.Windows.Controls.Grid
+    foreach ($hh in 'Auto', '*', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($hh); $g.RowDefinitions.Add($rd) }
+    [System.Windows.Controls.Grid]::SetRow($top, 0); [System.Windows.Controls.Grid]::SetRow($sv, 1); [System.Windows.Controls.Grid]::SetRow($bar, 2)
+    Add-Child $g $top; Add-Child $g $sv; Add-Child $g $bar
+    $w.SizeToContent = 'Manual'; $w.Height = $w.MaxHeight; $w.Content = $g
+    $w.Add_ContentRendered({ try { $script:HbFilter.Focus() | Out-Null } catch {} })
+    [void]$w.ShowDialog()
+    $pick = $script:HbPick
+    if ($pick -eq 'report') { Show-BugReport ("« Quel est ton problème ? » n'a pas trouvé le bon dépannage pour cette phrase : « $Query ». Le bon dépannage serait : ") ; return }
+    if (-not $pick) { return }
+    if ($Query) { Add-HelpLearned $Query (Get-HelpCardGo $pick) }
+    if ($script:Job -and (Get-HelpCardTag $pick).Busy) { Write-UiLog "Une tâche est déjà en cours : attends qu'elle se termine."; return }
+    Invoke-UiCommand (Get-HelpCardTag $pick)
 }
 function New-HelpSearchCard {
     $c = New-CardBorder $Pal.Card
@@ -1057,32 +1162,27 @@ function New-HelpSearchCard {
     if ($null -eq $script:HelpResults) {
         $hint = New-Text "Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible ») et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé." $Typo.Small $Pal.Muted
         $hint.Margin = Th 0 8 0 0; Add-Child $st $hint
+        $bAll = New-Button 'Voir tous les dépannages' 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'helpbrowse' } } $false; $bAll.HorizontalAlignment = 'Left'; $bAll.Margin = Th 0 4 0 0; Add-Child $st $bAll
     } elseif (-not @($script:HelpResults).Count) {
-        $no = New-Text "Je n'ai pas reconnu de problème dans cette phrase. Essaie avec d'autres mots, plus courts (« pas de son », « pc lent », « wifi coupe »), ou lance le diagnostic complet : il passe tout le PC en revue." $Typo.Body $Pal.Warn
-        $no.Margin = Th 0 10 0 8; Add-Child $st $no
-        $b = New-Button 'Lancer le diagnostic' 'PrimaryBtn' @{ Kind = 'startdiag' }; $b.HorizontalAlignment = 'Left'; Add-Child $st $b
+        $no = New-Text "Je n'ai pas reconnu de problème dans cette phrase. Essaie avec d'autres mots, plus courts (« pas de son », « pc lent », « wifi coupe »), choisis toi-même dans la liste, ou lance le diagnostic complet : il passe tout le PC en revue." $Typo.Body $Pal.Warn
+        $no.Margin = Th 0 10 0 4; Add-Child $st $no
     } else {
         $n = @($script:HelpResults).Count
-        $hd = New-Text $(if ($n -eq 1) { "Je pense à ça :" } else { "Je pense à ça, du plus probable au moins probable :" }) $Typo.Body $Pal.Text3
+        $hdText = if ($script:HelpGuess) { "Je ne suis pas sûr d'avoir compris. Ça peut correspondre :" } elseif ($n -eq 1) { "Je pense à ça :" } else { "Je pense à ça, du plus probable au moins probable :" }
+        $hd = New-Text $hdText $Typo.Body $(if ($script:HelpGuess) { $Pal.Warn } else { $Pal.Text3 })
         $hd.Margin = Th 0 10 0 6; Add-Child $st $hd
         $i = 0
-        foreach ($r in @($script:HelpResults)) {
-            $i++
-            $line = New-Object System.Windows.Controls.Border; $line.Background = Brush $Pal.Bg; $line.CornerRadius = Corner 10; $line.Padding = Th 12 8 12 8; $line.Margin = Th 0 0 0 6
-            $dp = New-Object System.Windows.Controls.DockPanel
-            $b = New-Button $r.Target.Btn $(if ($i -eq 1) { 'PrimaryBtn' } else { 'ActionBtn' }) $r.Target.Tag $r.Target.Busy
-            $b.VerticalAlignment = 'Center'; $b.Margin = Th 12 0 0 0; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $dp $b
-            $tx = New-Object System.Windows.Controls.StackPanel; $tx.VerticalAlignment = 'Center'
-            Add-Child $tx (New-Text $r.Target.Title $Typo.Strong $Pal.White 'SemiBold')
-            if ($r.Why) { Add-Child $tx (New-Text $r.Why $Typo.Small $Pal.Muted) }
-            Add-Child $dp $tx; $line.Child = $dp; Add-Child $st $line
+        foreach ($r in @($script:HelpResults)) { $i++; Add-Child $st (New-HelpResultRow $r ($i -eq 1 -and -not $script:HelpGuess)) }
+        if (@($script:HelpRelated).Count) {
+            $ah = New-Text "Ça peut aussi t'aider :" $Typo.Small $Pal.Text3; $ah.Margin = Th 0 6 0 4; Add-Child $st $ah
+            foreach ($r in @($script:HelpRelated)) { Add-Child $st (New-HelpResultRow $r $false) }
         }
-        if (-not @($script:HelpResults | Where-Object { $_.Target.Tag.Kind -eq 'startdiag' }).Count) {
-            $alt = New-Object System.Windows.Controls.DockPanel; $alt.Margin = Th 0 2 0 0
-            $b = New-Button 'Lancer le diagnostic' 'TextBtn' @{ Kind = 'startdiag' }; [System.Windows.Controls.DockPanel]::SetDock($b, 'Right'); Add-Child $alt $b
-            $tt = New-Text "Rien de tout ça ? Le diagnostic complet passe tout le PC en revue." $Typo.Small $Pal.Muted; $tt.VerticalAlignment = 'Center'; Add-Child $alt $tt
-            Add-Child $st $alt
-        }
+    }
+    if ($null -ne $script:HelpResults) {
+        $alt = New-Object System.Windows.Controls.WrapPanel; $alt.Margin = Th 0 4 0 0
+        $b1 = New-Button "Ce n'est pas ça ? Choisir moi-même" 'TextBtn' @{ Kind = 'ui'; Def = @{ UI = 'helpbrowse' } } $false; Add-Child $alt $b1
+        if (-not @($script:HelpResults | Where-Object { $_.Target.Tag.Kind -eq 'startdiag' }).Count) { $b2 = New-Button 'Lancer le diagnostic complet' 'TextBtn' @{ Kind = 'startdiag' }; Add-Child $alt $b2 }
+        Add-Child $st $alt
     }
     $c.Child = $st
     if ($script:HelpFocus) { $script:HelpFocus = $false; $tb.Add_Loaded({ try { $script:HelpBox.Focus() | Out-Null; $script:HelpBox.CaretIndex = $script:HelpBox.Text.Length } catch {} }) }
@@ -1871,6 +1971,7 @@ function Invoke-UiCommand($T) {
                     'space' { Start-SpaceScan }
                     'freespace' { Start-FreeSpace $null }
                     'newpc' { Start-NewPc }
+                    'helpbrowse' { Show-HelpBrowseDialog "$($script:HelpQuery)" }
                     'backup' { Start-Backup }
                     'recover' { Start-Recover }
                     'blackbox-toggle' { $script:Settings.BlackBox = -not [bool]$script:Settings.BlackBox; Save-Settings; if (-not $script:Settings.BlackBox) { try { Remove-Item -LiteralPath (Get-BlackBoxPath) -Force -ErrorAction SilentlyContinue } catch {} }; Write-UiLog $(if ($script:Settings.BlackBox) { "Boîte noire activée." } else { "Boîte noire désactivée, relevés effacés." }); Refresh-Page }
@@ -2965,6 +3066,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.5.1' = @("« Quel est ton problème ? » comprend beaucoup plus de phrases, surtout les longues (disque qui n'est plus reconnu, fichiers à récupérer…), propose jusqu'à 5 dépannages et ceux qui vont avec (« Ça peut aussi t'aider »).",
+        "Quand il ne comprend pas, il cherche quand même dans toutes les cartes. Et « Ce n'est pas ça ? Choisir moi-même » ouvre la liste de tous les dépannages : ton choix est retenu sur ton PC pour les phrases proches.")
     '3.5.0' = @("Nouveau : « Quel est ton problème ? » sur l'accueil. Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible »), fautes de frappe comprises, et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé.",
         "Si une phrase n'est pas comprise ou oriente mal, signale-la (onglet Aide) : elle sera ajoutée.")
     '3.4.0' = @("Nouveau : « Sauvegarder mes fichiers » (onglet Réparation). Bureau, Documents, Images, Vidéos, Musique et Téléchargements copiés sur un autre disque puis vérifiés, avant une réinstallation de Windows par exemple.",
