@@ -1024,7 +1024,7 @@ function Get-HelpTarget($R) {
         return @{ Title = $title; Btn = 'Ouvrir'; Tag = @{ Kind = 'go'; Def = @{ Go = $pg } }; Busy = $false }
     }
     $key = $go.Substring($go.IndexOf(':') + 1); $isUi = $go.StartsWith('UI:')
-    $defs = @(); foreach ($k in $PageDefs.Keys) { $defs += @($PageDefs[$k]) }
+    $defs = @(); foreach ($k in $PageDefs.Keys) { $defs += @($PageDefs[$k].Cards) }
     # Les deux cartes qui n'existent que sur l'accueil
     $defs += @(@{ T = 'Optimisation complète'; B = 'Commencer'; UI = 'optimize'; UiBusy = $true }, @{ T = 'PC neuf ou Windows réinstallé'; B = 'Préparer'; UI = 'newpc'; UiBusy = $true })
     $def = @($defs | Where-Object { $_ -and $(if ($isUi) { $_.UI -eq $key } else { $_.A -eq $key }) }) | Select-Object -First 1
