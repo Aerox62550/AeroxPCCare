@@ -2,7 +2,7 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
-## Prêt pour 3.5.0 : « Quel est ton problème ? » (publication ouverte demandée par Sam le 13/11, avec tout le contenu de la 3.4.0 de test)
+## Publié en 3.5.0 : « Quel est ton problème ? » (publication ouverte demandée par Sam le 13/11, avec tout le contenu de la 3.4.0 de test)
 
 - Demandé par Sam le 13/11 : « le fait d'écrire c'est pas mal, faut que l'algorithme soit bien fourni, un truc costaud béton ».
 - Accueil : une case où l'on décrit le problème avec ses mots ; AEROX propose jusqu'à 4 dépannages, du plus probable au moins probable, chacun avec le même bouton que sur sa page. Rien de reconnu : il le dit et propose le diagnostic complet. Tout est local, rien n'est envoyé.
@@ -10,7 +10,7 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 - Mesure : 5 séries de phrases écrites comme les gens tapent (1 219 phrases, `tests/aide-phrases.txt`). Chaque série a d'abord été mesurée sans avoir servi à écrire les règles : 90 %, 91 %, 92 %, 97 %, 96 % de bonnes orientations du premier coup ; les ratés étaient surtout « rien reconnu », rarement une mauvaise orientation. Après correction, les 1 219 passent. Le test échoue sous 98,5 %, ou si une phrase hors sujet est orientée quand même, ou si une expression se réduit à un mot passe-partout.
 - Pour l'améliorer : toute phrase mal orientée chez un testeur s'ajoute au fichier de phrases, puis la règle est corrigée.
 
-## Prêt pour 3.4.0 : écrans bleus expliqués, pile de la carte mère (validé par Sam le 10/11)
+## Publié en 3.5.0 (3.4.0 en canal test le 13/11) : écrans bleus expliqués, pile de la carte mère (validé par Sam le 10/11)
 
 ### Écrans bleus (« principale chose des testeurs, aucune idée de pourquoi »)
 
