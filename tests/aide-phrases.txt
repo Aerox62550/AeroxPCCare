@@ -1,6 +1,8 @@
-# Phrases de test de « Quel est ton problème ? » : « sujet attendu|phrase ». Plusieurs sujets acceptés : a/b. « - » = rien ne doit sortir.
-# Écrites en cinq séries ; chaque série a d'abord été mesurée sans avoir servi à écrire les règles (91 %, 91 %, 92 %, 97 %, 96 % du premier coup),
-# puis ses ratés ont été corrigés. Toute phrase qui oriente mal chez un testeur s'ajoute ici.
+# Phrases de test de « Quel est ton problème ? » : « sujet|phrase ». a/b = l'un ou l'autre en premier ; a+c+d = a en premier,
+# et c, d affichés aussi (résultats ou « Ça peut aussi t'aider »). « - » = rien ne doit sortir.
+# Chaque série a d'abord été mesurée sans avoir servi à écrire les règles, puis ses ratés ont été corrigés :
+# séries 1 à 5 (phrases courtes) 90 %, 91 %, 92 %, 97 %, 96 % ; série 6 (phrases longues, 13/11) 64 % ; série 7 : 86 % ; série 8 : 82 %.
+# Toute phrase qui oriente mal chez un testeur s'ajoute ici.
 slow|mon pc rame
 slow|mon pc rame de fou
 slow|le pc est super lent
@@ -1220,3 +1222,216 @@ diag|mon pc a un probleme
 -|Bonjour comment allez vous
 -|wsh
 -|merci beaucoup pour l'application
+usbdisk+recover|DISQUE DUR plus reconnu besoin de recuperer des choses dessus et savoir ce quil a
+usbdisk+recover|mon disque dur externe n'est plus reconnu et j'ai toutes mes photos dessus
+usbdisk/recover|mon disque dur ne s'affiche plus et y a mes fichiers importants dessus
+usbdisk+recover|ma cle usb est morte je veux recuperer ce qu'il y a dedans
+usbdisk|le pc voit plus mon deuxieme disque dur
+usbdisk|mon hdd n'apparait plus dans l'explorateur
+usbdisk|mon ssd externe n'est plus detecte
+usbdisk+recover|carte sd de mon appareil photo illisible je veux recuperer les photos
+recover|comment recuperer les donnees d'un disque dur mort
+recover|recuperer ce qu'il y avait sur ma cle
+recover|je veux recuperer mes trucs sur mon ancien disque
+recover/usbdisk|disque dur qui demande a etre formate mais j'ai des donnees dessus
+recover|j'ai formate ma cle sans faire expres
+recover|recuperer les fichiers d'un ssd
+recover|y a moyen de recuperer mes documents ?
+recover/backup|mes souvenirs sont sur ce disque il faut les sauver
+chkdsk|mon disque dur fait des bruits de clic
+chkdsk|je veux savoir si mon disque dur est en bon etat
+chkdsk|mon ssd va bientot lacher ?
+chkdsk|savoir l'etat de mon disque
+chkdsk/diskspeed|tester mon disque dur
+chkdsk|le disque fait clic clic
+backup+recover|mon disque fait des bruits je veux sauver mes fichiers avant qu'il meure
+backup|transferer mes fichiers sur mon nouveau pc
+backup|copier tout mon pc sur un disque externe
+backup|je veux mettre mes photos sur un disque dur
+freespace/space+space+freespace|mon disque est plein je comprends pas ce qui prend de la place
+space|il y a quoi sur mon disque
+space|savoir ce qui remplit mon ssd
+freespace|plus de stockage sur le c
+newpc|j'ai mis un deuxieme ssd il apparait pas
+newpc|nouveau disque installe mais invisible
+newpc|mon disque d a disparu apres reinstallation de windows
+usbdisk|ma cle est en lecture seule je peux rien copier
+usbdisk|la cle usb clignote mais rien ne s'affiche
+usbdisk|disque externe reconnu mais impossible de l'ouvrir
+usbdisk|mon disque externe fait un bruit et n'apparait pas
+slow+freespace|mon pc rame et en plus mon disque est presque plein
+slow+temps|mon ordi rame et chauffe beaucoup
+sound+micro|j'ai plus de son et mon micro marche plus non plus
+bsod+poweroff|des fois ecran bleu des fois il s'eteint direct
+net+lag|internet coupe et en jeu j'ai un ping de fou
+discord/micro+discord+micro|sur discord mes potes m'entendent pas et discord bug
+gamelaunch+bsod|le jeu se lance pas et des fois ecran bleu
+slow/startup+startup+slow|le pc est lent au demarrage et apres il rame encore
+security+adware|j'ai des pubs partout je pense que j'ai un virus
+hacked+security|on a pirate mon compte discord et je pense que mon pc est infecte
+freespace+slow|pc lent disque c rouge
+bluetooth/sound+bluetooth+sound|mon casque bluetooth se connecte mais pas de son
+usbdev+usbdisk|mes ports usb marchent plus ni ma cle ni ma souris
+display+drivers|mon ecran est en 60hz depuis la mise a jour des pilotes
+temps+poweroff|mon pc chauffe et finit par s'eteindre
+wureset/slow+wureset+slow|depuis la mise a jour windows mon pc rame et la maj bloque
+newpc+drivers|je viens de reinstaller windows il me manque des pilotes
+recover+backup|j'ai perdu des fichiers je veux plus que ca arrive
+bsod/memtest+memtest+bsod|ecran bleu memory management je pense que c'est la ram
+bsod/stability+stability+bsod|depuis que j'ai overclocke ecrans bleus
+sleep+display|quand le pc sort de veille l'ecran reste noir
+printer/usbdev+printer|l'imprimante usb n'est pas reconnue
+webcam+micro|ni la camera ni le micro ne marchent en visio
+apps/shell+apps+shell|le menu demarrer et la barre des taches ne repondent plus
+diag|mon pc fait n'importe quoi
+diag|j'ai plein de problemes sur mon pc
+diag|je comprends pas ce qu'il a mon pc
+diag|savoir ce qui va pas sur mon ordi
+diag|mon pc a un truc qui va pas
+slow|mon pc il rame trop ca me saoule
+slow|ordi qui galere grave
+slow|ca met 3 ans a charger
+sound|le son coupe tout le temps
+sound|j'ai un son qui gresille dans le casque
+micro|ma voix sort pas
+net|j'ai le wifi mais pas internet
+net|pas de connexion sur l'ordi mais le tel marche
+lag|je rollback en jeu
+gamelaunch|le jeu reste sur ecran noir au lancement
+gamelaunch|steam dit que le jeu est lance mais rien
+discord|discord reste sur le logo
+bsod|j'ai un ecran avec un smiley triste
+poweroff|l'ordi s'eteint quand je lance un jeu lourd
+temps|le pc fait un bruit de reacteur
+newpc|jai changer de pc je dois installer quoi
+backup|garder mes fichiers avant de reset
+recover|j'ai supprime mes fichiers avec shift suppr
+recover|recuperer un fichier ecrase
+-|j'aime les frites
+-|tu fais quoi ce soir
+usbdisk/recover+recover|mon disque dur externe wd ne monte plus et toutes les photos de mes enfants sont dessus
+usbdisk|depuis ce matin ma cle n'est plus lue par aucun pc
+usbdisk/recover+recover|la carte micro sd du telephone n'est plus lisible sur le pc je voudrais recuperer les videos
+recover|j'ai vide la corbeille hier et il y avait mon dossier de cours
+recover|comment je fais pour retrouver un document word supprime
+recover|ma fille a supprime toutes les photos du pc
+recover/usbdisk|j'ai formate le mauvais disque
+chkdsk+backup|mon vieux disque dur fait un bruit bizarre j'ai peur qu'il lache
+chkdsk|est ce que mon ssd est en bonne sante
+backup|je veux faire une copie de mes photos sur ma cle usb avant de reinstaller
+backup|transferer mes documents vers mon nouvel ordinateur
+space|qu'est ce qui bouffe tout mon espace disque
+freespace|il me reste plus que 3 go sur le c
+freespace/space+space|j'ai un ssd de 500 go et il est deja plein je sais pas pourquoi
+newpc|j'ai rajoute un ssd dans ma tour mais windows le voit pas
+newpc|je viens de monter mon premier pc gaming que faut il faire
+slow+freespace|mon ordi rame depuis que mon disque est presque plein
+slow|mon pc devient lent apres 1h d'utilisation
+slow/temps+temps|mon portable rame et chauffe enormement quand je joue
+startup|au demarrage y a 15 programmes qui s'ouvrent
+bsod|le pc fait des ecrans bleus aleatoires depuis une semaine
+bsod+memtest|ecran bleu memory management et pfn list corrupt plusieurs fois
+poweroff|le pc s'eteint brusquement pendant les parties
+poweroff/temps+temps|le pc s'eteint en jeu et il etait super chaud
+sound|depuis la mise a jour windows je n'ai plus le son
+sound|le son de la tele en hdmi ne marche pas
+sound+bluetooth|mon enceinte bluetooth est connectee mais aucun son
+micro|personne ne m'entend sur teams
+micro+discord|mes potes m'entendent pas sur discord alors que le micro marche ailleurs
+webcam|la camera de mon portable est noire sur zoom
+printer|mon imprimante epson est en erreur
+shell|plus rien ne repond sur le bureau mais la souris bouge
+discord|discord ne charge plus depuis la derniere mise a jour
+usbdev|mon clavier gamer fonctionne plus apres avoir debranche
+usbdev|la manette xbox filaire n'est plus detectee
+bluetooth|je trouve plus l'option bluetooth dans les parametres
+gamelaunch|quand je clique sur jouer dans steam il se passe rien
+gamelaunch|fortnite dit easy anti cheat not installed
+gamelaunch|le jeu affiche une erreur directx au lancement
+apps|le store se ferme direct quand je l'ouvre
+sleep|la nuit le pc se reveille tout seul et je l'entends
+icons|toutes mes icones sont devenues des carres blancs
+gamesettings|comment avoir plus d'images par seconde dans mes jeux
+repairsys|on m'a dit de faire sfc et dism
+wureset|la mise a jour de windows 11 echoue toujours avec une erreur
+drivers|ma carte graphique amd n'a pas le bon pilote
+net|internet marche sur mon telephone mais pas sur mon pc
+net|depuis hier soir j'ai plus du tout internet sur l'ordi
+net+lag|ma connexion wifi est instable et je lag en jeu
+lag|j'ai des pics de ping a 300 sur valorant
+lag|sur discord ma voix hache quand je joue
+speedtest|je voudrais savoir combien j'ai en debit
+security|je pense que quelqu'un a pris le controle de mon ordinateur
+security|j'ai telecharge un logiciel crack et depuis c'est bizarre
+hacked|mon compte steam a ete vole et mes skins ont disparu
+hacked|j'ai recu un lien discord nitro gratuit et j'ai clique
+adware|chrome m'affiche des notifications de virus en bas a droite
+adware|des pages de pub s'ouvrent quand je clique n'importe ou
+uninstall|je veux enlever les applications installees avec le pc
+optimize|je voudrais que mon ordi soit plus rapide en general
+newpc|je viens de recevoir mon pc portable neuf
+stability|je veux verifier que mon pc tient le coup apres l'overclock
+memtest|comment savoir si une barrette de ram est morte
+diskspeed|mon nvme fait que 500 mo/s c'est normal ?
+temps|le ventilateur de ma carte graphique fait un bruit de fou
+temps|mon processeur monte a 95 degres
+sysinfo|je veux savoir quelle ram j'ai pour en racheter
+display|mon ecran 165hz est bloque a 60
+display|l'ecran devient noir quelques secondes de temps en temps
+battery|la batterie de mon portable est a 60% d'usure
+clock|a chaque fois que je debranche le pc l'heure est fausse
+restore|je veux pouvoir revenir en arriere si ca se passe mal
+diag|je voudrais un bilan complet de l'ordinateur
+diag|mon ordi a plein de soucis differents
+-|qui est le meilleur joueur de foot
+-|je m'ennuie
+usbdisk+recover|mon disque seagate fait plus rien et j'avais tout mon travail dessus
+usbdisk|la cle que j'utilise tous les jours ne s'ouvre plus
+recover|j'ai supprime une video de mon fils par erreur
+recover|recuperer les photos d'une carte sd formatee
+chkdsk|mon disque dur est en train de mourir je crois
+backup|je change d'ordi comment garder mes fichiers
+space|je voudrais voir les dossiers les plus lourds
+freespace|windows dit que l'espace disque est faible
+newpc|j'ai installe un hdd en plus il apparait nul part
+slow|ca rame meme pour ouvrir l'explorateur
+slow|mon pc est devenu lent du jour au lendemain
+startup|des logiciels se lancent tout seuls quand j'allume
+bsod|j'ai eu un ecran bleu driver irql not less or equal
+poweroff|le pc se coupe sans prevenir meme sur le bureau
+sound|aucun son quand je branche mon casque en jack
+micro|mon micro capte pas ma voix sur discord
+webcam|la webcam s'allume pas
+printer|l'imprimante est connectee mais n'imprime rien
+shell|la barre des taches ne s'affiche plus
+discord|discord affiche un ecran blanc
+usbdev|ma souris sans fil avec dongle ne marche plus
+bluetooth|les ecouteurs bluetooth se deconnectent tout seul
+gamelaunch|valorant ne demarre plus depuis la mise a jour
+apps|l'application parametres plante
+sleep|le pc ne veut pas rester en veille
+icons|les apercus des images ne s'affichent plus
+gamesettings|regler windows pour jouer
+repairsys|windows fait n'importe quoi je veux le reparer
+wureset|windows update en erreur 0x80073712
+drivers|mes pilotes audio sont pas a jour
+net|le wifi de mon pc portable ne capte rien
+lag|la connexion lag uniquement en jeu
+speedtest|je veux tester la vitesse de ma connexion
+quarantine/security|mon antivirus a trouve des menaces
+hacked|mon compte google a ete pirate
+adware|des fenetres de pub apparaissent quand j'ouvre chrome
+uninstall|desinstaller un logiciel qui veut pas partir
+optimize|rendre windows plus fluide
+stability|je veux tester la stabilite de mon cpu
+memtest|faire un test de ma memoire vive
+diskspeed|la vitesse de lecture de mon ssd est faible
+temps|mon pc est tres chaud au toucher
+sysinfo|j'ai besoin de connaitre ma carte mere
+display|ma resolution est pas la bonne
+battery|ma batterie ne charge plus completement
+clock|mon pc affiche une date en 2015
+history|je veux annuler ce que j'ai fait avec aerox
+diag|je sais pas d'ou vient le probleme
+-|bon appetit
+-|il fait beau aujourd'hui
