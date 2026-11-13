@@ -2965,6 +2965,8 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.5.0' = @("Nouveau : « Quel est ton problème ? » sur l'accueil. Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible »), fautes de frappe comprises, et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé.",
+        "Si une phrase n'est pas comprise ou oriente mal, signale-la (onglet Aide) : elle sera ajoutée.")
     '3.4.0' = @("Nouveau : « Sauvegarder mes fichiers » (onglet Réparation). Bureau, Documents, Images, Vidéos, Musique et Téléchargements copiés sur un autre disque puis vérifiés, avant une réinstallation de Windows par exemple.",
         "Nouveau : « Récupérer des fichiers effacés ». AEROX lance l'outil officiel de Microsoft, qui fouille le disque (ou la clé USB illisible) sans rien écrire dessus.",
         "Nouveau : « Vitesse des disques » : écriture, lecture et petits fichiers mesurés en 30 secondes et comparés à ce que le disque doit donner.",

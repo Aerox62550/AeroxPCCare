@@ -19,6 +19,7 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
   conséquence et la réparation (automatique quand c'est possible).
 - **Libérer de la place** : une seule liste de tout ce qui peut partir (fichiers inutiles, place gardée par Windows,
   vieux installateurs, jeux et logiciels pas utilisés depuis 3 mois), ce qui est sans risque déjà coché, un seul bouton.
+- **« Quel est ton problème ? »** : décris le souci avec tes mots sur l'accueil, AEROX ouvre le bon dépannage (tout en local).
 - **Écrans bleus expliqués** : le code en clair, le pilote en cause, la situation, ce qui a été installé juste avant.
 - **PC neuf ou Windows réinstallé** : la liste guidée (mises à jour, pilotes, disque vide préparé en D:, logiciels utiles).
 - **Tester le matériel** : test de stabilité de 10 minutes (processeur et mémoire, chaque calcul vérifié) et test de
