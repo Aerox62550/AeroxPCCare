@@ -2000,11 +2000,13 @@ function Get-WindowsSpaceItems {
     try {
         $used = @{}; foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop)) { if ($d.InfName) { $used["$($d.InfName)".ToLower()] = $true } }
         $drv = @(Get-WindowsDriver -Online -ErrorAction Stop)
+        $keepPrev = Test-RecentBsod
+        if ($keepPrev) { Log "   • Écran bleu ces 30 derniers jours : la version précédente de chaque pilote est gardée (pour pouvoir « Restaurer le pilote »)." }
         $old = New-Object System.Collections.ArrayList
         foreach ($g in @($drv | Group-Object { "{0}|{1}|{2}" -f [IO.Path]::GetFileName("$($_.OriginalFileName)").ToLower(), $_.ProviderName, $_.ClassName })) {
             if ($g.Count -lt 2) { continue }
             $sorted = @($g.Group | Sort-Object @{ Expression = { try { [version]"$($_.Version)" } catch { [version]'0.0' } } }, @{ Expression = { $_.Date } } -Descending)
-            foreach ($x in @($sorted | Select-Object -Skip 1)) {
+            foreach ($x in @($sorted | Select-Object -Skip $(if ($keepPrev) { 2 } else { 1 }))) {
                 $inf = "$($x.Driver)".ToLower()
                 if ($inf -notmatch '^oem\d+\.inf$' -or $used[$inf]) { continue }
                 $dir = Split-Path "$($x.OriginalFileName)" -Parent
@@ -2112,6 +2114,27 @@ function Set-RestoreSpace([string]$Max, [string]$Previous = '') {
     Log "   ✔ Les points de restauration les plus récents sont gardés, Windows continue d'en créer."
     if ($Previous) { Add-Change -Title "Place des points de restauration limitée à $Max" -Undo ("Set-RestoreSpace '{0}'" -f $Previous) }
     else { Add-Change -Kind 'info' -Title "Place des points de restauration : $Max" }
+}
+# Lance un bloc à part et n'attend pas plus de $Seconds secondes (ni après « Annuler »). Le bloc ne voit pas les
+# fonctions d'AEROX : il ne doit utiliser que Windows (COM, commandes). Renvoie { Done ; Out }.
+function Invoke-WithTimeout([scriptblock]$Script, [int]$Seconds) {
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript($Script.ToString())
+    $h = $ps.BeginInvoke(); $t0 = Get-Date
+    while (-not $h.IsCompleted) {
+        if ($sync.Cancel -or ((Get-Date) - $t0).TotalSeconds -ge $Seconds) { try { [void]$ps.BeginStop($null, $null) } catch {}; return @{ Done = $false; Out = @() } }
+        Start-Sleep -Milliseconds 250
+    }
+    try { $out = @($ps.EndInvoke($h)); return @{ Done = $true; Out = $out } } catch { return @{ Done = $true; Out = @() } } finally { try { $ps.Dispose() } catch {} }
+}
+# Écran bleu dans les 30 derniers jours (hors arrêts forcés à la main) : les anciennes versions de pilotes sont alors
+# gardées, parce que « Restaurer le pilote » de Windows en a besoin pour revenir à la version d'avant.
+function Test-RecentBsod {
+    if ($null -ne $script:RecentBsod -and $script:RecentBsodAt -gt (Get-Date).AddMinutes(-10)) { return $script:RecentBsod }
+    $r = $false
+    try { $r = [bool]@(Get-BsodEvents (Get-Date).AddDays(-30) | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' }).Count } catch {}
+    $script:RecentBsod = $r; $script:RecentBsodAt = Get-Date
+    return $r
 }
 function Remove-OldDrivers([string[]]$Infs) {
     Step ("Suppression de {0} ancienne(s) version(s) de pilotes" -f @($Infs).Count)
@@ -6049,7 +6072,9 @@ function Invoke-DeepClean([string[]]$Ids) {
     if ($Ids -contains 'recycle' -and -not $sync.Cancel) { Clear-RecycleBinAll }
     if ($Ids -contains 'windows' -and -not $sync.Cancel) {
         Step "Nettoyage de disque Windows (peut prendre plusieurs minutes)"
-        try { if (Invoke-CleanMgr $script:CleanMgrSafe 7701) { Log "   ✔ Nettoyage de disque Windows terminé" } }
+        $cmSet = @($script:CleanMgrSafe)
+        if (Test-RecentBsod) { $cmSet = @($cmSet | Where-Object { $_ -ne 'Device Driver Packages' }); Log "   • Écran bleu ces 30 derniers jours : les anciens pilotes sont gardés (pour pouvoir revenir à la version d'avant)." }
+        try { if (Invoke-CleanMgr $cmSet 7701) { Log "   ✔ Nettoyage de disque Windows terminé" } }
         catch { Add-TaskError -Title "Le nettoyage de disque Windows n'a pas pu se lancer" -Cause $_.Exception.Message -Bug $_ }
     }
     if ($Ids -contains 'winold' -and -not $sync.Cancel) {
@@ -8366,11 +8391,19 @@ function Get-NewPcPlan {
     } catch {}
     # 2. Mises à jour Windows
     Log "   • Recherche des mises à jour de Windows (jusqu'à 2 minutes)…"
-    try {
+    # La recherche tourne à part et s'arrête d'attendre au bout de 2 minutes : sur un Windows tout neuf, Windows Update
+    # peut mettre 5 à 10 minutes à répondre la première fois, la liste ne doit pas rester bloquée pour ça.
+    $wu = Invoke-WithTimeout {
         $session = New-Object -ComObject Microsoft.Update.Session; $session.ClientApplicationID = 'AEROX PC Care'
         $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
         $n = 0; foreach ($u in $res.Updates) { if ("$($u.Title)" -notmatch '(?i)KB2267602|Security Intelligence|veille de sécurité') { $n++ } }
-        if ($n) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
+        $n
+    } 120
+    if (-not $wu.Done -and -not $sync.Cancel) { & $add 'wupdate' 'info' "Mises à jour de Windows : Windows Update est lent à répondre" "Normal sur un Windows tout neuf : il prépare encore sa liste. Lance la recherche, elle continuera le temps qu'il faut." 'Chercher' $null }
+    try {
+        if (-not $wu.Done) { }
+        elseif (-not @($wu.Out).Count) { throw "pas de réponse" }
+        elseif (($n = [int]@($wu.Out)[-1])) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
         else { & $add 'wupdate' 'ok' "Windows est à jour" "Aucune mise à jour en attente." '' $null }
     } catch { & $add 'wupdate' 'info' "Mises à jour de Windows : pas pu vérifier" "Windows Update n'a pas répondu. Regarde dans l'onglet Mises à jour." '' $null }
     if ($sync.Cancel) { return }

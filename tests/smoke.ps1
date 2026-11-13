@@ -129,6 +129,20 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    Smoke 'Attente limitée (Windows Update lent) et anciens pilotes gardés après un écran bleu' {
+        $r = Invoke-WithTimeout { 40 + 2 } 10
+        if (-not $r.Done -or @($r.Out)[-1] -ne 42) { throw "résultat pas rendu" }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-WithTimeout { Start-Sleep -Seconds 30; 'trop tard' } 2
+        if ($r.Done -or $sw.Elapsed.TotalSeconds -gt 6) { throw ("l'attente n'a pas été coupée ({0:N1} s)" -f $sw.Elapsed.TotalSeconds) }
+        $keep = $script:RecentBsod; $keepAt = $script:RecentBsodAt
+        try {
+            $script:RecentBsod = $null
+            $v = Test-RecentBsod
+            Write-Host "        écran bleu ces 30 derniers jours sur ce PC : $v"
+            if ($v -isnot [bool]) { throw "réponse pas booléenne" }
+        } finally { $script:RecentBsod = $keep; $script:RecentBsodAt = $keepAt }
+    }
     # ---------------- « Quel est ton problème ? » : du texte libre vers la bonne carte
     Smoke 'Quel est ton problème : les 1 400 phrases de test' {
         $file = 'C:\aerox\aide-phrases.txt'
