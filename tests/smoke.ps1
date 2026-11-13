@@ -174,6 +174,8 @@ function Invoke-Smoke {
         Is 'faute de frappe' (First 'ecran blue') 'bsod'
         Is 'faute de frappe 2' (First 'bleutooth marche plus') 'bluetooth'
         Is 'lettres en trop' (First 'mon pc est lennnnnt') 'slow'
+        Is 'mot courant jamais « corrigé » (regarde ≠ retarde)' (First 'mon pc ralentit quand je regarde une video') 'slow'
+        Is 'mode avion' (First 'le mode avion reste active') 'net'
         Is 'accents et majuscules' (First 'MON PC N''A PLUS DE SON !!!') 'sound'
         Is 'sujet cité sans problème' (First 'mon son marche mais pas le micro') 'micro'
         Is '« son » possessif' (First 'il a reset son pc') 'newpc'
@@ -197,7 +199,7 @@ function Invoke-Smoke {
             if (-not $it.Why) { throw "sujet sans explication : $($it.Id)" }
         }
         # Aucune expression ne se réduit à un mot passe-partout (elle sortirait pour n'importe quelle phrase)
-        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?|dessus|dessous|dedans|chose\*?|truc\*?|besoin|savoir|veux|voir|quoi|comment|faire|fait|tout|aide)$'
+        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?|dessus|dessous|dedans|chose\*?|truc\*?|besoin|savoir|veux|voir|quoi|comment|faire|fait|tout|aide|erreur\*?|expres|seul\*?|direct|vite|bien|mal|rien|souvent)$'
         foreach ($it in $script:HelpIntents) {
             foreach ($p in @($it.P)) {
                 $src = $p.Substring($p.IndexOf(':') + 1); if ($src -match ' & ') { continue }
