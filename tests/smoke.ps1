@@ -246,6 +246,15 @@ function Invoke-Smoke {
         # Chaque carte de la liste « Choisir moi-même » se lance par une commande connue
         foreach ($c in @(Get-HelpCardList)) { $tg = Get-HelpCardTag $c.Def; if (-not $tg.Kind -or -not $c.Def.T) { throw "carte sans commande : $($c.Def.T)" } }
     }
+    Smoke 'Envoi d une phrase : refusé sans accord, rien ne part' {
+        $keep = $script:HelpSent; $sent = $false
+        try {
+            # Les tests répondent « Non » aux confirmations : rien ne doit être envoyé ni retenu comme envoyé
+            $script:HelpSent = @{}
+            Send-HelpPhrase 'mon truc bizarre fait des siennes' 'A:Repair-Bluetooth'
+            if ($script:HelpSent.Count) { throw "phrase marquée envoyée sans accord" }
+        } finally { $script:HelpSent = $keep }
+    }
     Smoke 'Fenêtre : choisir le bon dépannage' {
         Show-HelpBrowseDialog 'mon disque fait des trucs bizarres'
     }

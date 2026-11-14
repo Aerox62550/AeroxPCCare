@@ -1085,6 +1085,29 @@ function New-HelpResultRow($R, [bool]$First) {
     Add-Child $dp $tx; $line.Child = $dp
     return $line
 }
+# Envoie une phrase mal comprise au développeur, pour qu'elle le soit pour tout le monde dans une prochaine version.
+# La personne voit exactement ce qui part : la phrase (gros mots masqués), ce qu'AEROX a proposé et ce qu'elle a choisi.
+function Send-HelpPhrase([string]$Query, [string]$Go) {
+    $q = Hide-Profanity "$Query".Trim()
+    if (-not $q) { return }
+    if (-not $script:HelpSent) { $script:HelpSent = @{} }
+    if ($script:HelpSent.ContainsKey("$q|$Go")) { Write-UiLog "Cette phrase a déjà été envoyée. Merci !"; return }
+    $proposed = @(); try { $proposed = @(Find-HelpIntents $Query | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { $t.Title } }) } catch {}
+    $chosen = ''; if ($Go) { $c = @(Get-HelpCardList | Where-Object { (Get-HelpCardGo $_.Def) -eq $Go }) | Select-Object -First 1; if ($c) { $chosen = "$($c.Def.T)" } }
+    $body = "Phrase tapée dans « Quel est ton problème ? » :`n> $q`n`nProposé par AEROX : " + $(if ($proposed.Count) { $proposed -join ' · ' } else { '(rien reconnu)' }) + "`nChoisi par la personne : " + $(if ($chosen) { "$chosen ($Go)" } else { '(pas de choix)' })
+    if (-not (Confirm-Box ("Envoyer cette phrase au développeur pour qu'AEROX la comprenne dans une prochaine version ?`n`n« $q »" + $(if ($chosen) { "`n→ $chosen" } else { '' }) + "`n`nRien d'autre n'est envoyé : ni ton nom, ni ton PC, ni tes fichiers."))) { return }
+    $title = "[Phrase v$AppVersion] " + $q
+    if ($title.Length -gt 100) { $title = $title.Substring(0, 97) + '...' }
+    $bytes = [Text.Encoding]::UTF8.GetBytes((@{ title = $title; body = $body; version = $AppVersion; kind = 'phrase' } | ConvertTo-Json -Compress))
+    $script:HelpSent["$q|$Go"] = $true
+    try {
+        Send-RelayAsync $sync.BugRelay $bytes {
+            param($res)
+            if ($res.Ok) { Write-UiLog "✔ Phrase envoyée au développeur. Merci, elle sera comprise dans une prochaine version !" }
+            else { Write-UiLog "La phrase n'a pas pu être envoyée ($($res.Err)). Réessaie plus tard." }
+        }
+    } catch { Write-UiLog "La phrase n'a pas pu être envoyée. Réessaie plus tard." }
+}
 # « Ce n'est pas ça ? » : toutes les cartes, avec un filtre. Le choix est retenu pour cette phrase sur ce PC.
 function Show-HelpBrowseDialog([string]$Query) {
     $w = New-Dialog "$AppName : choisir le bon dépannage" 720
@@ -1129,7 +1152,7 @@ function Show-HelpBrowseDialog([string]$Query) {
     $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 24 10 24 18
     $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Add_Click({ $script:HbWin.Close() }); [System.Windows.Controls.DockPanel]::SetDock($bClose, 'Right'); Add-Child $bar $bClose
     if ($Query) {
-        $bRep = New-DlgButton 'Envoyer ma phrase au développeur' 'TextBtn'; $bRep.HorizontalAlignment = 'Left'; $bRep.ToolTip = "Ouvre le rapport de bug avec ta phrase : tu vois tout avant d'envoyer, pour qu'elle soit comprise dans une prochaine version."
+        $bRep = New-DlgButton 'Envoyer ma phrase au développeur' 'TextBtn'; $bRep.HorizontalAlignment = 'Left'; $bRep.ToolTip = "Envoie seulement ta phrase (tu la vois avant), pour qu'elle soit comprise dans une prochaine version."
         $bRep.Add_Click({ $script:HbPick = 'report'; $script:HbWin.Close() }); Add-Child $bar $bRep
     }
     $g = New-Object System.Windows.Controls.Grid
@@ -1140,9 +1163,14 @@ function Show-HelpBrowseDialog([string]$Query) {
     $w.Add_ContentRendered({ try { $script:HbFilter.Focus() | Out-Null } catch {} })
     [void]$w.ShowDialog()
     $pick = $script:HbPick
-    if ($pick -eq 'report') { Show-BugReport ("« Quel est ton problème ? » n'a pas trouvé le bon dépannage pour cette phrase : « $Query ». Le bon dépannage serait : ") ; return }
+    if ($pick -eq 'report') { Send-HelpPhrase $Query ''; return }
     if (-not $pick) { return }
-    if ($Query) { Add-HelpLearned $Query (Get-HelpCardGo $pick) }
+    if ($Query) {
+        Add-HelpLearned $Query (Get-HelpCardGo $pick)
+        # La recherche n'avait pas mis ce dépannage en premier : proposer d'envoyer la phrase pour que tout le monde en profite
+        $first = @(try { Find-HelpIntents $Query } catch { }) | Select-Object -First 1
+        if (-not $first -or $first.Go -ne (Get-HelpCardGo $pick) -or $first.Learned) { Send-HelpPhrase $Query (Get-HelpCardGo $pick) }
+    }
     if ($script:Job -and (Get-HelpCardTag $pick).Busy) { Write-UiLog "Une tâche est déjà en cours : attends qu'elle se termine."; return }
     Invoke-UiCommand (Get-HelpCardTag $pick)
 }
