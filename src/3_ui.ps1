@@ -3098,7 +3098,7 @@ $script:WhatsNew = [ordered]@{
         "Le diagnostic complet est environ 3 fois plus rapide, surtout sur une connexion qui perd des paquets.",
         "Après un écran bleu, le nettoyage garde la version précédente de tes pilotes, pour pouvoir revenir en arrière.",
         "« PC neuf » ne reste plus bloqué quand Windows Update met du temps à répondre.",
-        "« Quel est ton problème ? » comprend encore plus de façons de dire les choses.")
+        "« Quel est ton problème ? » comprend encore plus de façons de dire les choses. Si une phrase n'est pas comprise, « Ce n'est pas ça ? » permet de l'envoyer en un clic (tu vois le texte avant) pour qu'elle le soit dans une prochaine version.")
     '3.5.1' = @("« Quel est ton problème ? » comprend beaucoup plus de phrases, surtout les longues (disque qui n'est plus reconnu, fichiers à récupérer…), propose jusqu'à 5 dépannages et ceux qui vont avec (« Ça peut aussi t'aider »).",
         "Quand il ne comprend pas, il cherche quand même dans toutes les cartes. Et « Ce n'est pas ça ? Choisir moi-même » ouvre la liste de tous les dépannages : ton choix est retenu sur ton PC pour les phrases proches.")
     '3.5.0' = @("Nouveau : « Quel est ton problème ? » sur l'accueil. Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible »), fautes de frappe comprises, et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé.",
