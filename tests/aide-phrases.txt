@@ -1,7 +1,7 @@
 # Phrases de test de « Quel est ton problème ? » : « sujet|phrase ». a/b = l'un ou l'autre en premier ; a+c+d = a en premier,
 # et c, d affichés aussi (résultats ou « Ça peut aussi t'aider »). « - » = rien ne doit sortir.
 # Chaque série a d'abord été mesurée sans avoir servi à écrire les règles, puis ses ratés ont été corrigés :
-# séries 1 à 5 (phrases courtes) 90 %, 91 %, 92 %, 97 %, 96 % ; série 6 (phrases longues, 13/11) 64 % ; série 7 : 86 % ; série 8 : 82 %.
+# séries 1 à 5 (phrases courtes) 90 %, 91 %, 92 %, 97 %, 96 % ; série 6 (phrases longues, 13/11) 64 % ; série 7 : 86 % ; série 8 : 82 % ; série 9 (langage oral, 13/11) : 87 %.
 # Toute phrase qui oriente mal chez un testeur s'ajoute ici.
 slow|mon pc rame
 slow|mon pc rame de fou
@@ -1435,3 +1435,80 @@ history|je veux annuler ce que j'ai fait avec aerox
 diag|je sais pas d'ou vient le probleme
 -|bon appetit
 -|il fait beau aujourd'hui
+slow|wesh mon ordi il est grave a la rue
+slow|le pc est tout lent depuis que j'ai installe un antivirus
+slow|tout freeze 2 secondes toutes les minutes
+slow|mon pc il lag meme sur youtube
+startup|l'ordi met une eternite a s'allumer le matin
+startup|j'ai trop de trucs qui demarrent avec windows
+bsod|des fois ca fait un ecran bleu et ca redemarre
+bsod|j'ai un ecran bleu video tdr failure
+bsod|bsod a chaque fois que je joue a warzone
+poweroff|le pc se coupe net comme si on avait debranche
+poweroff|mon ordi s'eteint tout seul au bout d'une heure de jeu
+sound|g pa de son sur mon pc
+sound|le son marche plus depuis hier soir
+sound|plus aucun bruit qui sort de l'ordi
+sound|mon casque fait des gresillements
+micro|mes potes entendent pas ma voix
+micro|le micro de mon casque marche plus sur discord et sur les jeux
+webcam|ma cam s'allume pas sur discord
+printer|l'imprimante canon veut rien savoir
+shell|la barre en bas de l'ecran a disparu
+shell/icons+shell|j'ai plus d'icones sur le bureau ni la barre des taches
+discord|discord reste bloque sur checking for updates
+discord|discord se lance plus du tout
+usbdisk|ma cle usb clignote mais rien ne s'ouvre
+usbdisk|mon disque externe toshiba n'est plus reconnu
+usbdisk+recover|le disque dur de mon ancien pc n'est plus lu j'ai mes photos dessus
+usbdev|ma souris logitech marche plus
+usbdev|plus aucun port usb ne marche sur ma tour
+bluetooth|je vois plus le bluetooth dans windows
+bluetooth|mes airpods se deconnectent tout le temps
+gamelaunch|gta v se lance pas rockstar launcher
+gamelaunch|j'ai un message msvcr120.dll est manquant
+gamelaunch|le jeu se lance et se ferme tout de suite
+apps|le microsoft store veut pas s'ouvrir
+sleep|mon pc sort tout seul de la veille la nuit
+icons|les miniatures des photos s'affichent plus
+gamesettings|comment booster les fps sur mon pc portable
+repairsys|windows bug de partout il faut le reparer
+wureset|la maj windows bloque a 35 %
+wureset|erreur 0x8024a105 windows update
+drivers|ma carte graphique nvidia est pas a jour
+drivers|mettre a jour le pilote wifi
+net|le wifi est connecte mais aucune page ne charge
+net|pas internet sur le pc mais sur le tel oui
+net|internet coupe toutes les 10 minutes
+lag|gros lag sur fortnite alors que la fibre est bonne
+lag|on m'entend comme un robot sur discord
+speedtest|combien j'ai de debit sur mon pc
+freespace|mon disque c est presque plein
+freespace|j'ai plus que 2 go de libre
+freespace|il faut que je libere de la place pour un jeu
+space|je voudrais savoir ce qui prend toute la place sur mon disque
+backup|je veux sauvegarder mes photos avant de reinstaller windows
+recover|j'ai supprime un dossier important comment je le recupere
+recover|ma copine a efface ses photos par erreur
+security|je crois que j'ai un virus mon pc fait des trucs tout seul
+security|j'ai telecharge un cheat et depuis mon pc est bizarre
+hacked|mon compte epic games a ete pirate
+adware|des pubs s'ouvrent toutes seules dans chrome
+uninstall|je veux supprimer des logiciels inutiles
+optimize|comment rendre mon pc plus rapide sans rien acheter
+newpc|je viens de recevoir mon pc gamer que dois je faire en premier
+stability|je veux savoir si mon pc est stable
+memtest|je pense que ma ram est defectueuse
+diskspeed|mon ssd a l'air lent
+temps|mon pc chauffe trop quand je joue
+temps|le ventilo de mon portable fait un bruit d'avion
+sysinfo|quelle est la config de mon pc
+display|mon ecran est flou
+display|le deuxieme ecran est pas detecte
+battery|la batterie de mon portable se vide en 1h
+clock|mon pc retarde de 10 minutes
+diag|j'ai des problemes avec mon ordi je sais pas quoi faire
+-|c'est quoi le meilleur jeu du moment
+net|le mode avion reste active
+clock|la pile de ma carte mere est morte je crois
+-|bonne soiree

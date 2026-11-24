@@ -27,7 +27,7 @@ Pensé pour tout le monde : chaque problème est expliqué simplement, avec sa c
 - **Sauver ses fichiers** : sauvegarde vérifiée de tes dossiers sur un autre disque, et récupération de fichiers effacés
   avec l'outil officiel de Microsoft (Windows File Recovery).
 - **Vitesse des disques** et **boîte noire** : ce que faisait le PC dans la minute avant un plantage.
-- **Clé USB ou disque externe illisible** : sans lettre, protégé en écriture, fichiers abîmés réparés sans rien effacer.
+- **Disque, clé USB ou carte SD illisible** (disques internes compris, jamais formatés) : sans lettre, protégé en écriture, fichiers abîmés réparés sans rien effacer.
 - **Nettoyage approfondi** : fichiers temporaires, caches, anciennes mises à jour, Windows.old…
   avec la taille de chaque catégorie, et un arbre de ce qui prend de la place.
 - **Mises à jour des logiciels** au choix, avec « Ignorer » pour ceux que tu ne veux pas mettre à jour.

@@ -585,18 +585,40 @@ function ConvertFrom-WingetTable([string[]]$Lines, [switch]$IncludeIgnored) {
 function Request-Reboot { $sync.NeedReboot = $true; Log "   → Un redémarrage va t'être proposé." }
 
 # ---------------------------------------------------------------- Réseau (utilisé par le diagnostic et l'action)
+# Pings envoyés par .NET : 1 seconde au plus par ping perdu (la commande standard attend bien plus longtemps, ce qui
+# coûtait jusqu'à 30 secondes au diagnostic sur une connexion qui perd des paquets). Renvoie les temps de réponse.
+function Send-Pings([string]$Target, [int]$Count = 4, [int]$TimeoutMs = 1000, [switch]$StopOnFirst) {
+    $out = New-Object System.Collections.ArrayList
+    if (-not $Target) { return @() }
+    $p = New-Object System.Net.NetworkInformation.Ping
+    try {
+        for ($i = 0; $i -lt $Count; $i++) {
+            try { $r = $p.Send($Target, $TimeoutMs); if ($r.Status -eq 'Success') { [void]$out.Add([int]$r.RoundtripTime); if ($StopOnFirst) { break } } } catch {}
+        }
+    } finally { $p.Dispose() }
+    return $out.ToArray()
+}
+# Chronomètre une partie du diagnostic (temps visibles dans les tests, pour repérer ce qui ralentit)
+function Measure-DiagPart([string]$Name, [scriptblock]$Block) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    # Le résultat du bloc est renvoyé tel quel (une variable affectée DANS le bloc ne ressort pas : utiliser le résultat)
+    try { & $Block } finally { if ($sync.DiagTimes -is [Collections.IDictionary]) { $sync.DiagTimes[$Name] = [math]::Round($sw.Elapsed.TotalSeconds, 1) } }
+}
 function Get-NetworkStatus {
     $st = @{ Route = $false; Gw = ''; GwOk = $false; Internet = $false; Avg = 0; Dns = $false; Signal = -1 }
     $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1
     if (-not $route) { return $st }
     $st.Route = $true; $st.Gw = $route.NextHop
-    $st.GwOk = [bool](Test-Connection -ComputerName $route.NextHop -Count 2 -Quiet -ErrorAction SilentlyContinue)
-    $net = Test-Connection -ComputerName 1.1.1.1 -Count 4 -ErrorAction SilentlyContinue
-    if (-not $net) { $net = Test-Connection -ComputerName 8.8.8.8 -Count 2 -ErrorAction SilentlyContinue }
-    if ($net) { $st.Internet = $true; $st.Avg = [math]::Round(($net | Measure-Object -Property ResponseTime -Average).Average) }
-    try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $st.Dns = $true } catch {}
-    $wlan = (netsh.exe wlan show interfaces 2>$null) | Out-String
-    if ($wlan -match 'Signal\s*:\s*(\d+)\s*%') { $st.Signal = [int]$matches[1] }
+    $null = Measure-DiagPart 'Réseau · ping box' { $st.GwOk = [bool]@(Send-Pings $route.NextHop 2 1000 -StopOnFirst).Count }
+    $null = Measure-DiagPart 'Réseau · ping Internet' {
+        # 2 essais d'abord : si l'un répond, 2 de plus pour la moyenne ; sinon un autre serveur (ping bloqué sur ce réseau ?)
+        $rt = @(Send-Pings '1.1.1.1' 2 1000)
+        if ($rt.Count) { $rt = @($rt) + @(Send-Pings '1.1.1.1' 2 1000) } else { $rt = @(Send-Pings '8.8.8.8' 2 1000) }
+        if ($rt.Count) { $st.Internet = $true; $st.Avg = [math]::Round(($rt | Measure-Object -Average).Average) }
+    }
+    $null = Measure-DiagPart 'Réseau · DNS' { try { $null = [System.Net.Dns]::GetHostAddresses('www.microsoft.com'); $st.Dns = $true } catch {} }
+    $wlan = Measure-DiagPart 'Réseau · Wi-Fi' { (netsh.exe wlan show interfaces 2>$null) | Out-String }
+    if ("$wlan" -match 'Signal\s*:\s*(\d+)\s*%') { $st.Signal = [int]$matches[1] }
     return $st
 }
 
@@ -2000,11 +2022,13 @@ function Get-WindowsSpaceItems {
     try {
         $used = @{}; foreach ($d in @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop)) { if ($d.InfName) { $used["$($d.InfName)".ToLower()] = $true } }
         $drv = @(Get-WindowsDriver -Online -ErrorAction Stop)
+        $keepPrev = Test-RecentBsod
+        if ($keepPrev) { Log "   • Écran bleu ces 30 derniers jours : la version précédente de chaque pilote est gardée (pour pouvoir « Restaurer le pilote »)." }
         $old = New-Object System.Collections.ArrayList
         foreach ($g in @($drv | Group-Object { "{0}|{1}|{2}" -f [IO.Path]::GetFileName("$($_.OriginalFileName)").ToLower(), $_.ProviderName, $_.ClassName })) {
             if ($g.Count -lt 2) { continue }
             $sorted = @($g.Group | Sort-Object @{ Expression = { try { [version]"$($_.Version)" } catch { [version]'0.0' } } }, @{ Expression = { $_.Date } } -Descending)
-            foreach ($x in @($sorted | Select-Object -Skip 1)) {
+            foreach ($x in @($sorted | Select-Object -Skip $(if ($keepPrev) { 2 } else { 1 }))) {
                 $inf = "$($x.Driver)".ToLower()
                 if ($inf -notmatch '^oem\d+\.inf$' -or $used[$inf]) { continue }
                 $dir = Split-Path "$($x.OriginalFileName)" -Parent
@@ -2112,6 +2136,27 @@ function Set-RestoreSpace([string]$Max, [string]$Previous = '') {
     Log "   ✔ Les points de restauration les plus récents sont gardés, Windows continue d'en créer."
     if ($Previous) { Add-Change -Title "Place des points de restauration limitée à $Max" -Undo ("Set-RestoreSpace '{0}'" -f $Previous) }
     else { Add-Change -Kind 'info' -Title "Place des points de restauration : $Max" }
+}
+# Lance un bloc à part et n'attend pas plus de $Seconds secondes (ni après « Annuler »). Le bloc ne voit pas les
+# fonctions d'AEROX : il ne doit utiliser que Windows (COM, commandes). Renvoie { Done ; Out }.
+function Invoke-WithTimeout([scriptblock]$Script, [int]$Seconds) {
+    $ps = [powershell]::Create()
+    [void]$ps.AddScript($Script.ToString())
+    $h = $ps.BeginInvoke(); $t0 = Get-Date
+    while (-not $h.IsCompleted) {
+        if ($sync.Cancel -or ((Get-Date) - $t0).TotalSeconds -ge $Seconds) { try { [void]$ps.BeginStop($null, $null) } catch {}; return @{ Done = $false; Out = @() } }
+        Start-Sleep -Milliseconds 250
+    }
+    try { $out = @($ps.EndInvoke($h)); return @{ Done = $true; Out = $out } } catch { return @{ Done = $true; Out = @() } } finally { try { $ps.Dispose() } catch {} }
+}
+# Écran bleu dans les 30 derniers jours (hors arrêts forcés à la main) : les anciennes versions de pilotes sont alors
+# gardées, parce que « Restaurer le pilote » de Windows en a besoin pour revenir à la version d'avant.
+function Test-RecentBsod {
+    if ($null -ne $script:RecentBsod -and $script:RecentBsodAt -gt (Get-Date).AddMinutes(-10)) { return $script:RecentBsod }
+    $r = $false
+    try { $r = [bool]@(Get-BsodEvents (Get-Date).AddDays(-30) | Where-Object { (Get-BugCheckInfo $_.Code).Kind -ne 'manual' }).Count } catch {}
+    $script:RecentBsod = $r; $script:RecentBsodAt = Get-Date
+    return $r
 }
 function Remove-OldDrivers([string[]]$Infs) {
     Step ("Suppression de {0} ancienne(s) version(s) de pilotes" -f @($Infs).Count)
@@ -4140,8 +4185,8 @@ function Test-ConnectionStability {
     try {
         $srv = @((Get-DnsClientServerAddress -InterfaceIndex $a.Index -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses | Where-Object { $_ })
         if (-not $srv.Count -or $srv[0] -in '1.1.1.1', '1.0.0.1') { throw 'pas de mesure' }
-        $mine = Measure-Dns $srv[0]
-        $cf = Measure-Dns '1.1.1.1'
+        $dm = @(Measure-DiagPart 'Réseau · vitesse DNS' { Measure-Dns $srv[0]; Measure-Dns '1.1.1.1' })
+        $mine = $dm[0]; $cf = $dm[1]
         if ($mine -ge 2000 -or $cf -ge 2000) { throw 'mesure impossible' }
         if ($mine -ge 80 -and $mine -ge 2 * $cf) {
             Add-Issue -Id 'dnsslow' -Sev 'warn' -Title ("Les DNS de ta connexion sont lents ({0} ms)" -f $mine) -Detail ("Cloudflare (1.1.1.1) répond en {0} ms" -f $cf) `
@@ -4583,7 +4628,7 @@ function Test-Network {
                 -Steps @("Le mieux : branche un câble Ethernet entre le PC et la box.", "Sinon : rapproche la box ou ajoute un répéteur Wi-Fi / CPL.", "Évite de poser la box dans un meuble fermé.")
         } else { Add-Ok "Signal Wi-Fi correct ($($n.Signal) %)" }
     }
-    if ($n.Internet -or $n.Dns) { Test-ConnectionStability; Test-NetBlockers }
+    if ($n.Internet -or $n.Dns) { $null = Measure-DiagPart 'Réseau · stabilité' { Test-ConnectionStability }; $null = Measure-DiagPart 'Réseau · blocages' { Test-NetBlockers } }
 }
 
 # ---------------------------------------------------------------- Ce qui empêche des sites ou des téléchargements de passer
@@ -4645,7 +4690,7 @@ function Test-NetBlockers {
             -Steps @("Le bouton retire seulement les lignes de ces sites (copie de sauvegarde gardée).", "Puis fais une analyse antivirus complète (Windows Defender > Analyse complète).")
     } else { Add-Ok "Aucun site important détourné (fichier hosts)" }
     # 3. Heure du PC
-    $sk = Get-ClockSkew
+    $sk = Measure-DiagPart 'Réseau · heure' { Get-ClockSkew }
     if ($null -ne $sk -and [math]::Abs($sk) -ge 300) {
         $mins = [math]::Round([math]::Abs($sk) / 60)
         $txt = if ($mins -ge 120) { "{0} h" -f [math]::Round($mins / 60) } else { "$mins min" }
@@ -5537,14 +5582,17 @@ function Invoke-Diagnostic {
     $sync.ScanOrder = @($checks.Keys)
     $sync.ScanVer++
     $script:CimCache = @{}
+    $sync.DiagTimes = [ordered]@{}
     foreach ($k in $checks.Keys) {
         if ($sync.Cancel) { $script:CimCache = $null; return }
         $script:CurrentCat = $k
         $sync.Scan[$k] = 'run'; $sync.ScanVer++
         $before = $script:Issues.Count
         $failed = $false
+        $swCat = [Diagnostics.Stopwatch]::StartNew()
         try { & $checks[$k] }
         catch { $failed = $true; Write-Bug -Context "Diagnostic / $k" -ErrorRecord $_; Log ("   ⚠ Vérification « {0} » incomplète : {1}" -f $k, $_.Exception.Message); Add-StatsEvent ("erreur:" + (ConvertTo-StatsId $checks[$k])) }
+        $sync.DiagTimes[$k] = [math]::Round($swCat.Elapsed.TotalSeconds, 1)
         $new = @($script:Issues | Select-Object -Skip $before)
         $sync.Scan[$k] = if (@($new | Where-Object { $_.Sev -eq 'crit' }).Count) { 'bad' } elseif ($new.Count -or $failed) { 'warn' } else { 'ok' }
         $sync.ScanVer++
@@ -6049,7 +6097,9 @@ function Invoke-DeepClean([string[]]$Ids) {
     if ($Ids -contains 'recycle' -and -not $sync.Cancel) { Clear-RecycleBinAll }
     if ($Ids -contains 'windows' -and -not $sync.Cancel) {
         Step "Nettoyage de disque Windows (peut prendre plusieurs minutes)"
-        try { if (Invoke-CleanMgr $script:CleanMgrSafe 7701) { Log "   ✔ Nettoyage de disque Windows terminé" } }
+        $cmSet = @($script:CleanMgrSafe)
+        if (Test-RecentBsod) { $cmSet = @($cmSet | Where-Object { $_ -ne 'Device Driver Packages' }); Log "   • Écran bleu ces 30 derniers jours : les anciens pilotes sont gardés (pour pouvoir revenir à la version d'avant)." }
+        try { if (Invoke-CleanMgr $cmSet 7701) { Log "   ✔ Nettoyage de disque Windows terminé" } }
         catch { Add-TaskError -Title "Le nettoyage de disque Windows n'a pas pu se lancer" -Cause $_.Exception.Message -Bug $_ }
     }
     if ($Ids -contains 'winold' -and -not $sync.Cancel) {
@@ -7098,11 +7148,15 @@ function ConvertTo-HelpTokens([string]$Text, [switch]$NoFix) {
     return $out.ToArray()
 }
 # La distance entre deux mots (une faute = 1) est celle de Get-EditDistance, plus bas (déjà utilisée par l'analyse de sécurité)
+# Mots courants que la correction des fautes ne doit jamais « corriger » vers un mot proche (« regarde » n'est pas
+# « retarde », « garde » n'est pas « carte »)
+$script:HelpKnownWords = @{}
+foreach ($w in ('regarde regarder regardes regardais regardant garde garder retour retourne regle regler reglage reste rester restes passe passer passes passait pense penser pensais crois croire croyais trouve trouver trouves cherche chercher cherches donne donner donnes prends prendre prend prenait mettre mets met mettais mis ouvre ouvrir ouvert ferme fermer fermes lance lancer lances joue jouer joues jouais parle parler parles ecris ecrire ecrit lire lis lisais vois voir voyais achete acheter achat change changer changes essaye essayer essaie essayais clique cliquer cliques tape taper tapes installe installer installes telecharge telecharger telecharges branche brancher debranche debrancher allume allumer eteint eteindre utilise utiliser utilises arrive arriver arrives fonctionnait marchait commence commencer continue continuer finit finir travaille travailler travail ecole bureau maison chambre salon soir matin nuit journee semaine mois annee heure heures minute minutes seconde secondes toujours souvent parfois jamais encore deja depuis pendant apres avant maintenant hier demain aujourd tard tot vite lentement grand grande petit petite gros grosse nouveau nouvelle vieux vieille ancien ancienne premier premiere dernier derniere autre autres meme memes chaque plusieurs certains quelques beaucoup moins assez trop tellement vraiment completement totalement probleme problemes question reponse aide besoin envie raison cause fois coup moment chose truc machin ecran clavier souris casque micro camera imprimante disque memoire processeur carte graphique alimentation batterie chargeur cable prise port fichier fichiers dossier dossiers photo photos video videos musique document documents image images film films jeu jeux logiciel logiciels internet reseau wifi connexion site sites page pages navigateur onglet onglets compte comptes mot passe code message messages mail mails frere soeur pere mere copain copine pote potes ami amis fils fille enfant enfants famille regardant pourtant cependant toutefois ensuite enfin aussi donc alors voila partie parties match serveur serveurs ami amis equipe niveau niveaux').Split(' ')) { $script:HelpKnownWords[$w] = $true }
 # Faute de frappe : un mot inconnu est ramené au mot connu le plus proche (même première lettre ; une faute pour un mot
 # de 5 lettres et plus, deux à partir de 9). Jamais sur un mot avec des chiffres, ni vers un mot marqué « ! ».
 function Repair-HelpWord([string]$W) {
     if ($W.Length -lt 4 -or $W -notmatch '^[a-z]+$' -or -not $script:HelpVocab) { return $W }
-    if ($script:HelpVocab.Exact.ContainsKey($W)) { return $W }
+    if ($script:HelpVocab.Exact.ContainsKey($W) -or $script:HelpKnownWords.ContainsKey($W)) { return $W }
     $c = "$($W[0])"
     foreach ($p in @($script:HelpVocab.Prefix[$c])) { if ($W.StartsWith($p)) { return $W } }
     if ($script:HelpFixCache.ContainsKey($W)) { return $script:HelpFixCache[$W] }
@@ -7382,11 +7436,11 @@ $script:HelpIntents = @(
     @{ Id = 'autorepair'; Also = @('repairsys', 'chkdsk', 'backup'); Go = 'diag'; Pri = 93; Why = "Le diagnostic lit pourquoi Windows a lancé sa réparation automatique."
        P = @('4:reparation automatique', '4:preparation reparation automatique', '4:srttrail', '3:windows demarr* mal', '3:windows n a pas pu demarrer', '3:diagnostic de votre pc', '3:boucle reparation', '3:demarr* une fois sur deux') },
     @{ Id = 'slow'; Also = @('startup', 'freespace', 'temps', 'security'); Go = 'UI:slow'; Pri = 80; Why = "Mesure ce qui occupe le PC en ce moment (processeur, mémoire, disque) et nomme le coupable."
-       P = @('4:met|prend ans|siecle*|annee*|eternite', '3:mouline*', '3:met|prend min|mn|minute*|sec|seconde*|heure* ouvr*|charg*|lanc*|affich*', '3:tortue', '3:limace', '3:ramasse', '3:plombe*', '3:met|prend temps|plombe*|heure*|minute*|longtemps|fou ouvr*|charg*|lanc*', '3:rame* & pc|windows', '3:pc|windows|ca|tout lent|lente|lents', '3:pc|windows|ca|tout rame*', '3:=ca ram', '3:=pc ram', '3:=qui ram', '2:rame*', '2:lent|lente|lenteur*', '3:ralenti*', '3:tourne au ralenti', '3:met|prend du temps', '3:met trois|des|10|5|2 heures|minutes|plombes', '3:trop long', '3:a la traine', '3:pc|windows fige*|freez*|bloque*|gele*', '2:freez*', '2:fige*', '3:saccad*', '3:pas reactif', '3:reagit plus|pas', '3:repond* plus|pas', '3:pc mou', '3:processeur centpourcent', '3:disque centpourcent', '3:memoire|ram centpourcent', '3:centpourcent', '3:lag* sur le bureau', '3:pc|windows lag*', '2:ca lag*', '3:tout est long', '3:long a ouvrir|charger', '3:met longtemps', '3:pc pourri|naze|poussif', '3:pc de 15 ans', '2:ca traine', '3:ne repond* pas', '3:pc bug* tout le temps', '2:pc bug*', '3:pourquoi mon pc rame', '3:pc galere', '3:escargot', '3:pc|windows|ordi lourd|lourdingue') },
+       P = @('4:pc & rue', '4:met|prend ans|siecle*|annee*|eternite', '3:mouline*', '3:met|prend min|mn|minute*|sec|seconde*|heure* ouvr*|charg*|lanc*|affich*', '3:tortue', '3:limace', '3:ramasse', '3:plombe*', '3:met|prend temps|plombe*|heure*|minute*|longtemps|fou ouvr*|charg*|lanc*', '3:rame* & pc|windows', '3:pc|windows|ca|tout lent|lente|lents', '3:pc|windows|ca|tout rame*', '3:=ca ram', '3:=pc ram', '3:=qui ram', '2:rame*', '2:lent|lente|lenteur*', '3:ralenti*', '3:tourne au ralenti', '3:met|prend du temps', '3:met trois|des|10|5|2 heures|minutes|plombes', '3:trop long', '3:a la traine', '3:pc|windows fige*|freez*|bloque*|gele*', '2:freez*', '2:fige*', '3:saccad*', '3:pas reactif', '3:reagit plus|pas', '3:repond* plus|pas', '3:pc mou', '3:processeur centpourcent', '3:disque centpourcent', '3:memoire|ram centpourcent', '3:centpourcent', '3:lag* sur le bureau', '3:pc|windows lag*', '2:ca lag*', '3:tout est long', '3:long a ouvrir|charger', '3:met longtemps', '3:pc pourri|naze|poussif', '3:pc de 15 ans', '2:ca traine', '3:ne repond* pas', '3:pc bug* tout le temps', '2:pc bug*', '3:pourquoi mon pc rame', '3:pc galere', '3:escargot', '3:pc|windows|ordi lourd|lourdingue') },
     @{ Id = 'startup'; Also = @('slow', 'bgitems'); Go = 'UI:startup'; Pri = 70; Why = "Montre ce qui se lance tout seul avec Windows et laisse choisir ce qu'on garde."
-       P = @('6:lent|long|lente|longue demarrage|allumage', '5:logiciel|truc*|chose*|application|fenetre* ouvre*|lance* & allume*|demarr*', '6:prend|met min|mn|minute*|heure*|temps|longtemps|plombe*|fou demarr*|allume*|boot*', '5:lance*|ouvre* seul|seuls|seule|seules & allume*|demarr*', '5:trop logiciel|truc*|chose*|application demarrage', '4:logiciel|truc*|chose*|application lance* demarrage|allumage', '4:enlever|retirer|virer|desactiver demarrage', '6:long|lent|lente|longue demarr*|allume*|boot*|lance*', '4:demarrage lent|long|interminable', '4:met|prend minutes|temps|heures|longtemps a demarrer|s allumer|booter', '3:met minutes a s allumer', '4:logiciel|application au demarrage', '4:se lance* au demarrage', '4:s ouvre* tout seul au demarrage', '3:s ouvre* a l allumage', '3:boot lent|long', '3:demarr* lentement', '3:trop de logiciel au demarrage', '3:lance* tout seul au demarrage', '3:allumage lent|long', '3:met du temps a s allumer|demarrer', '3:demarrage windows long|lent') },
+       P = @('6:met|prend eternite|siecle*|plombe*|ans & allume*|demarr*|boot*', '5:trop truc*|chose*|logiciel*|programme*|application* & demarr*|lance*|allume*', '6:lent|long|lente|longue demarrage|allumage', '5:logiciel|truc*|chose*|application|fenetre* ouvre*|lance* & allume*|demarr*', '6:prend|met min|mn|minute*|heure*|temps|longtemps|plombe*|fou demarr*|allume*|boot*', '5:lance*|ouvre* seul|seuls|seule|seules & allume*|demarr*', '5:trop logiciel|truc*|chose*|application demarrage', '4:logiciel|truc*|chose*|application lance* demarrage|allumage', '4:enlever|retirer|virer|desactiver demarrage', '6:long|lent|lente|longue demarr*|allume*|boot*|lance*', '4:demarrage lent|long|interminable', '4:met|prend minutes|temps|heures|longtemps a demarrer|s allumer|booter', '3:met minutes a s allumer', '4:logiciel|application au demarrage', '4:se lance* au demarrage', '4:s ouvre* tout seul au demarrage', '3:s ouvre* a l allumage', '3:boot lent|long', '3:demarr* lentement', '3:trop de logiciel au demarrage', '3:lance* tout seul au demarrage', '3:allumage lent|long', '3:met du temps a s allumer|demarrer', '3:demarrage windows long|lent') },
     @{ Id = 'sound'; Also = @('bluetooth', 'micro', 'drivers'); Go = 'A:Repair-Sound'; Pri = 60; N = 'son|audio|enceinte*|ecouteur*|baffle*'; Why = "Relance le son de Windows et te laisse choisir la bonne sortie (casque, enceintes, écran)."
-       P = @('4:entend* rien', '4:entend* plus rien', '4:j entend* pas|plus', '3:pas de bruit', '3:haut parleur*', '3:{neg} haut parleur*', '3:muet', '3:casque {neg} son', '3:son casque', '3:son sort pas', '3:son sort de l ecran|des enceintes|du casque', '3:mauvaise sortie', '3:sortie audio', '3:{neg} son', '3:son gresill*|crach*|sature*', '2:casque marche* {neg}', '3:realtek', '3:pas de musique') },
+       P = @('5:aucun|plus|pas bruit sort*', '5:casque|enceinte*|son|haut_parleur*|ecouteur* gresill*|grezill*|crach*|bourdon*', '4:entend* rien', '4:entend* plus rien', '4:j entend* pas|plus', '3:pas de bruit', '3:haut parleur*', '3:{neg} haut parleur*', '3:muet', '3:casque {neg} son', '3:son casque', '3:son sort pas', '3:son sort de l ecran|des enceintes|du casque', '3:mauvaise sortie', '3:sortie audio', '3:{neg} son', '3:son gresill*|crach*|sature*', '2:casque marche* {neg}', '3:realtek', '3:pas de musique') },
     @{ Id = 'micro'; Also = @('sound', 'discord'); Go = 'A:Repair-Microphone'; Pri = 59; N = 'micro|microphone|mic'; Why = "Vérifie les autorisations du micro, le bon micro par défaut et son niveau."
        P = @('5:voix {neg} sort*|passe*', '4:on m entend {neg}', '4:m entend* {neg}', '4:personne m entend*', '4:potes|amis|gens m entend* {neg}', '3:ma voix passe {neg}', '3:voix {neg} entendu*', '3:on entend {neg} ma voix', '3:micro casque', '3:m entend* mal') },
     @{ Id = 'webcam'; Also = @('drivers'); Go = 'A:Repair-Webcam'; Pri = 58; N = 'webcam|camera|cam|visio'; Why = "Vérifie les autorisations de la caméra et relance son pilote."
@@ -7394,17 +7448,17 @@ $script:HelpIntents = @(
     @{ Id = 'printer'; Also = @('usbdev'); Go = 'A:Repair-Printing'; Pri = 57; N = 'imprimante*|impression*|imprim*|spouleur'; Why = "Vide la file d'attente bloquée et relance le service d'impression."
        P = @('7:imprimante & {neg} {unseen}', '3:file d attente', '3:imprime* {neg}', '3:{neg} imprimer', '3:document* bloque* impression', '3:hors ligne imprimante', '3:imprimante hors ligne') },
     @{ Id = 'shell'; Go = 'A:Restart-Shell'; Pri = 56; Why = "Relance le bureau et la barre des tâches de Windows sans redémarrer le PC."
-       P = @('5:bureau {neg} repond*', '5:bureau repond* {neg}', '7:explorer|explorateur & repond*|plant*|bloque*|fige*', '6:bureau noir|vide', '6:bureau sans|plus icone*', '4:barre des|de|d taches|tache', '3:bureau fige*|bloque*|freez*|plant*', '3:bureau {neg} repond*', '3:explorateur {bug}', '3:explorateur {neg} repond*|marche*|s ouvre*', '5:explorer exe', '4:explorer|explorateur {neg} repond*', '4:explorer|explorateur repond* {neg}', '3:icones du bureau disparu*', '3:clic droit {neg} marche*|fonctionne*', '3:clic droit {bug}', '3:bureau noir', '3:barre du bas', '3:barre en bas {bug}|{neg}', '3:plus de bureau') },
+       P = @('7:{neg} icone* bureau', '7:bureau & {neg} icone*', '5:bureau {neg} repond*', '5:bureau repond* {neg}', '7:explorer|explorateur & repond*|plant*|bloque*|fige*', '6:bureau noir|vide', '6:bureau sans|plus icone*', '4:barre des|de|d taches|tache', '3:bureau fige*|bloque*|freez*|plant*', '3:bureau {neg} repond*', '3:explorateur {bug}', '3:explorateur {neg} repond*|marche*|s ouvre*', '5:explorer exe', '4:explorer|explorateur {neg} repond*', '4:explorer|explorateur repond* {neg}', '3:icones du bureau disparu*', '3:clic droit {neg} marche*|fonctionne*', '3:clic droit {bug}', '3:bureau noir', '3:barre du bas', '3:barre en bas {bug}|{neg}', '3:plus de bureau') },
     @{ Id = 'discord'; Also = @('lag', 'micro'); Go = 'A:Repair-Discord'; Pri = 55; N = 'discord|discorde'; Why = "Répare Discord étape par étape : caches, accélération graphique, modules, puis réinstallation propre."
        P = @('6:discord & ecran noir|gris|grise|blanc', '5:discord & {neg} lance*|ouvre*|demarr*', '4:discord ecran noir|gris|blanc', '4:discord {neg} s ouvre*|se lance*|demarr*|s installe*', '4:discord s ouvre*|se lance*|demarr* {neg}', '4:discord update failed', '4:discord mise a jour boucle|bloque*', '3:discord installation', '3:discord charge* infini*', '3:discord tourne dans le vide', '3:discord corrupt*', '4:discord javascript error') },
-    @{ Id = 'usbdisk'; Also = @('recover', 'chkdsk', 'backup'); Go = 'A:Get-ExternalDiskReport'; Pri = 75; Why = "Regarde chaque clé USB, carte mémoire et disque externe branché et dit ce qui cloche."
+    @{ Id = 'usbdisk'; Also = @('recover', 'chkdsk', 'backup'); Go = 'A:Get-ExternalDiskReport'; Pri = 75; Why = "Regarde chaque disque, clé USB et carte mémoire (sauf celui de Windows) et dit ce qui cloche : hors ligne, sans lettre, illisible…"
        P = @('7:{disk} & fait|repond {neg} rien|plus', '6:{disk} & {neg} & {stuff}', '11:{disk} {neg} {unseen} & {getback}', '11:{disk} illisible|morte|mort|hs & {getback}', '7:{disk} & {neg} {unseen}', '7:{disk} plus {unseen}', '6:{disk} {neg} {unseen}', '6:{disk} invisible|disparu*|illisible|mort|morte|hs|grille*', '5:voit|vois|trouve* {neg} {disk}', '5:demande* formate*|formater', '4:{disk} & clignote & {neg}', '5:{disk} & reconnu* & impossible ouvr*', '3:cle usb', '4:cle usb {neg}|{bug}|illisible|reconnu*|detect*', '3:=cle usb', '4:disque externe', '4:disque dur externe', '4:carte sd|memoire|microsd', '4:microsd', '4:illisible', '4:protege* en ecriture', '4:demande de formater', '4:il faut|vous devez formater', '3:formater le disque avant', '4:=usb raw', '3:disque|cle raw', '3:cle {neg} apparait*|reconnu*|detect*|lu*|s affiche*|visible', '3:disque externe {neg} apparait*|reconnu*|detect*', '3:cle {bug}', '3:usb stick', '3:cle abime*|morte|hs|corrompu*', '3:ssd externe', '3:volume ne contient pas de systeme de fichiers', '3:{neg} acces a la cle|au disque', '3:cle vide alors', '2:cle') },
     @{ Id = 'usbdev'; Also = @('usbdisk', 'bluetooth'); Go = 'A:Repair-Usb'; Pri = 54; N = 'souris|clavier|manette|joystick|volant|pedalier'; Why = "Relance les ports USB et empêche Windows de les couper pour économiser l'énergie."
        P = @('4:port* usb', '4:peripherique usb', '4:usb {neg} reconnu*|detect*', '4:usb non reconnu', '3:prise* usb', '3:usb {neg} marche*|fonctionne*', '3:usb {bug}', '3:se deconnecte* reconnecte*', '3:bruit de deconnexion', '3:deconnecte* tout seul usb', '3:souris|clavier|manette se deconnecte*', '3:souris|clavier|manette {neg} reconnu*|detect*|repond*', '3:hub usb', '2:usb') },
     @{ Id = 'bluetooth'; Also = @('sound', 'usbdev'); Go = 'A:Repair-Bluetooth'; Pri = 61; N = 'bluetooth|bleutooth|blutooth|bluethooth|bluetooh'; Why = "Relance le Bluetooth de Windows et son pilote pour que les appareils se reconnectent."
        P = @('4:airpods', '4:appair*', '4:jumel*', '3:sans fil {neg} se connecte*', '3:casque|manette|enceinte|souris sans fil', '3:casque|manette|enceinte {neg} se connecte*', '4:ps4|ps5|xbox|switch connecte* {neg}', '4:ps4|ps5|xbox|switch {neg} connecte*', '3:=bt {neg}', '3:dualsense|dualshock') },
     @{ Id = 'gamelaunch'; Also = @('drivers', 'gamesettings', 'bsod'); Go = 'A:Repair-GameLaunch'; Pri = 62; Why = "Vérifie les composants que les jeux réclament (Visual C++, DirectX) et les anti-triche."
-       P = @('6:jouer|lancer|lance*|clique* & passe rien', '5:jeu & ecran noir & lancement|lance*|demarr*', '5:steam & lance & rien', '4:{game} & refuse|impossible & lance*|demarr*|ouvr*', '4:lance* {game} & rien', '4:{game} crash* demarrage|lancement', '4:manque dll', '4:{game} & {neg} lance*|demarr*|ouvre*', '4:jeu {neg} se lance*|demarr*|s ouvre*|s allume*', '4:jeu se lance*|demarr*|s ouvre* {neg}', '4:jeu veut {neg} se lancer|demarrer', '4:{game} {neg} lance*|demarr*|ouvre*|allume*', '4:lance* {game} rien|{neg}', '4:dll manquant*|introuvable', '4:dll', '4:msvcp*', '4:vcruntime*', '4:d3dx*', '4:directx', '4:visual c++', '4:anti cheat|triche', '4:anticheat|easyanticheat|battleye|vanguard', '4:0xc000007b', '3:jeu crash* au lancement|demarrage', '3:jeu se ferme tout seul au lancement', '3:jeu se ferme direct', '3:impossible de lancer jeu', '3:steam jeu {neg} se lance*', '3:jeu plant* au lancement', '3:erreur au lancement jeu', '3:lance* le jeu rien ne se passe') },
+       P = @('6:jeu|{game} & ferme* tout_suite|direct|aussitot', '6:jouer|lancer|lance*|clique* & passe rien', '5:jeu & ecran noir & lancement|lance*|demarr*', '5:steam & lance & rien', '4:{game} & refuse|impossible & lance*|demarr*|ouvr*', '4:lance* {game} & rien', '4:{game} crash* demarrage|lancement', '4:manque dll', '4:{game} & {neg} lance*|demarr*|ouvre*', '4:jeu {neg} se lance*|demarr*|s ouvre*|s allume*', '4:jeu se lance*|demarr*|s ouvre* {neg}', '4:jeu veut {neg} se lancer|demarrer', '4:{game} {neg} lance*|demarr*|ouvre*|allume*', '4:lance* {game} rien|{neg}', '4:dll manquant*|introuvable', '4:dll', '4:msvcp*', '4:vcruntime*', '4:d3dx*', '4:directx', '4:visual c++', '4:anti cheat|triche', '4:anticheat|easyanticheat|battleye|vanguard', '4:0xc000007b', '3:jeu crash* au lancement|demarrage', '3:jeu se ferme tout seul au lancement', '3:jeu se ferme direct', '3:impossible de lancer jeu', '3:steam jeu {neg} se lance*', '3:jeu plant* au lancement', '3:erreur au lancement jeu', '3:lance* le jeu rien ne se passe') },
     @{ Id = 'apps'; Go = 'A:Repair-WindowsApps'; Pri = 53; Why = "Répare le Microsoft Store et les applis de Windows qui ne s'ouvrent plus."
        P = @('6:parametres|calculatrice|photos|store|courrier|meteo & plante*|crash*|ferme*|bug*', '6:store|application|appli & ferme* direct|seul*|aussitot|tout_suite', '5:parametres|calculatrice|photos|store|meteo|courrier & {neg} & ouvr*|lance*|marche*', '4:application windows ferme* seul*', '4:application ferme* seul|seule|seules|toutes', '4:microsoft store', '4:windows store', '3:store {neg}|{bug}', '4:menu demarrer {neg}|{bug}', '3:menu demarrer', '3:application windows {neg} s ouvre*', '3:calculatrice|photos|parametres|meteo {neg} s ouvre*', '3:parametres {neg} s ouvre*|marche*', '3:application se ferme* direct|aussitot', '3:touche windows {neg} marche*|fonctionne*', '3:recherche windows {neg} marche*|fonctionne*', '3:application {neg} s ouvre*') },
     @{ Id = 'sleep'; Also = @('display', 'drivers'); Go = 'A:Get-SleepReport'; Pri = 52; N = '!veille|hibernation'; Why = "Dit ce qui réveille le PC ou l'empêche de dormir, et propose de le couper."
@@ -7418,7 +7472,7 @@ $script:HelpIntents = @(
     @{ Id = 'chkdsk'; Also = @('backup', 'diskspeed', 'recover'); Go = 'A:Test-Disk'; Pri = 66; Why = "Fait vérifier le disque par Windows (erreurs de fichiers, secteurs abîmés)."
        P = @('6:{disk} & etat|sante|lacher|lache|mourir|meure|meurt|fatigue*|bruit*|clic*|claque*|gratte*', '5:savoir|verifier|controler|comprendre & {disk}', '4:verifier le|mon disque', '4:chkdsk', '4:secteur* defectueu*|abime*', '4:erreur* disque|disques', '4:disque abime*|defectueu*|endommage*|fatigue*', '4:disque claque*|gratte*|bruit*|clic*|cliquetis', '3:smart', '3:sante du|des disque*|ssd', '3:disque va lacher|mourir', '3:etat du disque|ssd', '3:reparer le|mon disque') },
     @{ Id = 'wureset'; Also = @('winupdate', 'repairsys'); Go = 'A:Reset-WindowsUpdate'; Pri = 67; Why = "Remet Windows Update à zéro quand les mises à jour restent bloquées ou échouent."
-       P = @('5:mise jour & bloque*|boucle|echou*|echec|plant*', '4:windows update {neg}|{bug}|echoue*|boucle', '4:mise a jour windows {neg}|{bug}|echoue*|boucle|bloquee*', '4:mise a jour bloquee*|echoue*|plantee*', '4:mise a jour {neg} s installe*|passe*|veut', '4:mise a jour tourne en boucle', '4:mise a jour echec', '4:echec mise a jour', '4:0x800*', '3:mise a jour 0 pourcent|reste a', '3:annulation des modifications', '3:impossible d installer mise a jour', '3:mise a jour {bug}', '3:erreur mise a jour', '3:windows update') },
+       P = @('5:mise jour & bloque*|boucle|echou*|echec|plant*', '4:windows update {neg}|{bug}|echoue*|boucle', '4:mise a jour windows {neg}|{bug}|echoue*|boucle|bloquee*', '4:mise a jour bloquee*|echoue*|plantee*', '4:mise a jour {neg} s installe*|passe*|veut', '4:mise a jour tourne en boucle', '4:mise a jour echec', '4:echec mise a jour', '4:0x80*', '3:mise a jour 0 pourcent|reste a', '3:annulation des modifications', '3:impossible d installer mise a jour', '3:mise a jour {bug}', '3:erreur mise a jour', '3:windows update') },
     @{ Id = 'winupdate'; Go = 'A:Update-Windows'; Pri = 45; Why = "Cherche et installe les mises à jour de Windows."
        P = @('3:mettre a jour windows', '3:mise a jour windows', '3:windows a jour', '3:installer mise a jour windows', '3:mettre windows a jour', '2:mise a jour de windows') },
     @{ Id = 'appupdates'; Go = 'UI:appupdates'; Pri = 44; Why = "Liste les logiciels qui ont une mise à jour et te laisse choisir lesquels."
@@ -7426,7 +7480,7 @@ $script:HelpIntents = @(
     @{ Id = 'drivers'; Go = 'UI:drivers'; Pri = 68; N = 'pilote*|driver*|drivers'; Why = "Vérifie les pilotes (carte graphique, Wi-Fi, son) et ouvre l'outil officiel du fabricant."
        P = @('5:mettre jour carte_graphique|nvidia|amd|geforce|radeon', '5:mise jour carte_graphique|nvidia|amd|geforce|radeon', '4:pilote* graphique|nvidia|amd|wifi|son|reseau', '3:geforce experience', '3:nvidia app', '3:carte graphique a jour', '3:carte graphique {neg} reconnu*|detect*', '3:carte graphique {bug}', '3:gestionnaire de peripherique*', '3:point d exclamation jaune', '3:peripherique inconnu', '3:installer pilote*') },
     @{ Id = 'net'; Also = @('netrepair', 'speedtest', 'lag'); Go = 'A:Test-Internet'; Pri = 85; N = 'internet|wifi|connexion|reseau|ethernet|rj45|livebox|freebox|bbox'; Why = "Teste la connexion maillon par maillon (carte réseau, box, Internet, DNS) et dit lequel lâche."
-       P = @('6:internet|wifi|connexion|reseau & telephone|tel|portable|tablette & pas|plus & pc', '3:{neg} net', '4:{neg} internet', '4:{neg} acces internet', '4:internet {neg}|{bug}', '4:wifi {neg}|{bug}', '4:{neg} wifi', '3:connexion limitee', '3:site* {neg} s ouvre*|charge*', '3:page* {neg} charge*|s ouvre*', '4:dns', '3:globe', '3:{neg} connecte*', '3:wifi se deconnecte', '3:wifi instable', '3:internet instable', '3:coupure* internet|wifi|connexion', '3:micro coupure*', '3:hors connexion', '3:pas connecte* a internet', '3:navigateur {neg} charge*', '3:{neg} reseau', '3:cable ethernet {neg}', '3:connecte* mais {neg} internet', '3:internet rame|lent', '3:connexion lente|pourrie|nulle') },
+       P = @('5:mode avion', '6:internet|wifi|connexion|reseau & telephone|tel|portable|tablette & pas|plus & pc', '3:{neg} net', '4:{neg} internet', '4:{neg} acces internet', '4:internet {neg}|{bug}', '4:wifi {neg}|{bug}', '4:{neg} wifi', '3:connexion limitee', '3:site* {neg} s ouvre*|charge*', '3:page* {neg} charge*|s ouvre*', '4:dns', '3:globe', '3:{neg} connecte*', '3:wifi se deconnecte', '3:wifi instable', '3:internet instable', '3:coupure* internet|wifi|connexion', '3:micro coupure*', '3:hors connexion', '3:pas connecte* a internet', '3:navigateur {neg} charge*', '3:{neg} reseau', '3:cable ethernet {neg}', '3:connecte* mais {neg} internet', '3:internet rame|lent', '3:connexion lente|pourrie|nulle') },
     @{ Id = 'netrepair'; Go = 'A:Repair-Network'; Pri = 50; Why = "Remet à zéro les réglages réseau de Windows (annulable) quand la connexion reste cassée."
        P = @('4:reparer connexion|internet|reseau|wifi', '4:reinitialiser reseau|connexion|wifi|internet', '4:reset reseau|internet|wifi', '4:remettre a zero reseau|internet', '3:vider cache dns', '3:flush dns', '3:winsock') },
     @{ Id = 'speedtest'; Go = 'UI:speedtest'; Pri = 43; Why = "Mesure ton débit Internet réel (descendant, montant, ping)."
@@ -7444,11 +7498,11 @@ $script:HelpIntents = @(
     @{ Id = 'backup'; Also = @('recover', 'usbdisk'); Go = 'UI:backup'; Pri = 72; N = 'sauvegard*|backup'; Why = "Copie tes dossiers sur un autre disque et vérifie la copie."
        P = @('7:transferer|copier|mettre|sauvegarder|deplacer & {stuff}|pc & externe|cle|disque|autre|nouveau|nouvel|nouvelle', '5:avant & reset|formater|reinstaller|meure|lache|reparation', '5:garder {stuff}', '6:sauver|sauve & {stuff}', '4:fichier*|photo*|donnee*|document* securite|abri', '4:mettre securite', '9:copier|mettre|transferer|sauvegarder fichier*|photo*|dossier*|video*|document*|donnee* externe|cle|disque', '4:peur perdre', '3:perdre fichier*|photo*|donnee*|document*', '6:copier fichier*|photo*|dossier*|video*|document*|donnee*|musique* disque|cle', '4:avant de formater|reinstaller|reset', '4:mettre a l abri', '4:sauver mes fichier*|photo*|donnee*', '3:garder mes fichier*|photo*|donnee*', '3:{neg} perdre mes fichier*|photo*|donnee*', '3:copie de securite', '3:transferer mes fichier* nouveau pc', '3:mettre mes fichier* sur disque externe') },
     @{ Id = 'recover'; Also = @('usbdisk', 'backup'); Go = 'UI:recover'; Pri = 90; Why = "Lance l'outil de Microsoft qui fouille le disque pour retrouver des fichiers effacés, sans rien écrire dessus."
-       P = @('8:vide* corbeille & dossier*|fichier*|photo*|document*|video*|travail', '6:formate* mauvais|faux|autre {disk}|cle', '7:{getback} {stuff}', '6:{getback} & {disk}', '6:{stuff} & {getback}', '6:{stuff} & formate*|formater', '5:shift suppr', '5:fichier* ecrase*', '5:perdu|disparu & {stuff}', '5:formate* & erreur|expres|accident|megarde', '7:recuper* fichier*|photo*|video*|donnee*|document*|dossier*|image*', '4:fichier*|photo*|video*|document*|dossier*|image* supprime|supprimes|supprimee|supprimees|efface|effaces|effacee|effacees|perdu*|disparu*', '4:supprime* par erreur|accident|megarde', '4:efface* par erreur|accident|megarde', '4:retrouver fichier*|photo*|video*|document*|dossier*', '7:vide* corbeille erreur|accident|megarde|expres', '7:vide* corbeille recuper*|retrouver', '3:=par erreur', '3:=sans faire expres', '4:supprime|efface fichier*|photo*|video*|dossier*|document*', '3:j ai tout perdu', '4:perdu fichier*|photo*|donnee*|document*|dossier*|video*', '3:formate par erreur', '3:recuperation de donnee*|fichier*', '3:recuva|photorec|testdisk', '3:supprime|efface sans_faire_expres|expres', '3:restaurer fichier* supprime*') },
+       P = @('8:vide* corbeille & dossier*|fichier*|photo*|document*|video*|travail', '6:formate* mauvais|faux|autre {disk}|cle', '7:{getback} {stuff}', '6:{getback} & {disk}', '6:{stuff} & {getback}', '6:{stuff} & formate*|formater', '5:shift suppr', '5:fichier* ecrase*', '5:perdu|disparu & {stuff}', '5:formate* & erreur|expres|accident|megarde', '7:recuper* fichier*|photo*|video*|donnee*|document*|dossier*|image*', '4:fichier*|photo*|video*|document*|dossier*|image* supprime|supprimes|supprimee|supprimees|efface|effaces|effacee|effacees|perdu*|disparu*', '4:supprime* par erreur|accident|megarde', '4:efface* par erreur|accident|megarde', '4:retrouver fichier*|photo*|video*|document*|dossier*', '7:vide* corbeille erreur|accident|megarde|expres', '7:vide* corbeille recuper*|retrouver', '4:supprime|efface fichier*|photo*|video*|dossier*|document*', '3:j ai tout perdu', '4:perdu fichier*|photo*|donnee*|document*|dossier*|video*', '3:formate par erreur', '3:recuperation de donnee*|fichier*', '3:recuva|photorec|testdisk', '3:supprime|efface sans_faire_expres|expres', '3:restaurer fichier* supprime*') },
     @{ Id = 'security'; Also = @('adware', 'hacked'); Go = 'UI:secscan'; Pri = 92; N = 'virus|malware*|trojan*|spyware*|keylogger*|ransomware*'; Why = "Cherche les traces d'intrusion : programmes cachés, accès à distance, démarrages suspects."
        P = @('4:pirat*|hack* pc', '4:pc pirat*|hack*', '3:crack*', '4:installe*|telecharge* crack*|cheat*|hack*|keygen', '4:pris controle', '4:espionne*', '4:cheval de troie', '4:logiciel espion|malveillant', '4:pc pirate|hack*|infecte*|verole*', '4:je suis pirate|hack*|infecte*', '4:on controle mon pc', '4:quelqu un controle|utilise|a acces mon pc', '7:souris bouge* toute_seule|seule', '4:analyse* de securite', '4:analyse* antivirus|virus', '3:infecte*', '3:intrusion*', '3:pc espionne*', '3:on m espionne', '3:acces a distance suspect', '3:fichier* crypte*|chiffre*', '3:rancon', '3:mineur crypto', '3:crack telecharge', '3:telecharge* un truc louche|bizarre|douteux', '3:fenetre* cmd|noire* s ouvre* toute* seule*', '3:scanner mon pc', '3:verifier si j ai un virus', '3:pc verole') },
     @{ Id = 'hacked'; Also = @('security'); Go = 'UI:hacked'; Pri = 91; Why = "Te guide pour reprendre un compte piraté et vérifier que le PC n'est plus surveillé."
-       P = @('6:hack*|pirat*|vol* & compte|discord|steam|insta*|snap*|facebook|gmail|epic|tiktok|twitch|mail', '4:utilise compte', '4:acces compte', '4:compte* pirate*|hack*|vole*|usurpe*', '4:pirate* mon compte', '4:hack* mon compte', '4:vole* mon compte', '4:on m a pirate|hack*|vole', '4:mot de passe change tout seul', '4:mot de passe a ete change', '4:connexion suspecte', '4:discord|insta|instagram|steam|fortnite|snap|snapchat|facebook|gmail|epic|tiktok|twitch pirate*|hack*|vole*', '4:phishing|hameconnage', '4:clique sur un lien', '3:arnaque*', '3:faux site', '3:donne mon mot de passe', '3:envoie des messages tout seul', '3:token vole*', '3:nitro gratuit', '3:on s est connecte* a mon compte', '3:recuperer mon compte') },
+       P = @('6:hack*|pirat*|vol* & compte|discord|steam|insta*|snap*|facebook|gmail|epic|tiktok|twitch|mail', '4:utilise compte', '4:acces compte', '4:compte* pirate*|hack*|vole*|usurpe*', '4:pirate* mon compte', '4:hack* mon compte', '4:vole* mon compte', '4:on m a pirate|hack*', '4:mot de passe change tout seul', '4:mot de passe a ete change', '4:connexion suspecte', '4:discord|insta|instagram|steam|fortnite|snap|snapchat|facebook|gmail|epic|tiktok|twitch pirate*|hack*|vole*', '4:phishing|hameconnage', '4:clique sur un lien', '3:arnaque*', '3:faux site', '3:donne mon mot de passe', '3:envoie des messages tout seul', '3:token vole*', '3:nitro gratuit', '3:on s est connecte* a mon compte', '3:recuperer mon compte') },
     @{ Id = 'adware'; Also = @('security', 'uninstall'); Go = 'UI:browser'; Pri = 73; N = 'pub|pubs|publicite*|popup*|adware*'; Why = "Vérifie les navigateurs : notifications piégées, extensions douteuses, page d'accueil détournée."
        P = @('4:moteur recherche change*|modifie*|remplace*', '4:chrome|edge|firefox|navigateur|google ouvre* site*|onglet*|page*|pub*', '4:ouvre* site*|onglet*|fenetre*|pub* seul|seuls|seule|seules', '4:navigateur rempli|plein pub*', '4:pop up*', '4:fausse* alerte*', '4:fenetre* pub*', '4:notification* chrome|edge|firefox|navigateur|bas_droite', '4:notification* virus|mcafee|norton', '4:votre pc est infecte', '4:moteur de recherche a change|change tout seul|modifie', '4:page d accueil a change|change|modifiee', '4:redirige*', '4:site* s ouvre* tout* seul*', '4:onglet* s ouvre* tout* seul*', '3:mcafee s affiche*|apparait*', '3:extension* bizarre*|louche*|inconnue*', '3:chrome|edge|firefox|navigateur {bug}', '3:chrome|edge|firefox|navigateur rame|lent', '3:yahoo a la place de google', '3:alerte* virus en bas', '3:plein de notification*') },
     @{ Id = 'quarantine'; Go = 'UI:quarantine'; Pri = 42; N = 'quarantaine'; Why = "Montre ce que l'antivirus a mis de côté."
@@ -7470,7 +7524,7 @@ $script:HelpIntents = @(
     @{ Id = 'diskspeed'; Also = @('chkdsk', 'freespace'); Go = 'A:Test-DiskSpeed'; Pri = 36; Why = "Mesure la vitesse réelle de chaque disque et la compare à ce qu'il doit donner."
        P = @('6:{disk} & mos', '5:mos & normal|lent|faible', '4:vitesse du|des|de mon disque*|ssd|nvme', '4:crystaldiskmark|crystal_disk', '4:ssd|disque|nvme lent|ralenti', '4:debit du|de mon ssd|disque', '4:tester mon|le ssd|disque|nvme', '3:ssd rapide', '3:vitesse ecriture|lecture', '3:ssd bride', '3:copie lente', '3:transfert lent', '3:copie* fichier* lent*') },
     @{ Id = 'temps'; Also = @('poweroff', 'stability'); Go = 'go:monitor'; Pri = 74; N = 'surchauff*|temperature*|ventilo*|ventilateur*|ventirad|degres'; Why = "Affiche les températures et la charge en direct, avec une alerte de surchauffe."
-       P = @('4:reacteur|turbine', '3:souffle*', '3:pc bruit*', '4:pc|processeur|carte_graphique chaud|chaude|bouillant*', '4:monte degres', '4:pc|processeur|carte chauffe*', '3:chauffe*', '4:trop chaud|chaude', '4:brulant*', '4:ventilateur* a fond|bruyant*|bruit|hurle*|souffle*', '4:ventilo* a fond|bruyant*|bruit|hurle*|souffle*', '4:pc fait du bruit', '4:pc bruyant', '3:avion', '3:decolle', '3:pate thermique', '3:watercooling {bug}', '3:combien de degres', '3:voir les fps', '3:afficher fps|temperature*', '3:overlay') },
+       P = @('4:reacteur|turbine', '3:souffle*', '3:pc bruit*', '4:pc|processeur|carte_graphique chaud|chaude|bouillant*', '4:monte degres', '4:pc|processeur|carte chauffe*', '3:chauffe*', '4:trop chaud|chaude', '4:brulant*', '4:ventilateur* a fond|bruyant*|bruit|hurle*|souffle*', '4:ventilo* a fond|bruyant*|bruit|hurle*|souffle*', '4:pc fait du bruit', '4:pc bruyant', '4:bruit* avion|reacteur', '3:decolle', '3:pate thermique', '3:watercooling {bug}', '3:combien de degres', '3:voir les fps', '3:afficher fps|temperature*', '3:overlay') },
     @{ Id = 'sysinfo'; Go = 'go:system'; Pri = 34; Why = "Montre ce qu'il y a dans ton PC : processeur, carte graphique, mémoire, disques, carte mère, BIOS."
        P = @('4:connaitre carte_graphique|processeur|config|ram|carte_mere|composant*', '4:quoi carte_graphique|processeur|ram|carte_mere|config', '4:comme processeur|carte_graphique|ram|carte_mere', '4:savoir processeur|carte_graphique|ram|config', '4:ma config', '4:quelle carte_graphique|carte_mere|ram|processeur|config', '4:quel processeur|pc|modele', '4:combien de ram|memoire|go', '4:caracteristique*', '4:composant*', '4:bios', '4:fiche technique', '3:modele carte_mere|carte_graphique|pc', '3:specs', '3:ma carte mere', '3:mettre a jour le bios', '3:version de windows', '3:ajouter de la ram', '3:compatible') },
     @{ Id = 'display'; Also = @('drivers'); Go = 'diag'; Pri = 63; Why = "Le diagnostic vérifie l'écran : fréquence bridée, résolution, pilote graphique, câble."
@@ -7478,11 +7532,11 @@ $script:HelpIntents = @(
     @{ Id = 'battery'; Go = 'diag'; Pri = 51; N = 'batterie*|autonomie'; Why = "Le diagnostic lit l'usure réelle de la batterie et ce qui la vide."
        P = @('4:tient {neg} la charge*', '4:se decharge', '4:pc|portable|batterie {neg} charge*', '3:chargeur', '3:batterie use*|morte|gonfle*', '3:tient heure|min|minutes') },
     @{ Id = 'clock'; Go = 'diag'; Pri = 33; Why = "Le diagnostic repère une horloge qui se dérègle (souvent la pile de la carte mère)."
-       P = @('5:date & 2000|2001|2002|2005|2008|2009|2010|2011|2012|2013|2014|2015|2016|2017|2018|2019|2020|1970|1980|1990', '4:perd heure', '4:{neg} bonne heure', '4:jamais|pas heure', '4:heure date deregle*', '4:heure fausse|mauvaise|deregle*|decale*', '4:l heure se deregle|change|remet', '4:date fausse|mauvaise|se remet', '4:horloge', '4:pile carte_mere|bios|cmos|cm', '4:pile', '3:mauvaise heure|date', '3:revient en 2000|2010|2015|2020', '3:bios se remet a zero', '3:reglage* bios saute*|perdu*') },
+       P = @('5:pc|horloge|heure|montre retarde*', '5:date & 2000|2001|2002|2005|2008|2009|2010|2011|2012|2013|2014|2015|2016|2017|2018|2019|2020|1970|1980|1990', '4:perd heure', '4:{neg} bonne heure', '4:jamais|pas heure', '4:heure date deregle*', '4:heure fausse|mauvaise|deregle*|decale*', '4:l heure se deregle|change|remet', '4:date fausse|mauvaise|se remet', '4:horloge', '4:pile carte_mere|bios|cmos|cm', '3:pile', '3:mauvaise heure|date', '3:revient en 2000|2010|2015|2020', '3:bios se remet a zero', '3:reglage* bios saute*|perdu*') },
     @{ Id = 'restore'; Go = 'A:New-RestorePoint'; Pri = 32; Why = "Crée un point de restauration pour pouvoir revenir en arrière."
        P = @('6:revenir|retour arriere & si|mal|probleme|plante|rate', '4:point de restauration', '4:restauration systeme|du systeme', '3:creer un point', '3:revenir a une date') },
     @{ Id = 'history'; Go = 'UI:history'; Pri = 31; Why = "Liste ce qu'AEROX a changé sur ce PC et permet d'annuler."
-       P = @('4:annuler ce qu aerox a fait|change', '4:revenir en arriere', '4:annuler les changement*|modification*|reglage*', '3:defaire', '3:historique', '3:remettre comme avant', '3:depuis qu aerox', '3:annuler') },
+       P = @('4:annuler ce qu aerox a fait|change', '4:revenir en arriere', '4:annuler les changement*|modification*|reglage*', '3:defaire', '3:historique', '3:remettre comme avant', '3:depuis qu aerox', '2:annuler') },
     @{ Id = 'remote'; Go = 'UI:remotehelp'; Pri = 29; Why = "Explique comment un proche peut t'aider à distance avec l'outil de Windows."
        P = @('4:aide a distance', '4:prendre la main', '4:assistance a distance', '3:quelqu un m aide|peut m aider', '3:controle a distance', '3:depanner un ami|pote a distance') },
     @{ Id = 'report'; Go = 'UI:report'; Pri = 28; Why = "Envoie un rapport au développeur."
@@ -8013,6 +8067,10 @@ function Get-PendingTestResults {
 # ---------------------------------------------------------------- Clé USB / disque externe illisible
 # Seuls les disques branchés en USB ou les cartes mémoire sont concernés : jamais un disque interne.
 $script:ExtBusRx = '(?i)^(USB|SD|MMC)$'
+# Disques internes qui ne sont pas celui de Windows : diagnostiqués et réparés sans risque (en ligne, lettre, lecture
+# seule, réparation des fichiers), JAMAIS formatés. Les disques mis en commun (espaces de stockage, réseau) restent exclus.
+$script:IntExcludeBusRx = '(?i)^(iSCSI|Fibre Channel|Storage Spaces|Spaces|Unknown)$'
+function Test-DataDiskBus([string]$Bus, [bool]$External) { if ($External) { return ($Bus -match $script:ExtBusRx) }; return ($Bus -notmatch $script:ExtBusRx -and $Bus -notmatch $script:IntExcludeBusRx) }
 # Ce qu'il y a vraiment au début d'une partition que Windows dit « illisible » : chiffrée, d'un autre système, vide, abîmée
 function ConvertTo-FsSignature([byte[]]$B) {
     if (-not $B -or $B.Length -lt 2048) { return '' }
@@ -8062,11 +8120,11 @@ function Test-ExtDiskFormattable($D) {
     }
     return $true
 }
-function Get-ExternalDisks {
+function Get-ExternalDisks([switch]$Internal) {
     $out = New-Object System.Collections.ArrayList
-    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { "$($_.BusType)" -match $script:ExtBusRx -and -not $_.IsBoot -and -not $_.IsSystem })) {
+    foreach ($d in @(Get-Disk -ErrorAction SilentlyContinue | Where-Object { -not $_.IsBoot -and -not $_.IsSystem -and ((Test-DataDiskBus "$($_.BusType)" $true) -or ($Internal -and (Test-DataDiskBus "$($_.BusType)" $false))) })) {
         $n = [int]$d.Number
-        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false }
+        $o = @{ Number = $n; Name = "$($d.FriendlyName)".Trim(); Size = [double]$d.Size; Bus = "$($d.BusType)"; Id = "$($d.UniqueId)"; IsOffline = [bool]$d.IsOffline; IsReadOnly = [bool]$d.IsReadOnly; Style = "$($d.PartitionStyle)"; Parts = @(); Blank = $false; Internal = -not ("$($d.BusType)" -match $script:ExtBusRx) }
         if (-not $o.IsOffline -and $o.Size -gt 0) {
             $parts = New-Object System.Collections.ArrayList
             foreach ($pt in @(Get-Partition -DiskNumber $n -ErrorAction SilentlyContinue | Where-Object { "$($_.Type)" -ne 'Reserved' })) {
@@ -8086,20 +8144,21 @@ function Get-ExternalDisks {
     return $out.ToArray()
 }
 # Garde-fou commun à toutes les réparations : c'est bien un disque externe, et bien celui affiché
-function Get-ExtDiskChecked([int]$Number, [string]$Id) {
+function Get-ExtDiskChecked([int]$Number, [string]$Id, [switch]$AllowInternal) {
     $d = Get-Disk -Number $Number -ErrorAction Stop
-    if ("$($d.BusType)" -notmatch $script:ExtBusRx) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    $okBus = (Test-DataDiskBus "$($d.BusType)" $true) -or ($AllowInternal -and (Test-DataDiskBus "$($d.BusType)" $false))
+    if (-not $okBus) { throw $(if ($AllowInternal) { "Ce type de disque n'est pas pris en charge : rien n'a été touché." } else { "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }) }
     if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
     if (-not $Id -or "$($d.UniqueId)" -ne $Id) { throw "Le disque n'est plus le même que celui affiché (débranché ?) : rien n'a été touché." }
     return $d
 }
 function Set-ExtDiskOnline([int]$Number, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     Set-Disk -Number $Number -IsOffline $false -ErrorAction Stop
     Log "   ✔ Disque remis en ligne : Windows peut de nouveau le lire."
 }
 function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     try { Set-Disk -Number $Number -IsReadOnly $false -ErrorAction Stop } catch {}
     if ((Get-Disk -Number $Number).IsReadOnly) {
         Add-TaskError -Title "La protection en écriture ne s'enlève pas" -Cause "Le disque refuse : soit il a un verrou physique (petit loquet sur le côté d'une carte SD ou d'un adaptateur), soit sa mémoire est en fin de vie et il s'est bloqué en lecture seule pour protéger ce qu'il contient." -Effect "Tu peux lire les fichiers mais plus rien écrire ni effacer." `
@@ -8107,7 +8166,7 @@ function Clear-ExtDiskReadOnly([int]$Number, [string]$Id) {
     } else { Log "   ✔ Protection en écriture enlevée : tu peux de nouveau écrire sur le disque." }
 }
 function Add-ExtDiskLetter([int]$Number, [int]$Part, [string]$Id) {
-    $null = Get-ExtDiskChecked $Number $Id
+    $null = Get-ExtDiskChecked $Number $Id -AllowInternal
     $pt = Get-Partition -DiskNumber $Number -PartitionNumber $Part -ErrorAction Stop
     try { Set-Partition -DiskNumber $Number -PartitionNumber $Part -NoDefaultDriveLetter $false -IsHidden $false -ErrorAction Stop } catch {}
     $pt | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction Stop
@@ -8118,7 +8177,8 @@ function Repair-ExternalVolume([string]$Letter) {
     if ($Letter -notmatch '^[A-Za-z]$') { throw "lettre de lecteur invalide" }
     $pt = Get-Partition -DriveLetter $Letter -ErrorAction Stop
     $d = Get-Disk -Number $pt.DiskNumber -ErrorAction Stop
-    if ("$($d.BusType)" -notmatch $script:ExtBusRx -or $d.IsBoot -or $d.IsSystem) { throw "Ce n'est pas une clé USB ni un disque externe : rien n'a été touché." }
+    if ($d.IsBoot -or $d.IsSystem) { throw "C'est le disque de Windows : rien n'a été touché." }
+    if (-not ((Test-DataDiskBus "$($d.BusType)" $true) -or (Test-DataDiskBus "$($d.BusType)" $false))) { throw "Ce type de disque n'est pas pris en charge : rien n'a été touché." }
     Step "Réparation des fichiers du disque ${Letter}:"
     Log "   Ne débranche pas le disque. Ferme les fenêtres de l'Explorateur ouvertes dessus."
     $ok = $false
@@ -8152,15 +8212,44 @@ function Format-ExternalDisk([int]$Number, [string]$Id) {
 }
 # Carte « Clé USB ou disque externe illisible » : tout ce qui est branché, ce qui cloche, et le bouton qui va avec
 function Get-ExternalDiskReport {
-    Step "Clés USB et disques externes : ce que Windows voit"
+    Step "Disques, clés USB et cartes mémoire : ce que Windows voit"
     $null = Invoke-Native 'pnputil.exe' @('/scan-devices') -Quiet
     Start-Sleep -Seconds 2
-    $disks = @(Get-ExternalDisks)
+    $all = @(Get-ExternalDisks -Internal)
+    $disks = @($all | Where-Object { -not $_.Internal })
+    $inner = @($all | Where-Object { $_.Internal })
+    # Disques internes (pas celui de Windows) : seulement s'ils ont un problème, et jamais de formatage
+    $innerBad = 0
+    foreach ($d in $inner) {
+        $nm = if ($d.Name) { $d.Name } else { "Disque $($d.Number)" }
+        $idL = ConvertTo-PsLiteral $d.Id
+        $pb = @(Get-ExtDiskProblems $d)
+        Log ("   {0} ({1}, interne){2}" -f $nm, (Format-Size $d.Size), $(if ($pb.Count) { '' } else { ' : lisible, rien d''anormal' }))
+        if (-not $pb.Count) { continue }
+        $innerBad++
+        foreach ($x in $pb) {
+            switch ($x.Kind) {
+                'offline' { Add-TaskError -Title "Le disque interne « $nm » est hors ligne" -Cause "Windows a mis ce disque hors ligne (souvent après un changement de carte mère, un clonage ou une réinstallation)." -Effect "Il n'apparaît pas dans l'Explorateur, mais ce qui est dessus n'est pas perdu." -FixLabel "Le remettre en ligne" -FixAction "Set-ExtDiskOnline $($d.Number) $idL" }
+                'readonly' { Add-TaskError -Title "Le disque interne « $nm » est en lecture seule" -Cause "Le disque est marqué « lecture seule » : par un réglage de Windows, ou parce qu'il fatigue (certains SSD se bloquent en lecture seule en fin de vie)." -Effect "Impossible d'y écrire ou d'y installer quelque chose." -FixLabel "Enlever la lecture seule" -FixAction "Clear-ExtDiskReadOnly $($d.Number) $idL" -Steps @("Clique sur le bouton.", "Si ça revient tout seul : copie tes fichiers ailleurs tout de suite et regarde la santé du disque dans le diagnostic.") }
+                'noletter' { Add-TaskError -Title "Le disque interne « $nm » n'a pas de lettre" -Cause "Le disque est sain ($($x.Fs)) mais Windows ne lui a pas donné de lettre (D:, E:…), souvent après une réinstallation de Windows." -Effect "Il n'apparaît pas dans l'Explorateur alors que tes fichiers sont dessus." -FixLabel "Lui donner une lettre" -FixAction "Add-ExtDiskLetter $($d.Number) $($x.Part) $idL" }
+                'dirty' { Add-TaskError -Title "Le disque interne « $nm » ($($x.Letter):) a des erreurs de fichiers" -Cause "Coupure de courant ou arrêt forcé pendant une écriture : l'index des fichiers est abîmé." -Effect "Fichiers illisibles, dossiers vides, copies qui échouent." -FixLabel "Réparer (tes fichiers restent)" -FixAction "Repair-ExternalVolume '$($x.Letter)'" -Confirm "Windows va vérifier et réparer le disque $($x.Letter): sans effacer tes fichiers.`n`nFerme ce qui utilise ce disque (jeux, dossiers ouverts). Continuer ?" }
+                'bitlocker' { Log "     • Partition protégée par BitLocker : elle n'est pas en panne. Ouvre-la dans l'Explorateur et entre son mot de passe ou sa clé de récupération (compte Microsoft > Appareils > Clés de récupération)." }
+                'foreign' { Log ("     • Partition {0} : formatée pour {1}, Windows ne sait pas la lire. Elle n'est pas en panne (double démarrage ?) : AEROX n'y touche pas." -f $x.Part, $(if ($x.Sig -eq 'mac') { 'Mac' } else { 'Linux' })) }
+                default {
+                    if ($x.Kind -eq 'empty' -and $x.Blank) { Log "     • Disque complètement vierge : pour qu'il apparaisse en D:, utilise « PC neuf ou Windows réinstallé » (Accueil), qui le prépare sans risque."; continue }
+                    $t = switch ($x.Kind) { 'empty' { "Le disque interne « $nm » n'a plus de partition" } 'unformatted' { "Une partition du disque interne « $nm » n'est pas formatée" } 'damaged' { "Le disque interne « $nm » : système de fichiers abîmé" } default { "Le disque interne « $nm » est illisible" } }
+                    Add-TaskError -Title $t -Cause "Windows ne peut plus lire la liste des fichiers : coupure pendant une écriture, disque qui fatigue, ou partition effacée par erreur." -Effect "Le disque n'apparaît pas, ou Windows propose de le formater. Ne formate pas : ça effacerait ce qui est encore récupérable." `
+                        -Steps @("Ne formate pas et n'écris rien dessus.", "Récupère d'abord tes fichiers : carte « Récupérer des fichiers effacés » (elle lit le disque sans rien écrire), ou un service de récupération si c'est très important.", "Regarde la santé du disque dans le diagnostic : un disque qui fatigue se remplace.", "AEROX ne formate jamais un disque interne.")
+                }
+            }
+        }
+    }
     if (-not $disks.Count) {
-        Log "   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment."
+        if ($innerBad) { return }
+        Log ("   • Windows ne voit aucune clé USB, carte mémoire ni disque externe en ce moment{0}." -f $(if ($inner.Count) { ", et tes disques internes sont lisibles" } else { '' }))
         Add-TaskError -Title "Aucun disque externe n'est vu par Windows" -Cause "Si ta clé ou ton disque est branché, il ne répond pas du tout : le port USB, le câble, l'alimentation du disque, ou le disque lui-même." -Effect "Rien n'apparaît dans l'Explorateur." `
             -FixLabel "Relancer les ports USB" -FixAction 'Repair-Usb' `
-            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.")
+            -Steps @("Branche-le sur un autre port, directement sur le PC (à l'arrière de la tour, pas sur un hub ni en façade).", "Disque dur externe : change de câble ; s'il a une prise secteur, vérifie qu'elle est branchée. S'il fait « clic clic », il est en panne.", "Teste-le sur un autre PC : s'il n'est vu nulle part, il est mort.", "Disque dur ou SSD INTERNE qui a disparu : PC éteint et débranché, vérifie que ses deux câbles (données et alimentation) sont bien enfoncés, puis regarde s'il apparaît dans le BIOS. S'il n'y est pas, il est en panne ou mal branché.")
         return
     }
     $okAll = $true
@@ -8331,11 +8420,19 @@ function Get-NewPcPlan {
     } catch {}
     # 2. Mises à jour Windows
     Log "   • Recherche des mises à jour de Windows (jusqu'à 2 minutes)…"
-    try {
+    # La recherche tourne à part et s'arrête d'attendre au bout de 2 minutes : sur un Windows tout neuf, Windows Update
+    # peut mettre 5 à 10 minutes à répondre la première fois, la liste ne doit pas rester bloquée pour ça.
+    $wu = Invoke-WithTimeout {
         $session = New-Object -ComObject Microsoft.Update.Session; $session.ClientApplicationID = 'AEROX PC Care'
         $res = $session.CreateUpdateSearcher().Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
         $n = 0; foreach ($u in $res.Updates) { if ("$($u.Title)" -notmatch '(?i)KB2267602|Security Intelligence|veille de sécurité') { $n++ } }
-        if ($n) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
+        $n
+    } 120
+    if (-not $wu.Done -and -not $sync.Cancel) { & $add 'wupdate' 'info' "Mises à jour de Windows : Windows Update est lent à répondre" "Normal sur un Windows tout neuf : il prépare encore sa liste. Lance la recherche, elle continuera le temps qu'il faut." 'Chercher' $null }
+    try {
+        if (-not $wu.Done) { }
+        elseif (-not @($wu.Out).Count) { throw "pas de réponse" }
+        elseif (($n = [int]@($wu.Out)[-1])) { & $add 'wupdate' 'todo' "$n mise(s) à jour de Windows à installer" "Un Windows tout juste installé a toujours du retard : sécurité, corrections, pilotes de base." 'Installer' $null }
         else { & $add 'wupdate' 'ok' "Windows est à jour" "Aucune mise à jour en attente." '' $null }
     } catch { & $add 'wupdate' 'info' "Mises à jour de Windows : pas pu vérifier" "Windows Update n'a pas répondu. Regarde dans l'onglet Mises à jour." '' $null }
     if ($sync.Cancel) { return }

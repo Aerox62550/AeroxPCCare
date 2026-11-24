@@ -129,6 +129,29 @@ function Invoke-Smoke {
         try { $script:Issues = New-Object System.Collections.ArrayList; Test-StartupRepair; foreach ($x in $script:Issues) { Write-Host ("        {0} | {1}" -f $x.Title, $x.Detail) } }
         finally { $script:Issues = $keep }
     }
+    Smoke 'Pings rapides : réponse lue, ping perdu abandonné au bout d une seconde' {
+        $r = @(Send-Pings '127.0.0.1' 3 1000)
+        if ($r.Count -ne 3) { throw "ping local : $($r.Count) réponse(s) sur 3" }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = @(Send-Pings '192.0.2.1' 2 500)
+        if ($r.Count -or $sw.Elapsed.TotalSeconds -gt 3) { throw ("adresse injoignable : {0} réponse(s) en {1:N1} s" -f $r.Count, $sw.Elapsed.TotalSeconds) }
+        $n = Get-NetworkStatus
+        Write-Host ("        réseau : box {0}, Internet {1} ({2} ms), DNS {3}" -f $n.GwOk, $n.Internet, $n.Avg, $n.Dns)
+    }
+    Smoke 'Attente limitée (Windows Update lent) et anciens pilotes gardés après un écran bleu' {
+        $r = Invoke-WithTimeout { 40 + 2 } 10
+        if (-not $r.Done -or @($r.Out)[-1] -ne 42) { throw "résultat pas rendu" }
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $r = Invoke-WithTimeout { Start-Sleep -Seconds 30; 'trop tard' } 2
+        if ($r.Done -or $sw.Elapsed.TotalSeconds -gt 6) { throw ("l'attente n'a pas été coupée ({0:N1} s)" -f $sw.Elapsed.TotalSeconds) }
+        $keep = $script:RecentBsod; $keepAt = $script:RecentBsodAt
+        try {
+            $script:RecentBsod = $null
+            $v = Test-RecentBsod
+            Write-Host "        écran bleu ces 30 derniers jours sur ce PC : $v"
+            if ($v -isnot [bool]) { throw "réponse pas booléenne" }
+        } finally { $script:RecentBsod = $keep; $script:RecentBsodAt = $keepAt }
+    }
     # ---------------- « Quel est ton problème ? » : du texte libre vers la bonne carte
     Smoke 'Quel est ton problème : les 1 400 phrases de test' {
         $file = 'C:\aerox\aide-phrases.txt'
@@ -160,6 +183,8 @@ function Invoke-Smoke {
         Is 'faute de frappe' (First 'ecran blue') 'bsod'
         Is 'faute de frappe 2' (First 'bleutooth marche plus') 'bluetooth'
         Is 'lettres en trop' (First 'mon pc est lennnnnt') 'slow'
+        Is 'mot courant jamais « corrigé » (regarde ≠ retarde)' (First 'mon pc ralentit quand je regarde une video') 'slow'
+        Is 'mode avion' (First 'le mode avion reste active') 'net'
         Is 'accents et majuscules' (First 'MON PC N''A PLUS DE SON !!!') 'sound'
         Is 'sujet cité sans problème' (First 'mon son marche mais pas le micro') 'micro'
         Is '« son » possessif' (First 'il a reset son pc') 'newpc'
@@ -183,7 +208,7 @@ function Invoke-Smoke {
             if (-not $it.Why) { throw "sujet sans explication : $($it.Id)" }
         }
         # Aucune expression ne se réduit à un mot passe-partout (elle sortirait pour n'importe quelle phrase)
-        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?|dessus|dessous|dedans|chose\*?|truc\*?|besoin|savoir|veux|voir|quoi|comment|faire|fait|tout|aide)$'
+        $generic = '^(pc|windows|fichier\*?|photo\*?|logiciel|application|jeu|probleme|disque|ssd|ecran|video\*?|document\*?|donnee\*?|dossier\*?|marche\*?|pas|plus|mise|jour|carte|internet|compte\*?|dessus|dessous|dedans|chose\*?|truc\*?|besoin|savoir|veux|voir|quoi|comment|faire|fait|tout|aide|erreur\*?|expres|seul\*?|direct|vite|bien|mal|rien|souvent)$'
         foreach ($it in $script:HelpIntents) {
             foreach ($p in @($it.P)) {
                 $src = $p.Substring($p.IndexOf(':') + 1); if ($src -match ' & ') { continue }
@@ -220,6 +245,15 @@ function Invoke-Smoke {
         } finally { if ($bak) { [IO.File]::WriteAllBytes($p, $bak) } else { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }; $script:HelpLearned = $null }
         # Chaque carte de la liste « Choisir moi-même » se lance par une commande connue
         foreach ($c in @(Get-HelpCardList)) { $tg = Get-HelpCardTag $c.Def; if (-not $tg.Kind -or -not $c.Def.T) { throw "carte sans commande : $($c.Def.T)" } }
+    }
+    Smoke 'Envoi d une phrase : refusé sans accord, rien ne part' {
+        $keep = $script:HelpSent; $sent = $false
+        try {
+            # Les tests répondent « Non » aux confirmations : rien ne doit être envoyé ni retenu comme envoyé
+            $script:HelpSent = @{}
+            Send-HelpPhrase 'mon truc bizarre fait des siennes' 'A:Repair-Bluetooth'
+            if ($script:HelpSent.Count) { throw "phrase marquée envoyée sans accord" }
+        } finally { $script:HelpSent = $keep }
     }
     Smoke 'Fenêtre : choisir le bon dépannage' {
         Show-HelpBrowseDialog 'mon disque fait des trucs bizarres'
@@ -559,6 +593,58 @@ function Invoke-Smoke {
         Is 'jamais : BitLocker' (Test-ExtDiskFormattable (D @{ Parts = @(@{ Number = 1; Fs = ''; Sig = 'bitlocker' }) })) $false
         Is 'jamais : hors ligne' (Test-ExtDiskFormattable (D @{ IsOffline = $true })) $false
         Is 'jamais : lecteur sans carte' (Test-ExtDiskFormattable (D @{ Size = 0 })) $false
+    }
+    Smoke 'Disque interne (pas celui de Windows) : sans lettre, hors ligne, réparé ; jamais formaté' {
+        $vhd = 'C:\aerox\test-interne.vhd'
+        [void](New-Item -ItemType Directory -Path 'C:\aerox' -Force)
+        try {
+            if (Test-Path -LiteralPath $vhd) { try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force }
+            $sc = Join-Path $env:TEMP 'aerox-vdisk-int.txt'
+            Set-Content -LiteralPath $sc -Value @("create vdisk file=`"$vhd`" maximum=10240 type=expandable", 'attach vdisk') -Encoding ASCII
+            $null = & diskpart.exe /s $sc
+            $n = [int](Get-DiskImage -ImagePath $vhd -ErrorAction Stop).Number
+            if ((Get-Disk -Number $n).IsOffline) { Set-Disk -Number $n -IsOffline $false }; if ((Get-Disk -Number $n).IsReadOnly) { Set-Disk -Number $n -IsReadOnly $false }
+            $id = "$((Get-Disk -Number $n).UniqueId)"
+            Initialize-EmptyDisk $n $id
+            $pt = @(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0]
+            [IO.File]::WriteAllText("$($pt.DriveLetter):\a-garder.txt", 'mes fichiers')
+            if (@(Get-ExternalDisks | Where-Object { $_.Number -eq $n }).Count) { throw "disque interne listé sans -Internal" }
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            if (-not $me -or -not $me.Internal) { throw "disque interne non listé avec -Internal (bus $((Get-Disk -Number $n).BusType))" }
+            if (@(Get-ExtDiskProblems $me).Count) { throw "disque sain vu en panne : $(@(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind }) -join ', ')" }
+            # Sans lettre (comme après une réinstallation)
+            $letter = "$($pt.DriveLetter)"
+            Remove-PartitionAccessPath -DiskNumber $n -PartitionNumber $pt.PartitionNumber -AccessPath "${letter}:\" -ErrorAction Stop
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            $k = @(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind })
+            if ($k -notcontains 'noletter') { throw "disque sans lettre pas vu : $($k -join ', ')" }
+            $sync.Errors.Clear(); Get-ExternalDiskReport
+            $e = @($sync.Errors | Where-Object { $_.Title -match "interne" -and $_.Title -match 'lettre' })
+            if (-not $e.Count) { throw "le rapport ne propose pas de donner une lettre : $(@($sync.Errors | ForEach-Object { $_.Title }) -join ' | ')" }
+            Write-Host ("        rapport : {0} → bouton « {1} »" -f $e[0].Title, $e[0].FixLabel)
+            if (@($sync.Errors | Where-Object { "$($_.FixAction)" -like 'Format-*' }).Count) { throw "formatage proposé pour un disque interne" }
+            Add-ExtDiskLetter $n $pt.PartitionNumber $id
+            $nl = "$((Get-Partition -DiskNumber $n -PartitionNumber $pt.PartitionNumber).DriveLetter)"
+            if ($nl -notmatch '^[A-Z]$' -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "lettre pas rendue ou fichier perdu" }
+            # Hors ligne
+            Set-Disk -Number $n -IsOffline $true
+            $me = @(Get-ExternalDisks -Internal | Where-Object { $_.Number -eq $n })[0]
+            if (@(Get-ExtDiskProblems $me | ForEach-Object { $_.Kind }) -notcontains 'offline') { throw "disque hors ligne pas vu" }
+            Set-ExtDiskOnline $n $id
+            if ((Get-Disk -Number $n).IsOffline) { throw "pas remis en ligne" }
+            Start-Sleep -Seconds 2
+            # Réparation des fichiers (sans rien effacer)
+            $nl = "$(@(Get-Partition -DiskNumber $n | Where-Object { $_.DriveLetter })[0].DriveLetter)"
+            $sync.Errors.Clear(); Repair-ExternalVolume $nl
+            if ($sync.Errors.Count -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "réparation échouée ou fichier perdu" }
+            # Jamais de formatage d'un disque interne, même illisible
+            $before = @(Get-Partition -DiskNumber $n).Count
+            $refused = $false; try { Format-ExternalDisk $n $id } catch { $refused = $true }
+            if (-not $refused -or @(Get-Partition -DiskNumber $n).Count -ne $before -or -not (Test-Path -LiteralPath "${nl}:\a-garder.txt")) { throw "UN DISQUE INTERNE A PU ÊTRE FORMATÉ" }
+        } finally {
+            try { Dismount-DiskImage -ImagePath $vhd -ErrorAction SilentlyContinue | Out-Null } catch {}; Remove-Item -LiteralPath $vhd -Force -ErrorAction SilentlyContinue
+            $sync.Errors.Clear(); $sync.Progress = 0
+        }
     }
     Smoke 'Disque externe : un disque interne est toujours refusé' {
         $sys = @(Get-Disk | Where-Object { $_.IsBoot -or $_.IsSystem }) | Select-Object -First 1
@@ -1575,6 +1661,17 @@ function Invoke-Smoke {
     Smoke 'Infos système' { Get-SystemInfo }
     Smoke-Page 'system'
     Smoke 'Diagnostic complet' { Invoke-Diagnostic; $script:Diag = $sync.Diag; $script:OpenSteps = @{}; Update-Bilan }
+    Smoke 'Diagnostic : temps de chaque étape' {
+        foreach ($k in @($sync.DiagTimes.Keys | Sort-Object { - $sync.DiagTimes[$_] })) { Write-Host ("        temps {0,-14} {1,5:N1} s" -f $k, $sync.DiagTimes[$k]) }
+        # Détail : heure d'entrée dans chaque vérification « Test-… », pendant un deuxième diagnostic
+        $marks = New-Object System.Collections.ArrayList
+        $bp = Set-PSBreakpoint -Command 'Test-*' -Action { [void]$marks.Add(@{ T = [Diagnostics.Stopwatch]::GetTimestamp(); N = "$($_.InvocationInfo.MyCommand.Name)" }) }
+        try { Invoke-Diagnostic } finally { Remove-PSBreakpoint -Breakpoint $bp }
+        $f = [double][Diagnostics.Stopwatch]::Frequency; $end = [Diagnostics.Stopwatch]::GetTimestamp()
+        $sum = @{}
+        for ($i = 0; $i -lt $marks.Count; $i++) { $next = if ($i + 1 -lt $marks.Count) { $marks[$i + 1].T } else { $end }; $n = $marks[$i].N; $sum[$n] = [double]$sum[$n] + ($next - $marks[$i].T) / $f }
+        foreach ($k in @($sum.Keys | Sort-Object { - $sum[$_] } | Select-Object -First 18)) { Write-Host ("        détail {0,-32} {1,5:N1} s" -f $k, $sum[$k]) }
+    }
     if ($script:Diag) { foreach ($i in $script:Diag.Issues) { Write-Host ("        problème : [{0}] {1} — {2}" -f $i.Cat, $i.Title, $i.Detail) } }
     Smoke-Page 'diag'
     Smoke-Page 'home'

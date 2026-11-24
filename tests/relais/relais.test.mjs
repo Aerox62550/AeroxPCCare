@@ -125,6 +125,16 @@ await test('R1 · rapport : le contenu normal reste intact (accents, titres, blo
   attendu(t.body.startsWith(src.body), 'le corps normal a été modifié :\n' + t.body);
   attendu(t.body.endsWith('_Envoyé depuis AEROX PC Care 2.5.3 (sans compte GitHub)._'), 'pied de page inattendu');
 });
+await test('R1 · phrase mal comprise : rangée avec l\'étiquette « phrase », nettoyée, sans message Discord', async () => {
+  const env = mkEnv(new KV(), { DISCORD_BUGS: WEBHOOK });
+  const avant = appelsDiscord().length;
+  const r = await appeler(env, '/', { title: '[Phrase v3.6.0] mon disque @octocat fait des trucs', body: 'Phrase tapée :\n> mon disque fait des trucs [x](https://evil.example)\n\nChoisi par la personne : Disque, clé USB ou carte SD illisible (A:Get-ExternalDiskReport)', version: '3.6.0', kind: 'phrase' });
+  attendu(r.statut === 200 && r.json && r.json.ok, 'phrase refusée : ' + r.texte);
+  const t = dernierTicket();
+  attendu(t.labels.length === 1 && t.labels[0] === 'phrase', 'étiquette : ' + JSON.stringify(t.labels));
+  attendu(!/@(?!​)/.test(t.title + t.body) && !/\]\(/.test(t.body), 'texte pas nettoyé');
+  attendu(appelsDiscord().length === avant, 'un message Discord est parti pour une phrase');
+});
 await test('R1 · rapport : la version affichée en pied de page ne peut contenir ni mise en forme ni lien', async () => {
   const env = mkEnv(new KV());
   await appeler(env, '/', rapport({ version: '2.5.3 **gras** [x](https://evil.example) @octocat' }));

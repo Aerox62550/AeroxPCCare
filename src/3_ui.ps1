@@ -919,7 +919,7 @@ $PageDefs = [ordered]@{
     @{ G = "Dépannage rapide"; Tile = $true; S = "Relance l'Explorateur en quelques secondes, sans redémarrer."; T = "Bureau ou barre des tâches figés"; B = "Relancer"; A = "Restart-Shell"; D = "Le menu Démarrer ne s'ouvre plus, la barre des tâches ne répond plus, les icônes ont disparu ? Relance l'Explorateur Windows en quelques secondes, sans redémarrer le PC."; C = "Le bureau et la barre des tâches vont disparaître 2 ou 3 secondes, et les fenêtres de dossiers ouvertes se fermeront. Tes logiciels et ton travail en cours ne sont pas touchés.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Écran noir, plantages : trouve le coupable et répare, sans réinstaller."; T = "Discord bugue ou ne s'installe plus"; B = "Réparer"; A = "Repair-Discord"; D = "Écran noir ou gris, Discord qui se coupe d'un coup, chargement sans fin ? Ferme Discord, vide ses caches (tu restes connecté), coupe son accélération matérielle (cause n° 1 de l'écran noir), retire un mode de compatibilité forcé, lit ses plantages notés par Windows pour trouver le coupable (pilote graphique, overlay, logiciel audio, antivirus…) et remet à neuf ses composants abîmés, puis le relance. Réinstallation propre proposée seulement en dernier recours."; C = "Discord va être fermé, ses caches vidés et son accélération matérielle coupée, ses plantages analysés, ses composants remis à neuf s'ils sont abîmés, puis il sera relancé. Tu restes connecté, tes réglages et tes serveurs sont gardés.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Quel pilote ou quel composant fait planter le PC, et quoi faire."; T = "Écran bleu"; B = "Analyser"; A = "Get-BsodReport"; D = "Lit tout ce que Windows a noté sur les écrans bleus des 90 derniers jours : le code expliqué en clair, le pilote en cause, dans quelle situation c'est arrivé (démarrage, sortie de veille, en pleine utilisation) et ce qui a été installé juste avant le premier. Rien n'est modifié." },
-    @{ G = "Dépannage rapide"; Tile = $true; S = "« Il faut formater le disque », pas de lettre, protégé en écriture."; T = "Clé USB ou disque externe illisible"; B = "Analyser"; A = "Get-ExternalDiskReport"; D = "Regarde chaque clé USB, carte mémoire et disque externe branché : hors ligne, sans lettre, protégé en écriture, fichiers abîmés (réparés sans rien effacer), formaté pour Mac ou Linux, protégé par BitLocker, ou vraiment illisible. La remise à neuf (qui efface tout) n'est proposée que si Windows ne peut rien lire dessus, et jamais sans ta confirmation." },
+    @{ G = "Dépannage rapide"; Tile = $true; S = "Disque qui n'apparaît plus, « il faut formater », pas de lettre, protégé en écriture."; T = "Disque, clé USB ou carte SD illisible"; B = "Analyser"; A = "Get-ExternalDiskReport"; D = "Regarde chaque clé USB, carte mémoire, disque externe, et chaque disque interne qui n'est pas celui de Windows : hors ligne, sans lettre, protégé en écriture, fichiers abîmés (réparés sans rien effacer), formaté pour Mac ou Linux, protégé par BitLocker, ou vraiment illisible. La remise à neuf (qui efface tout) n'est proposée que pour une clé ou un disque externe que Windows ne peut pas lire du tout, jamais sans ta confirmation, et jamais pour un disque interne." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Manette, casque ou souris qui ne se connecte plus."; T = "Le Bluetooth ne marche pas"; B = "Réparer"; A = "Repair-Bluetooth"; D = "Réactive les services et la puce Bluetooth s'ils sont désactivés, vérifie son pilote, relance la puce (comme l'éteindre et la rallumer) et t'explique comment réassocier un appareil."; C = "La puce Bluetooth va être relancée : une souris ou un clavier Bluetooth se déconnecte quelques secondes puis revient.`n`nContinuer ?" },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Clé, manette, disque ou souris USB que Windows ne voit pas."; T = "Périphérique USB non reconnu"; B = "Réparer"; A = "Repair-Usb"; D = "Relance la recherche des périphériques, réactive ceux qui sont désactivés, relance ceux qui sont en erreur et te dit si c'est le pilote, le câble ou le port." },
     @{ G = "Dépannage rapide"; Tile = $true; S = "Composants manquants, anti-triche coupé, plantages : trouve pourquoi."; T = "Un jeu ne se lance pas"; B = "Vérifier"; A = "Repair-GameLaunch"; D = "Vérifie les composants que les jeux réclament (Visual C++, DirectX : les erreurs « VCRUNTIME140.dll / d3dx9_43.dll introuvable »), les anti-triche désactivés, et lit les plantages notés par Windows pour nommer le coupable (pilote graphique, overlay, logiciel audio, antivirus)." },
@@ -1085,6 +1085,29 @@ function New-HelpResultRow($R, [bool]$First) {
     Add-Child $dp $tx; $line.Child = $dp
     return $line
 }
+# Envoie une phrase mal comprise au développeur, pour qu'elle le soit pour tout le monde dans une prochaine version.
+# La personne voit exactement ce qui part : la phrase (gros mots masqués), ce qu'AEROX a proposé et ce qu'elle a choisi.
+function Send-HelpPhrase([string]$Query, [string]$Go) {
+    $q = Hide-Profanity "$Query".Trim()
+    if (-not $q) { return }
+    if (-not $script:HelpSent) { $script:HelpSent = @{} }
+    if ($script:HelpSent.ContainsKey("$q|$Go")) { Write-UiLog "Cette phrase a déjà été envoyée. Merci !"; return }
+    $proposed = @(); try { $proposed = @(Find-HelpIntents $Query | ForEach-Object { $t = Get-HelpTarget $_; if ($t) { $t.Title } }) } catch {}
+    $chosen = ''; if ($Go) { $c = @(Get-HelpCardList | Where-Object { (Get-HelpCardGo $_.Def) -eq $Go }) | Select-Object -First 1; if ($c) { $chosen = "$($c.Def.T)" } }
+    $body = "Phrase tapée dans « Quel est ton problème ? » :`n> $q`n`nProposé par AEROX : " + $(if ($proposed.Count) { $proposed -join ' · ' } else { '(rien reconnu)' }) + "`nChoisi par la personne : " + $(if ($chosen) { "$chosen ($Go)" } else { '(pas de choix)' })
+    if (-not (Confirm-Box ("Envoyer cette phrase au développeur pour qu'AEROX la comprenne dans une prochaine version ?`n`n« $q »" + $(if ($chosen) { "`n→ $chosen" } else { '' }) + "`n`nRien d'autre n'est envoyé : ni ton nom, ni ton PC, ni tes fichiers."))) { return }
+    $title = "[Phrase v$AppVersion] " + $q
+    if ($title.Length -gt 100) { $title = $title.Substring(0, 97) + '...' }
+    $bytes = [Text.Encoding]::UTF8.GetBytes((@{ title = $title; body = $body; version = $AppVersion; kind = 'phrase' } | ConvertTo-Json -Compress))
+    $script:HelpSent["$q|$Go"] = $true
+    try {
+        Send-RelayAsync $sync.BugRelay $bytes {
+            param($res)
+            if ($res.Ok) { Write-UiLog "✔ Phrase envoyée au développeur. Merci, elle sera comprise dans une prochaine version !" }
+            else { Write-UiLog "La phrase n'a pas pu être envoyée ($($res.Err)). Réessaie plus tard." }
+        }
+    } catch { Write-UiLog "La phrase n'a pas pu être envoyée. Réessaie plus tard." }
+}
 # « Ce n'est pas ça ? » : toutes les cartes, avec un filtre. Le choix est retenu pour cette phrase sur ce PC.
 function Show-HelpBrowseDialog([string]$Query) {
     $w = New-Dialog "$AppName : choisir le bon dépannage" 720
@@ -1129,7 +1152,7 @@ function Show-HelpBrowseDialog([string]$Query) {
     $bar = New-Object System.Windows.Controls.DockPanel; $bar.Margin = Th 24 10 24 18
     $bClose = New-DlgButton 'Fermer' 'TextBtn'; $bClose.Add_Click({ $script:HbWin.Close() }); [System.Windows.Controls.DockPanel]::SetDock($bClose, 'Right'); Add-Child $bar $bClose
     if ($Query) {
-        $bRep = New-DlgButton 'Envoyer ma phrase au développeur' 'TextBtn'; $bRep.HorizontalAlignment = 'Left'; $bRep.ToolTip = "Ouvre le rapport de bug avec ta phrase : tu vois tout avant d'envoyer, pour qu'elle soit comprise dans une prochaine version."
+        $bRep = New-DlgButton 'Envoyer ma phrase au développeur' 'TextBtn'; $bRep.HorizontalAlignment = 'Left'; $bRep.ToolTip = "Envoie seulement ta phrase (tu la vois avant), pour qu'elle soit comprise dans une prochaine version."
         $bRep.Add_Click({ $script:HbPick = 'report'; $script:HbWin.Close() }); Add-Child $bar $bRep
     }
     $g = New-Object System.Windows.Controls.Grid
@@ -1140,9 +1163,14 @@ function Show-HelpBrowseDialog([string]$Query) {
     $w.Add_ContentRendered({ try { $script:HbFilter.Focus() | Out-Null } catch {} })
     [void]$w.ShowDialog()
     $pick = $script:HbPick
-    if ($pick -eq 'report') { Show-BugReport ("« Quel est ton problème ? » n'a pas trouvé le bon dépannage pour cette phrase : « $Query ». Le bon dépannage serait : ") ; return }
+    if ($pick -eq 'report') { Send-HelpPhrase $Query ''; return }
     if (-not $pick) { return }
-    if ($Query) { Add-HelpLearned $Query (Get-HelpCardGo $pick) }
+    if ($Query) {
+        Add-HelpLearned $Query (Get-HelpCardGo $pick)
+        # La recherche n'avait pas mis ce dépannage en premier : proposer d'envoyer la phrase pour que tout le monde en profite
+        $first = @(try { Find-HelpIntents $Query } catch { }) | Select-Object -First 1
+        if (-not $first -or $first.Go -ne (Get-HelpCardGo $pick) -or $first.Learned) { Send-HelpPhrase $Query (Get-HelpCardGo $pick) }
+    }
     if ($script:Job -and (Get-HelpCardTag $pick).Busy) { Write-UiLog "Une tâche est déjà en cours : attends qu'elle se termine."; return }
     Invoke-UiCommand (Get-HelpCardTag $pick)
 }
@@ -3066,6 +3094,11 @@ function Show-ReviewDialog {
 # ---------------------------------------------------------------- « Quoi de neuf » après une mise à jour
 # Une entrée par version, en mots simples (la plus récente en premier)
 $script:WhatsNew = [ordered]@{
+    '3.6.0' = @("« Disque, clé USB ou carte SD illisible » (onglet Réparation) regarde aussi les disques internes qui ne sont pas celui de Windows : disque hors ligne, sans lettre après une réinstallation, en lecture seule, fichiers abîmés. Il ne formate jamais un disque interne.",
+        "Le diagnostic complet est environ 3 fois plus rapide, surtout sur une connexion qui perd des paquets.",
+        "Après un écran bleu, le nettoyage garde la version précédente de tes pilotes, pour pouvoir revenir en arrière.",
+        "« PC neuf » ne reste plus bloqué quand Windows Update met du temps à répondre.",
+        "« Quel est ton problème ? » comprend encore plus de façons de dire les choses. Si une phrase n'est pas comprise, « Ce n'est pas ça ? » permet de l'envoyer en un clic (tu vois le texte avant) pour qu'elle le soit dans une prochaine version.")
     '3.5.1' = @("« Quel est ton problème ? » comprend beaucoup plus de phrases, surtout les longues (disque qui n'est plus reconnu, fichiers à récupérer…), propose jusqu'à 5 dépannages et ceux qui vont avec (« Ça peut aussi t'aider »).",
         "Quand il ne comprend pas, il cherche quand même dans toutes les cartes. Et « Ce n'est pas ça ? Choisir moi-même » ouvre la liste de tous les dépannages : ton choix est retenu sur ton PC pour les phrases proches.")
     '3.5.0' = @("Nouveau : « Quel est ton problème ? » sur l'accueil. Écris ce qui ne va pas avec tes mots (« mon pc rame », « plus de son », « écran bleu en jeu », « clé USB illisible »), fautes de frappe comprises, et AEROX ouvre le bon dépannage. Tout se passe sur ton PC, rien n'est envoyé.",

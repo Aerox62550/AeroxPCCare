@@ -117,7 +117,10 @@ jobs:
           $fin = if ($m.Success) { $log.Substring($m.Index) } else { '(pas de resume : le test s''est arrete avant la fin)' }
           $ko = (($out -split "`r?`n") | Where-Object { $_ -match '\[.CHEC\]|^!!!' }) -join "`n"
           Send-Note 'Resume' ("Code de sortie : $code`n$ko`n$fin") 3500 1
-          Send-Note 'Test' ($out + "`nCode de sortie : $code") 3000 9
+          # Temps du diagnostic par etape, dans sa propre annotation (ces lignes sont trop loin dans le journal)
+          $tm = (($out -split "`r?`n") | Where-Object { $_ -match '^\s+(temps|d.tail) ' }) -join "`n"
+          if ($tm) { Send-Note 'Temps' $tm 3500 1 }
+          Send-Note 'Test' ($out + "`nCode de sortie : $code") 3000 8
           Write-Host "Code de sortie : $code"
           exit $code
 

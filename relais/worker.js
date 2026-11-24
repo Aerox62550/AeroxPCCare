@@ -419,14 +419,17 @@ async function postReport(request, env, ctx) {
   const refus = await admit(request, env, ctx, 'bug');
   if (refus) return refus;
 
+  // Phrase mal comprise par « Quel est ton problème ? » : rangée à part (traitée automatiquement), pas de message Discord
+  const phrase = data.kind === 'phrase';
   const res = await ghTry(env, '/issues', 'POST', {
     title,
     body: body + `\n\n---\n_Envoyé depuis AEROX PC Care ${version} (sans compte GitHub)._`,
-    labels: ['bug']
+    labels: [phrase ? 'phrase' : 'bug']
   });
   if (!res) return json({ error: "GitHub ne répond pas pour l'instant : réessaie plus tard." }, 502);
   if (!res.ok) return json({ error: `GitHub a refusé le rapport (${res.status}).` }, 502);
   const issue = await res.json();
+  if (phrase) return json({ ok: true, number: issue.number, url: issue.html_url });
   // Discord : le titre et le début du rapport (le rapport complet reste sur GitHub)
   // Dans Discord : version, Windows, ce qui s'est passé et les erreurs (sans la fin du journal ni l'en-tête répété)
   const resume = body.replace(/<!--[\s\S]*?-->/g, '')
