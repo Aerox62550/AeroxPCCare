@@ -1512,3 +1512,9 @@ diag|j'ai des problemes avec mon ordi je sais pas quoi faire
 net|le mode avion reste active
 clock|la pile de ma carte mere est morte je crois
 -|bonne soiree
+# Phrases vagues (capture de Sam, 25/11) : le diagnostic complet est proposé
+diag|bug du pc
+diag|plantage du pc
+diag|mon pc marche mal
+diag|l'ordi fonctionne mal
+diag|tout bug sur mon pc
