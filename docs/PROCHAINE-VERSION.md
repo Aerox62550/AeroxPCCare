@@ -2,6 +2,10 @@
 
 Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
+## Prêt pour la prochaine version (canal test)
+
+- **Quel est ton problème ? : mots qui disparaissaient** (trouvé en comparant la 3.x à la nouvelle plateforme, corrigé le 25/11 à la demande de Sam) : un mot inconnu de 4 lettres ou plus commençant par j, q, w, x, y ou z (« jours », « youtube », « wesh », « quelques ») était remplacé par du vide dans `Repair-HelpWord` (boucle sur une liste absente), ce qui cassait les expressions autour. 8 des 1 509 phrases de test étaient touchées ; « la clé que j'utilise tous les jours ne s'ouvre plus » retrouve son score complet. Test de fumée : aucun mot vidé, phrase ajoutée.
+
 ## Publié en 3.6.0 : disques internes, anciens pilotes, PC neuf plus rapide, diagnostic 3 fois plus rapide (« améliore à fond », Sam le 13/11)
 
 - **Disque, clé USB ou carte SD illisible** (ex « Clé USB ou disque externe illisible ») : les disques internes qui ne sont pas celui de Windows sont aussi regardés (`Get-ExternalDisks -Internal`) : hors ligne, sans lettre, lecture seule, fichiers abîmés, avec les mêmes boutons. Jamais de formatage d'un disque interne (`Format-ExternalDisk` exige toujours un bus USB / SD / MMC) ; disque interne vierge → renvoyé vers « PC neuf ». Exclus : espaces de stockage, iSCSI, Fibre Channel. Vérifié sur Windows avec un disque virtuel : lettre retirée puis rendue, hors ligne puis en ligne, réparation, formatage refusé, fichier toujours là.

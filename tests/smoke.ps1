@@ -184,6 +184,8 @@ function Invoke-Smoke {
         Is 'faute de frappe 2' (First 'bleutooth marche plus') 'bluetooth'
         Is 'lettres en trop' (First 'mon pc est lennnnnt') 'slow'
         Is 'mot courant jamais « corrigé » (regarde ≠ retarde)' (First 'mon pc ralentit quand je regarde une video') 'slow'
+        Is 'mot inconnu en j, q, w, x, y, z jamais vidé' ((@(ConvertTo-HelpTokens 'les jours youtube wesh xbox zut quoi') | Where-Object { -not $_ }).Count) 0
+        Is 'clé utilisée tous les jours' (First 'la cle que j''utilise tous les jours ne s''ouvre plus') 'usbdisk'
         Is 'mode avion' (First 'le mode avion reste active') 'net'
         Is 'accents et majuscules' (First 'MON PC N''A PLUS DE SON !!!') 'sound'
         Is 'sujet cité sans problème' (First 'mon son marche mais pas le micro') 'micro'

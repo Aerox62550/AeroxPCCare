@@ -7158,16 +7158,18 @@ function Repair-HelpWord([string]$W) {
     if ($W.Length -lt 4 -or $W -notmatch '^[a-z]+$' -or -not $script:HelpVocab) { return $W }
     if ($script:HelpVocab.Exact.ContainsKey($W) -or $script:HelpKnownWords.ContainsKey($W)) { return $W }
     $c = "$($W[0])"
-    foreach ($p in @($script:HelpVocab.Prefix[$c])) { if ($W.StartsWith($p)) { return $W } }
+    # Une lettre sans aucun mot connu n'a pas de liste : on la saute (avant, la boucle tournait sur une valeur vide et le
+    # mot était remplacé par du vide : « jours », « youtube », « wesh » disparaissaient de la phrase)
+    foreach ($p in @($script:HelpVocab.Prefix[$c] | Where-Object { $_ })) { if ($W.StartsWith($p)) { return $W } }
     if ($script:HelpFixCache.ContainsKey($W)) { return $script:HelpFixCache[$W] }
     $best = $W; $bd = 9
-    foreach ($v in @($script:HelpVocab.Fuzzy[$c])) {
+    foreach ($v in @($script:HelpVocab.Fuzzy[$c] | Where-Object { $_ })) {
         if ([math]::Abs($v.Length - $W.Length) -gt 2) { continue }
         $d = Get-EditDistance $W $v
         if ($d -lt $bd -and $d -le $(if ($v.Length -ge 9) { 2 } else { 1 })) { $bd = $d; $best = $v }
     }
     if ($bd -eq 9) {
-        foreach ($p in @($script:HelpVocab.Stem[$c])) {
+        foreach ($p in @($script:HelpVocab.Stem[$c] | Where-Object { $_ })) {
             if ($W.Length -lt $p.Length - 1) { continue }
             $d = Get-EditDistance $W.Substring(0, [math]::Min($W.Length, $p.Length)) $p
             if ($d -le 1 -and $d -lt $bd) { $bd = $d; $best = $p }
