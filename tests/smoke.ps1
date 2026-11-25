@@ -1961,6 +1961,17 @@ function Invoke-Smoke {
         Find-DiscordLink; Write-Host "        lien publié : « $($sync.DiscordUrl) »"
         if ($sync.DiscordUrl -and -not (Test-DiscordInvite $sync.DiscordUrl)) { throw "lien invalide gardé" }
     }
+    Smoke 'Relais : seul un relais Cloudflare du développeur est accepté' {
+        foreach ($x in @(@('https://aerox-relais.sam-heitz.workers.dev', $true), @('https://aerox-relais.sam-heitz.workers.dev/', $true), @('https://autre.sam-heitz.workers.dev', $true),
+                         @('https://evil.com', $false), @('https://sam-heitz.workers.dev.evil.com', $false), @('https://evil.workers.dev', $false), @('http://aerox-relais.sam-heitz.workers.dev', $false),
+                         @('https://x.sam-heitz.workers.dev/../evil', $false), @('https://a.b.sam-heitz.workers.dev', $false), @("https://aerox-relais.sam-heitz.workers.dev`nhttps://evil.com", $false))) {
+            if ((Test-RelayUrl $x[0]) -ne $x[1]) { throw "« $($x[0]) » : $(-not $x[1]) au lieu de $($x[1])" }
+        }
+        # Le relais publié (relais.txt du dépôt) doit être accepté, sinon plus aucun rapport ne partirait
+        $old = $sync.BugRelay; $sync.BugRelay = ''; Find-BugRelay; $pub = $sync.BugRelay; $sync.BugRelay = $old
+        Write-Host "        relais publié : « $pub »"
+        if (-not $pub) { throw 'le relais publié dans relais.txt est refusé (ou injoignable)' }
+    }
     Smoke 'Statistiques anonymes : filtre, désactivation et envoi (faux relais local)' {
         $oldOff = $AppInfo.StatsOff; $oldRelay = $sync.BugRelay; $oldQ = $AppInfo.StatsQueue
         $stamp = Join-Path $AppInfo.LogDir 'stats-envoi.txt'; Remove-Item -LiteralPath $stamp -ErrorAction SilentlyContinue

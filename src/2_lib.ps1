@@ -4391,7 +4391,7 @@ function Get-NvidiaLatest([string]$GpuName, [bool]$Laptop) {
         $p = $data.$kind.PSObject.Properties[$clean]
         if ($p) { $pfid = $p.Value; break }
     }
-    if (-not $pfid) { return $null }
+    if ("$pfid" -notmatch '^\d{1,7}$') { return $null }   # liste publique d'un tiers : on n'accepte qu'un numéro de modèle
     $os = if ([Environment]::OSVersion.Version.Build -ge 22000) { 135 } else { 57 }
     $url = "https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup&pfid=$pfid&osID=$os&dch=1&numberOfResults=10&languageCode=1078"
     $r = (Invoke-WebRequest -Uri $url -Headers $ua -TimeoutSec 10 -UseBasicParsing -ErrorAction Stop).Content | ConvertFrom-Json
@@ -4399,7 +4399,9 @@ function Get-NvidiaLatest([string]$GpuName, [bool]$Laptop) {
     $pick = @($r.IDS | ForEach-Object { $_.downloadInfo } | Where-Object { "$($_.IsCRD)" -eq '0' }) | Select-Object -First 1
     if (-not $pick) { $pick = @($r.IDS)[0].downloadInfo }
     $date = $null; try { $date = [datetime]::Parse("$($pick.ReleaseDateTime)", [Globalization.CultureInfo]::InvariantCulture) } catch {}
-    return @{ Version = "$($pick.Version)"; Date = $date; Url = "$($pick.DownloadURL)" }
+    $dl = "$($pick.DownloadURL)"
+    if ($dl -notmatch '^https://([a-z0-9-]+\.)*nvidia\.com/') { $dl = '' }   # lien de téléchargement : seulement chez NVIDIA
+    return @{ Version = "$($pick.Version)"; Date = $date; Url = $dl }
 }
 
 # Versions des pilotes graphiques vues aux diagnostics précédents : si la version change, la personne vient de le mettre à jour
@@ -4518,7 +4520,7 @@ function Test-Drivers {
             -Effect "L'élément concerné peut ne pas marcher (son, Wi-Fi, Bluetooth, USB, manette...)." `
             -FixLabel $(if ($canRe) { "Réinstaller ce périphérique" } else { "Vérifier les pilotes" }) -FixAction $(if ($canRe) { 'Repair-ProblemDevices' } else { '' }) -UiFix $(if ($canRe) { '' } else { 'drivers' }) `
             -Confirm $(if ($canRe) { "Windows va retirer puis réinstaller le pilote de ce périphérique (il disparaît quelques secondes). Rien d'autre n'est touché.`n`nContinuer ?" } else { '' }) `
-            -Steps @(($bad | Select-Object -First 3 | ForEach-Object { $_.Step }) + "Si le problème revient après un redémarrage : prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (rubrique Support, avec le modèle exact)." | Select-Object -Unique)
+            -Steps @(@($bad | Select-Object -First 3 | ForEach-Object { $_.Step }) + "Si le problème revient après un redémarrage : prends le pilote sur le site du fabricant de ton PC ou de ta carte mère (rubrique Support, avec le modèle exact)." | Select-Object -Unique)
     } else { Add-Ok "Tous les périphériques ont un pilote qui fonctionne" }
 }
 
@@ -8565,11 +8567,14 @@ function Start-QuickOptimize {
 
 # ---------------------------------------------------------------- Mise à jour d'AEROX PC Care (GitHub)
 # Adresse du relais des rapports de bug (fichier relais.txt du dépôt : modifiable sans nouvelle version)
+# Seul un relais Cloudflare du compte du développeur est accepté (même si quelqu'un modifiait relais.txt dans le dépôt,
+# les rapports ne pourraient pas partir ailleurs). Changer de compte Cloudflare demandera une nouvelle version.
+function Test-RelayUrl([string]$Url) { return ($Url -cmatch '^https://[a-z0-9-]{1,63}\.sam-heitz\.workers\.dev/?\z') }
 function Find-BugRelay {
     try {
         if (-not $AppInfo.Repo) { return }
         $u = "$((Invoke-WebRequest -Uri ("https://raw.githubusercontent.com/{0}/main/relais.txt" -f $AppInfo.Repo) -UseBasicParsing -TimeoutSec 8 -ErrorAction Stop).Content)".Trim()
-        if ($u -match '^https://[^\s]+$') { $sync.BugRelay = $u }
+        if (Test-RelayUrl $u) { $sync.BugRelay = $u }
     } catch {}
 }
 # Lien d'invitation du serveur Discord de la communauté (fichier discord.txt du dépôt : modifiable sans nouvelle version).

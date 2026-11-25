@@ -2245,10 +2245,10 @@ function Complete-SelfUpdate {
     $ready = $sync.UpdateReady; $sync.UpdateReady = $null
     $setup = if ($ready -is [hashtable]) { $ready.Path } else { "$ready" }
     try {
-        if ($ready -is [hashtable] -and $ready.Sha) {
-            $h = (Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop).Hash
-            if ($h -ne $ready.Sha.ToUpper()) { throw "Le fichier de mise à jour a été modifié depuis son téléchargement : installation annulée par sécurité." }
-        }
+        # Jamais d'installation sans empreinte vérifiée (Find-AppUpdate refuse déjà de télécharger sans elle)
+        if (-not ($ready -is [hashtable]) -or "$($ready.Sha)" -notmatch '^[0-9a-fA-F]{64}$') { throw "La mise à jour n'a pas d'empreinte de sécurité : installation annulée. Télécharge-la à la main sur la page du logiciel." }
+        $h = (Get-FileHash -LiteralPath $setup -Algorithm SHA256 -ErrorAction Stop).Hash
+        if ($h -ne $ready.Sha.ToUpper()) { throw "Le fichier de mise à jour a été modifié depuis son téléchargement : installation annulée par sécurité." }
         $script:Settings.UpdSnoozeVer = ''; $script:Settings.UpdSnoozes = 0; Save-Settings
         Start-Process -FilePath $setup -ArgumentList '/S', '/UPDATE'
         Write-UiLog "Installation de la nouvelle version..."

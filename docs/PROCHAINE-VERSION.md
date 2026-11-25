@@ -8,6 +8,12 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
 - **Quel est ton problème ? : phrases vagues** (capture de Sam, 25/11 : « bug du pc » ne donnait rien) : le diagnostic complet est maintenant proposé pour « bug du pc », « plantage du pc », « mon pc marche mal », « tout bug ». 5 phrases de test ajoutées (1 514), toujours 100 % et aucun hors-sujet.
 
+- **Sécurité renforcée** (avis extérieur passé en revue avec Sam, corrigé le 25/11 à sa demande) :
+  - mise à jour du logiciel : jamais installée sans empreinte SHA-256 vérifiée, même en dernière étape (`Complete-SelfUpdate` refuse au lieu de sauter la vérification ; `Find-AppUpdate` refusait déjà de télécharger sans empreinte) ;
+  - relais des rapports : seule une adresse `https://<nom>.sam-heitz.workers.dev` est acceptée (`Test-RelayUrl`) : même si quelqu'un modifiait `relais.txt` dans le dépôt, les rapports ne pourraient pas partir ailleurs. Changer de compte Cloudflare demandera une nouvelle version. Test de fumée : adresses piégées refusées, relais publié accepté ;
+  - pilote NVIDIA : la liste publique d'un tiers (ZenitH-AT) ne peut plus donner qu'un numéro de modèle, et le bouton « Télécharger le pilote officiel » n'ouvre qu'un lien chez nvidia.com.
+- **Périphérique sans pilote : étapes collées** (trouvé par les tests de la nouvelle plateforme) : avec un seul appareil en cause, les deux étapes s'affichaient en une (« …de l'appareil.Si le problème revient… ») ; elles sont de nouveau séparées.
+
 ## Publié en 3.6.0 : disques internes, anciens pilotes, PC neuf plus rapide, diagnostic 3 fois plus rapide (« améliore à fond », Sam le 13/11)
 
 - **Disque, clé USB ou carte SD illisible** (ex « Clé USB ou disque externe illisible ») : les disques internes qui ne sont pas celui de Windows sont aussi regardés (`Get-ExternalDisks -Internal`) : hors ligne, sans lettre, lecture seule, fichiers abîmés, avec les mêmes boutons. Jamais de formatage d'un disque interne (`Format-ExternalDisk` exige toujours un bus USB / SD / MMC) ; disque interne vierge → renvoyé vers « PC neuf ». Exclus : espaces de stockage, iSCSI, Fibre Channel. Vérifié sur Windows avec un disque virtuel : lettre retirée puis rendue, hors ligne puis en ligne, réparation, formatage refusé, fichier toujours là.
