@@ -4,6 +4,10 @@ Idées et demandes validées par Sam, à faire dans la prochaine mise à jour.
 
 ## Prêt pour la prochaine version (canal test)
 
+(rien pour l'instant)
+
+## Publié en 3.6.1 : sécurité renforcée (avis extérieur), recherche corrigée (Sam le 25/11)
+
 - **Quel est ton problème ? : mots qui disparaissaient** (trouvé en comparant la 3.x à la nouvelle plateforme, corrigé le 25/11 à la demande de Sam) : un mot inconnu de 4 lettres ou plus commençant par j, q, w, x, y ou z (« jours », « youtube », « wesh », « quelques ») était remplacé par du vide dans `Repair-HelpWord` (boucle sur une liste absente), ce qui cassait les expressions autour. 8 des 1 509 phrases de test étaient touchées ; « la clé que j'utilise tous les jours ne s'ouvre plus » retrouve son score complet. Test de fumée : aucun mot vidé, phrase ajoutée.
 
 - **Quel est ton problème ? : phrases vagues** (capture de Sam, 25/11 : « bug du pc » ne donnait rien) : le diagnostic complet est maintenant proposé pour « bug du pc », « plantage du pc », « mon pc marche mal », « tout bug ». 5 phrases de test ajoutées (1 514), toujours 100 % et aucun hors-sujet.
